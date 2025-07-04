@@ -150,11 +150,13 @@ services:
           name: appjelly-redis
           property: connectionString
 
+  # Redis Cache/Queue Service
+  - type: redis
+    name: appjelly-redis
+    plan: free
+
 databases:
   - name: appjelly-db
     databaseName: appjelly
     user: appjelly
-    plan: free
-
-  - name: appjelly-redis
     plan: free 
