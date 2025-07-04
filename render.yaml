@@ -8,15 +8,6 @@ envVarGroups:
         value: true
       - key: MAX_DB_POOL_SIZE
         value: 10
-      - key: DATABASE_URL
-        fromDatabase:
-          name: appjelly-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: appjelly-redis
-          property: connectionString
       
       # Worker Configuration
       - key: CONTENT_WORKERS
@@ -89,6 +80,15 @@ services:
       targetCPUPercent: 70
     envVars:
       - fromGroup: appjelly-shared-env
+      - key: DATABASE_URL
+        fromDatabase:
+          name: appjelly-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: appjelly-redis
+          property: connectionString
 
   # Content Generation Worker - Handles AI content creation for all apps
   - type: worker
@@ -100,6 +100,15 @@ services:
     autoDeploy: true
     envVars:
       - fromGroup: appjelly-shared-env
+      - key: DATABASE_URL
+        fromDatabase:
+          name: appjelly-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: appjelly-redis
+          property: connectionString
 
   # Media Processing Worker - Handles image/media processing for all apps
   - type: worker
@@ -111,6 +120,15 @@ services:
     autoDeploy: true
     envVars:
       - fromGroup: appjelly-shared-env
+      - key: DATABASE_URL
+        fromDatabase:
+          name: appjelly-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: appjelly-redis
+          property: connectionString
 
   # Cleanup Worker - Handles data cleanup and maintenance for all apps
   - type: worker
@@ -122,6 +140,15 @@ services:
     autoDeploy: true
     envVars:
       - fromGroup: appjelly-shared-env
+      - key: DATABASE_URL
+        fromDatabase:
+          name: appjelly-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: appjelly-redis
+          property: connectionString
 
 databases:
   - name: appjelly-db
