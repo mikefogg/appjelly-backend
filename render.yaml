@@ -96,7 +96,7 @@ services:
     runtime: node
     plan: starter
     buildCommand: npm install
-    startCommand: npm run global-worker
+    startCommand: npm run content-worker
     autoDeploy: true
     envVars:
       - fromGroup: appjelly-shared-env
