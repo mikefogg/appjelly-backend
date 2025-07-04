@@ -80,8 +80,8 @@ services:
     startCommand: npm start
     healthCheckPath: /health
     autoDeploy: true
-    customDomains:
-      - name: api.appjelly.io
+    domains:
+      - api.appjelly.io
     scaling:
       minInstances: 1
       maxInstances: 3
