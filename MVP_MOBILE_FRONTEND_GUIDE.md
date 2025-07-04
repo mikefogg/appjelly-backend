@@ -2,7 +2,7 @@
 
 This guide provides everything needed to build a universal mobile app platform that supports any type of app (stories, workouts, photos, content generation, etc.) with shared components and configurable theming.
 
-**Based on Existing Setup**: This guide updates the existing Expo app at `/Users/mfogg/sites/mobile/blockview`
+**Based on Existing Setup**: This guide updates the existing Expo app at `/Users/mfogg/sites/mobile/snugglebug`
 
 ---
 
