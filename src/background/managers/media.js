@@ -1,6 +1,6 @@
 import "dotenv/config";
 import throng from "throng";
-import { Worker } from "bullmq";
+import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import {
   JOB_PROCESS_IMAGE_UPLOAD,
   JOB_GENERATE_THUMBNAILS,
@@ -36,7 +36,7 @@ function start() {
       // Media Processing Worker
       //
 
-      const mediaWorker = new Worker(
+      const mediaWorker = new WorkerPro(
         QUEUE_MEDIA_PROCESSING,
         async (job) => {
           try {

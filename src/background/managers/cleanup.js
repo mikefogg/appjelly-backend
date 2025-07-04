@@ -1,4 +1,4 @@
-import { Worker } from "bullmq";
+import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import { redisOpts } from "#src/utils/redis.js";
 import { 
   QUEUE_CLEANUP, 
@@ -12,7 +12,7 @@ import cleanupExpiredMedia from "#src/background/jobs/cleanup/expired-media-clea
 
 console.log("🧹 Starting cleanup worker manager...");
 
-const worker = new Worker(
+const worker = new WorkerPro(
   QUEUE_CLEANUP,
   async (job) => {
     console.log(`Processing cleanup job: ${job.name} (ID: ${job.id})`);
