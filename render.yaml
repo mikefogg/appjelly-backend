@@ -87,8 +87,8 @@ services:
       maxInstances: 3
       targetMemoryPercent: 70
       targetCPUPercent: 70
-    envVarGroups:
-      - appjelly-shared-env
+    envVars:
+      - fromGroup: appjelly-shared-env
 
   # Content Generation Worker - Handles AI content creation for all apps
   - type: worker
@@ -98,8 +98,8 @@ services:
     buildCommand: npm install
     startCommand: npm run global-worker
     autoDeploy: true
-    envVarGroups:
-      - appjelly-shared-env
+    envVars:
+      - fromGroup: appjelly-shared-env
 
   # Media Processing Worker - Handles image/media processing for all apps
   - type: worker
@@ -109,8 +109,8 @@ services:
     buildCommand: npm install
     startCommand: npm run media-worker
     autoDeploy: true
-    envVarGroups:
-      - appjelly-shared-env
+    envVars:
+      - fromGroup: appjelly-shared-env
 
   # Cleanup Worker - Handles data cleanup and maintenance for all apps
   - type: worker
@@ -120,8 +120,8 @@ services:
     buildCommand: npm install
     startCommand: npm run cleanup-worker
     autoDeploy: true
-    envVarGroups:
-      - appjelly-shared-env
+    envVars:
+      - fromGroup: appjelly-shared-env
 
 databases:
   - name: appjelly-db
