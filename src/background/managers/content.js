@@ -80,7 +80,7 @@ function start() {
       // Subscription Worker
       //
 
-      const subscriptionWorker = new Worker(
+      const subscriptionWorker = new WorkerPro(
         QUEUE_SUBSCRIPTION_PROCESSING,
         async (job) => {
           try {
