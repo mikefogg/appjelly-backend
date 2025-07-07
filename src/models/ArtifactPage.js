@@ -14,8 +14,10 @@ class ArtifactPage extends BaseModel {
         ...super.jsonSchema.properties,
         artifact_id: { type: "string", format: "uuid" },
         page_number: { type: "integer", minimum: 1 },
-        text: { type: "string" },
-        image_key: { type: "string" },
+        text: { type: ["string", "null"] },
+        image_key: { type: ["string", "null"] },
+        image_prompt: { type: ["string", "null"] },
+        image_status: { type: ["string", "null"], enum: ["pending", "generating", "completed", "failed"] },
         layout_data: { type: "object" },
       },
     };

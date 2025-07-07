@@ -100,6 +100,31 @@ export const createMedia = async (actor, overrides = {}) => {
   });
 };
 
+export const createMediaSession = async (account, fileCount = 1, overrides = {}) => {
+  const sessionId = faker.string.uuid();
+  const mediaItems = [];
+  
+  for (let i = 0; i < fileCount; i++) {
+    const media = await Media.query().insert({
+      owner_type: "account",
+      owner_id: account.id,
+      image_key: `cf_${faker.string.alphanumeric(10)}`,
+      upload_session_id: sessionId,
+      status: "pending",
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
+      metadata: {
+        uploaded_by: account.id,
+        content_type: "image/jpeg",
+        filename: `photo${i + 1}.jpg`,
+        ...overrides.metadata
+      },
+    });
+    mediaItems.push(media);
+  }
+  
+  return { sessionId, mediaItems };
+};
+
 export const createSubscription = async (account, overrides = {}) => {
   return await Subscription.query().insert({
     account_id: account.id,

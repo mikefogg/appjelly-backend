@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 import app from "#src/index.js";
-import { createAuthenticatedUser, createActor, createMedia } from "../../helpers/mock-data.js";
+import { createAuthenticatedUser, createActor, createMedia, createMediaSession } from "../../helpers/mock-data.js";
 import { expectSuccessResponse, expectErrorResponse, expectValidationError, expectPaginatedResponse } from "../../helpers/assertions.js";
 
 
@@ -241,6 +241,107 @@ describe("Actors Routes", () => {
         .send({ name: "Hacked" });
 
       expectErrorResponse(response, 404, "Actor not found");
+    });
+
+    it("updates actor with upload session", async () => {
+      const actor = await createActor(user.account, { name: "Emma" });
+      const { sessionId } = await createMediaSession(user.account, 2);
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          name: "Emma Updated",
+          upload_session_id: sessionId
+        });
+
+      const data = expectSuccessResponse(response);
+      expect(data.name).toBe("Emma Updated");
+      expect(data.media).toHaveLength(2);
+      
+      // Verify media was properly committed to the actor
+      expect(data.media.every(m => m.image_key.startsWith("cf_"))).toBe(true);
+      expect(data.media.every(m => m.id)).toBeTruthy();
+    });
+
+    it("validates upload_session_id format", async () => {
+      const actor = await createActor(user.account);
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          name: "Updated",
+          upload_session_id: "invalid-uuid"
+        });
+
+      expectValidationError(response, "upload_session_id");
+    });
+
+    it("returns 404 for non-existent upload session", async () => {
+      const actor = await createActor(user.account);
+      const fakeSessionId = "123e4567-e89b-12d3-a456-426614174000";
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          name: "Updated",
+          upload_session_id: fakeSessionId
+        });
+
+      expectErrorResponse(response, 404, "Upload session not found");
+    });
+
+    it("prevents using upload session from different user", async () => {
+      const actor = await createActor(user.account);
+      const otherUser = await createAuthenticatedUser();
+      const { sessionId } = await createMediaSession(otherUser.account);
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          name: "Updated",
+          upload_session_id: sessionId
+        });
+
+      expectErrorResponse(response, 403, "Access denied");
+    });
+
+    it("enforces 10 image limit when updating with session", async () => {
+      const actor = await createActor(user.account);
+      
+      // Create 8 existing media for actor
+      for (let i = 0; i < 8; i++) {
+        await createMedia(actor);
+      }
+      
+      // Try to add 3 more (would exceed limit)
+      const { sessionId } = await createMediaSession(user.account, 3);
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          upload_session_id: sessionId
+        });
+
+      expectErrorResponse(response, 400, "Cannot add 3 images");
+    });
+
+    it("allows updating without upload session", async () => {
+      const actor = await createActor(user.account, { name: "Emma" });
+
+      const response = await request(app)
+        .patch(`/actors/${actor.id}`)
+        .set(headers)
+        .send({
+          name: "Emma Updated"
+        });
+
+      const data = expectSuccessResponse(response);
+      expect(data.name).toBe("Emma Updated");
     });
   });
 

@@ -7,16 +7,19 @@ export const artifactSerializer = async (artifact) => {
     id: artifact.id,
     artifact_type: artifact.artifact_type,
     title: artifact.title,
-    metadata: artifact.metadata,
+    subtitle: artifact.subtitle,
+    description: artifact.description,
+    status: artifact.status || "pending",
     created_at: artifact.created_at,
     updated_at: artifact.updated_at,
+    
+    // Relationships
     input: artifact.input ? await properInputSerializer(artifact.input) : null,
     owner: artifact.account ? {
       id: artifact.account.id,
       display_name: artifact.account.metadata?.display_name,
     } : null,
     page_count: artifact.pages?.length || 0,
-    status: artifact.metadata?.status || "completed",
   };
 };
 
@@ -46,6 +49,7 @@ export const pageSerializer = (page) => {
     text: page.text,
     image_key: page.image_key,
     image_url: page.image_key ? mediaService.getImageUrl(page.image_key) : null,
+    image_status: page.image_status || "pending",
     layout_data: page.layout_data,
     created_at: page.created_at,
   };
@@ -63,16 +67,19 @@ export const pageWithArtifactSerializer = (page, artifact) => {
 };
 
 
-// Safe artifact serializer for shared contexts - no owner/account info
+// Safe artifact serializer for shared contexts - no owner/account info or cost data
 export const safeArtifactSerializer = async (artifact) => {
   return {
     id: artifact.id,
     artifact_type: artifact.artifact_type,
     title: artifact.title,
+    subtitle: artifact.subtitle,
+    description: artifact.description,
+    status: artifact.status || "pending",
     created_at: artifact.created_at,
     input: artifact.input ? await properSafeInputSerializer(artifact.input) : null,
     page_count: artifact.pages?.length || 0,
-    status: artifact.metadata?.status || "completed",
+    // Exclude: token counts, costs, AI model info for privacy
   };
 };
 
@@ -82,6 +89,41 @@ export const safeArtifactWithPagesSerializer = async (artifact) => {
   return {
     ...baseData,
     pages: artifact.pages ? artifact.pages.map(pageSerializer) : [],
+  };
+};
+
+// Admin serializer with full technical details for internal use
+export const adminArtifactSerializer = async (artifact) => {
+  const baseData = await artifactSerializer(artifact);
+  
+  return {
+    ...baseData,
+    metadata: artifact.metadata,
+    
+    // Token and cost tracking (admin only)
+    total_tokens: artifact.total_tokens,
+    plotline_tokens: artifact.plotline_tokens,
+    story_tokens: artifact.story_tokens,
+    plotline_prompt_tokens: artifact.plotline_prompt_tokens,
+    plotline_completion_tokens: artifact.plotline_completion_tokens,
+    story_prompt_tokens: artifact.story_prompt_tokens,
+    story_completion_tokens: artifact.story_completion_tokens,
+    cost_usd: artifact.cost_usd,
+    generation_time_seconds: artifact.generation_time_seconds,
+    
+    // AI model info (admin only)
+    ai_model: artifact.ai_model,
+    ai_provider: artifact.ai_provider,
+  };
+};
+
+// Admin page serializer with technical details
+export const adminPageSerializer = (page) => {
+  const baseData = pageSerializer(page);
+  
+  return {
+    ...baseData,
+    image_prompt: page.image_prompt, // Only for admin
   };
 };
 

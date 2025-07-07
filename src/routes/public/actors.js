@@ -57,6 +57,10 @@ const updateActorValidators = [
     .optional()
     .isObject()
     .withMessage("Metadata must be an object"),
+  body("upload_session_id")
+    .optional()
+    .isUUID()
+    .withMessage("Invalid upload session ID"),
 ];
 
 router.get("/", requireAppContext, requireAuth, async (req, res) => {
@@ -224,12 +228,13 @@ router.patch(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const updates = req.body;
+      const { upload_session_id, ...updates } = req.body;
 
       const actor = await Actor.query()
         .findById(id)
         .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+        .where("app_id", res.locals.app.id)
+        .withGraphFetched("[media(committed)]");
 
       if (!actor) {
         return res
@@ -237,14 +242,65 @@ router.patch(
           .json(formatError("Actor not found or access denied", 404));
       }
 
-      const updatedActor = await actor.$query().patchAndFetch(updates);
+      // If upload_session_id provided, verify it exists and belongs to this user
+      let pendingMediaCount = 0;
+      if (upload_session_id) {
+        const pendingMedia = await Media.findPendingBySessionId(upload_session_id);
+        
+        if (pendingMedia.length === 0) {
+          return res
+            .status(404)
+            .json(formatError("Upload session not found or expired", 404));
+        }
 
-      // Reload with media
-      const actorWithMedia = await Actor.query()
-        .findById(updatedActor.id)
-        .withGraphFetched("[media(committed)]");
+        // Verify ownership
+        const hasAccess = pendingMedia.every(media => 
+          media.metadata?.uploaded_by === res.locals.account.id
+        );
 
-      const data = await actorSerializer(actorWithMedia);
+        if (!hasAccess) {
+          return res
+            .status(403)
+            .json(formatError("Access denied to upload session", 403));
+        }
+
+        pendingMediaCount = pendingMedia.length;
+        const currentMediaCount = actor.media ? actor.media.length : 0;
+
+        // Check media limit (10 images per actor)
+        if (currentMediaCount + pendingMediaCount > 10) {
+          return res
+            .status(400)
+            .json(formatError(`Cannot add ${pendingMediaCount} images. Actor already has ${currentMediaCount} images (max 10 total)`, 400));
+        }
+      }
+
+      // Update actor and commit pending media in a transaction
+      const result = await Actor.transaction(async (trx) => {
+        const updatedActor = await actor.$query(trx).patchAndFetch(updates);
+
+        // Commit pending media if session provided
+        if (upload_session_id) {
+          await Media.query(trx)
+            .where("upload_session_id", upload_session_id)
+            .where("status", "pending")
+            .where("expires_at", ">", new Date().toISOString())
+            .patch({
+              owner_type: "actor",
+              owner_id: actor.id,
+              status: "committed",
+              upload_session_id: null,
+              expires_at: null,
+            });
+        }
+
+        // Return actor with media
+        return await Actor.query(trx)
+          .findById(updatedActor.id)
+          .withGraphFetched("[media(committed)]");
+      });
+
+      const data = await actorSerializer(result);
       return res
         .status(200)
         .json(successResponse(data, "Actor updated successfully"));
@@ -279,7 +335,7 @@ router.delete(
 
       return res
         .status(200)
-        .json(successResponse(null, "Actor deleted successfully"));
+        .json(successResponse({ success: true }, "Actor deleted successfully"));
     } catch (error) {
       console.error("Delete actor error:", error);
       return res.status(500).json(formatError("Failed to delete actor"));
@@ -487,7 +543,7 @@ router.delete(
 
       return res
         .status(200)
-        .json(successResponse(null, "Media deleted successfully"));
+        .json(successResponse({ success: true }, "Media deleted successfully"));
     } catch (error) {
       console.error("Delete media error:", error);
       return res.status(500).json(formatError("Failed to delete media"));

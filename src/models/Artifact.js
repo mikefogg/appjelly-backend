@@ -5,6 +5,7 @@ import App from "#src/models/App.js";
 import ArtifactPage from "#src/models/ArtifactPage.js";
 import ArtifactActor from "#src/models/ArtifactActor.js";
 import SharedView from "#src/models/SharedView.js";
+import Actor from "#src/models/Actor.js";
 
 class Artifact extends BaseModel {
   static get tableName() {
@@ -21,8 +22,32 @@ class Artifact extends BaseModel {
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
         artifact_type: { type: "string", minLength: 1 },
-        title: { type: "string" },
+        status: { 
+          type: "string", 
+          enum: ["pending", "generating", "completed", "failed"],
+          default: "pending"
+        },
+        title: { type: ["string", "null"] },
+        subtitle: { type: ["string", "null"] },
+        description: { type: ["string", "null"] },
         metadata: { type: "object" },
+        
+        // Token tracking fields
+        total_tokens: { type: ["integer", "null"], minimum: 0 },
+        plotline_tokens: { type: ["integer", "null"], minimum: 0 },
+        story_tokens: { type: ["integer", "null"], minimum: 0 },
+        plotline_prompt_tokens: { type: ["integer", "null"], minimum: 0 },
+        plotline_completion_tokens: { type: ["integer", "null"], minimum: 0 },
+        story_prompt_tokens: { type: ["integer", "null"], minimum: 0 },
+        story_completion_tokens: { type: ["integer", "null"], minimum: 0 },
+        
+        // Cost and performance
+        cost_usd: { type: ["number", "null"], minimum: 0 },
+        generation_time_seconds: { type: ["number", "null"], minimum: 0 },
+        
+        // Model info
+        ai_model: { type: ["string", "null"] },
+        ai_provider: { type: ["string", "null"] },
       },
     };
   }
@@ -75,6 +100,19 @@ class Artifact extends BaseModel {
         join: {
           from: "artifacts.id",
           to: "artifact_actors.artifact_id",
+        },
+      },
+      actors: {
+        relation: BaseModel.ManyToManyRelation,
+        modelClass: Actor,
+        join: {
+          from: "artifacts.id",
+          through: {
+            from: "artifact_actors.artifact_id",
+            to: "artifact_actors.actor_id",
+            extra: ["is_main_character"],
+          },
+          to: "actors.id",
         },
       },
     };
@@ -158,6 +196,59 @@ class Artifact extends BaseModel {
       await this.$loadRelated("input");
     }
     return this.input.getActors();
+  }
+
+  // Status management helpers
+  async markAsGenerating(trx = null) {
+    return this.$query(trx).patchAndFetch({
+      status: "generating",
+      metadata: {
+        ...this.metadata,
+        processing_started_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  async markAsCompleted(trx = null) {
+    return this.$query(trx).patchAndFetch({
+      status: "completed",
+      metadata: {
+        ...this.metadata,
+        completed_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  async markAsFailed(error, trx = null) {
+    return this.$query(trx).patchAndFetch({
+      status: "failed",
+      metadata: {
+        ...this.metadata,
+        error: error.message,
+        failed_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  // Query helpers for status filtering
+  static byStatus(status) {
+    return this.query().where("status", status);
+  }
+
+  static pending() {
+    return this.byStatus("pending");
+  }
+
+  static generating() {
+    return this.byStatus("generating");
+  }
+
+  static completed() {
+    return this.byStatus("completed");
+  }
+
+  static failed() {
+    return this.byStatus("failed");
   }
 
   static get modifiers() {
