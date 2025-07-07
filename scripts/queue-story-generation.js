@@ -3,7 +3,7 @@ import { contentQueue, JOB_GENERATE_STORY } from "../src/background/queues/index
 
 async function queueStoryGeneration(artifactId, options = {}) {
   try {
-    const { regenerate = false, runNow = false } = options;
+    const { regenerate = false, runNow = false, skipImages = false } = options;
     
     // Verify the artifact exists and get basic info
     const artifact = await Artifact.query()
@@ -66,7 +66,8 @@ async function queueStoryGeneration(artifactId, options = {}) {
         return await storyCreationService.saveStoryToArtifact(
           artifactId,
           generationResult,
-          trx
+          trx,
+          { skipImageGeneration: skipImages }
         );
       });
       
@@ -101,6 +102,7 @@ async function queueStoryGeneration(artifactId, options = {}) {
         inputId: artifact.input.id,
         artifactId: artifact.id,
         regenerate: regenerate,
+        skipImageGeneration: skipImages,
       },
       {
         attempts: 3,
@@ -137,17 +139,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const artifactId = process.argv[2];
   const regenerateFlag = process.argv.includes("--regenerate") || process.argv.includes("-r");
   const runNowFlag = process.argv.includes("--run-now") || process.argv.includes("--now");
+  const skipImagesFlag = process.argv.includes("--skip-images");
   
   if (!artifactId) {
     console.error("Usage: dev node scripts/queue-story-generation.js <artifact-id> [flags]");
     console.error("\nExamples:");
     console.error("  dev node scripts/queue-story-generation.js 123e4567-e89b-12d3-a456-426614174000");
     console.error("  dev node scripts/queue-story-generation.js 123e4567-e89b-12d3-a456-426614174000 --regenerate");
+    console.error("  dev node scripts/queue-story-generation.js 123e4567-e89b-12d3-a456-426614174000 --regenerate --skip-images");
     console.error("  dev node scripts/queue-story-generation.js 123e4567-e89b-12d3-a456-426614174000 --run-now");
     console.error("  dev node scripts/queue-story-generation.js 123e4567-e89b-12d3-a456-426614174000 --regenerate --run-now");
     console.error("\nFlags:");
     console.error("  --regenerate, -r   Regenerate an existing story (creates new version)");
     console.error("  --run-now, --now   Run immediately instead of queueing (no worker needed)");
+    console.error("  --skip-images      Skip image generation (story text only)");
     console.error("\nExecution modes:");
     console.error("  Default: Queues background job (requires content worker running)");
     console.error("  --run-now: Runs synchronously in current process (faster for testing)");
@@ -156,7 +161,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   queueStoryGeneration(artifactId, { 
     regenerate: regenerateFlag,
-    runNow: runNowFlag 
+    runNow: runNowFlag,
+    skipImages: skipImagesFlag
   })
     .then((result) => {
       if (result.runNow) {

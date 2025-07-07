@@ -238,9 +238,11 @@ class StoryCreationService {
    * @param {string} artifactId - The artifact ID
    * @param {Object} generatedStory - The complete generation result
    * @param {Object} trx - Optional database transaction
+   * @param {Object} options - Additional options
+   * @param {boolean} options.skipImageGeneration - Skip queueing image generation jobs
    * @returns {Object} Updated artifact with pages
    */
-  async saveStoryToArtifact(artifactId, generatedStory, trx = null) {
+  async saveStoryToArtifact(artifactId, generatedStory, trx = null, options = {}) {
     const { Artifact, ArtifactPage } = await import("../../models/index.js");
     
     // Update artifact with story data and token tracking
@@ -299,10 +301,10 @@ class StoryCreationService {
       },
     }));
 
-    await ArtifactPage.query(trx).insert(pages);
+    const insertedPages = await ArtifactPage.query(trx).insert(pages);
 
     // Return the updated artifact with pages
-    return await Artifact.query(trx)
+    const updatedArtifact = await Artifact.query(trx)
       .findById(artifactId)
       .withGraphFetched("[pages(ordered)]")
       .modifiers({
@@ -310,6 +312,32 @@ class StoryCreationService {
           builder.orderBy("page_number", "asc");
         },
       });
+
+    // Queue image generation for all pages (only if not skipped and not in test)
+    if (!options.skipImageGeneration && (!trx || process.env.NODE_ENV !== 'test')) {
+      try {
+        const { queueBatchPageImages } = await import("../../background/queues/image-queue.js");
+        
+        console.log(`[Story Creation] Queueing image generation for ${insertedPages.length} pages...`);
+        
+        await queueBatchPageImages(insertedPages.map(page => ({
+          id: page.id,
+          artifact_id: artifactId
+        })), {
+          priority: 3,
+          staggerDelay: 3000 // 3 second delay between each image generation
+        });
+        
+        console.log(`[Story Creation] Successfully queued ${insertedPages.length} page image generation jobs`);
+      } catch (error) {
+        console.error(`[Story Creation] Failed to queue image generation jobs:`, error);
+        // Don't throw - image generation failure shouldn't fail story creation
+      }
+    } else if (options.skipImageGeneration) {
+      console.log(`[Story Creation] Skipping image generation as requested`);
+    }
+
+    return updatedArtifact;
   }
 }
 

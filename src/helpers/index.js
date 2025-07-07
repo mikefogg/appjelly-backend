@@ -4,3 +4,4 @@ export { default as mediaService } from "#src/helpers/media-service.js";
 export { default as subscriptionService } from "#src/helpers/subscription-service.js";
 export { default as inferenceService } from "#src/helpers/inference-service.js";
 export { default as sharingService } from "#src/helpers/sharing-service.js";
+export { default as audioGenerationService } from "#src/helpers/snugglebug/audio-generation-service.js";

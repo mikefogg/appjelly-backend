@@ -160,8 +160,9 @@ router.post(
           });
 
         // Commit pending media if session provided
+        let primaryImageKey = null;
         if (upload_session_id) {
-          await Media.query(trx)
+          const committedMedia = await Media.query(trx)
             .where("upload_session_id", upload_session_id)
             .where("status", "pending")
             .where("expires_at", ">", new Date().toISOString())
@@ -171,16 +172,39 @@ router.post(
               status: "committed",
               upload_session_id: null,
               expires_at: null,
-            });
+            })
+            .returning("*");
+
+          // Get the first image for processing
+          if (committedMedia && committedMedia.length > 0) {
+            primaryImageKey = committedMedia[0].image_key;
+          }
         }
 
-        // Return actor with media
-        return await Actor.query(trx)
+        // Return actor with media and primary image key for processing
+        const actorWithMedia = await Actor.query(trx)
           .findById(actor.id)
           .withGraphFetched("[media(committed)]");
+          
+        return { actor: actorWithMedia, primaryImageKey };
       });
 
-      const data = await actorSerializer(result);
+      // Queue image processing if we have a primary image
+      if (result.primaryImageKey) {
+        try {
+          const { queueActorImageProcessing } = await import("#src/background/queues/image-queue.js");
+          await queueActorImageProcessing(result.actor.id, result.primaryImageKey, {
+            priority: 5, // High priority for character setup
+            delay: 2000  // Small delay to ensure transaction completes
+          });
+          console.log(`[Create Actor] Queued image processing for actor ${result.actor.id}, image ${result.primaryImageKey}`);
+        } catch (queueError) {
+          console.error(`[Create Actor] Failed to queue image processing:`, queueError);
+          // Don't throw - actor creation should succeed even if image processing fails to queue
+        }
+      }
+
+      const data = await actorSerializer(result.actor);
       return res
         .status(201)
         .json(createdResponse(data, "Actor created successfully"));
@@ -280,8 +304,9 @@ router.patch(
         const updatedActor = await actor.$query(trx).patchAndFetch(updates);
 
         // Commit pending media if session provided
+        let newImageKey = null;
         if (upload_session_id) {
-          await Media.query(trx)
+          const committedMedia = await Media.query(trx)
             .where("upload_session_id", upload_session_id)
             .where("status", "pending")
             .where("expires_at", ">", new Date().toISOString())
@@ -291,16 +316,39 @@ router.patch(
               status: "committed",
               upload_session_id: null,
               expires_at: null,
-            });
+            })
+            .returning("*");
+
+          // Get the first new image for processing
+          if (committedMedia && committedMedia.length > 0) {
+            newImageKey = committedMedia[0].image_key;
+          }
         }
 
-        // Return actor with media
-        return await Actor.query(trx)
+        // Return actor with media and new image key for processing
+        const actorWithMedia = await Actor.query(trx)
           .findById(updatedActor.id)
           .withGraphFetched("[media(committed)]");
+          
+        return { actor: actorWithMedia, newImageKey };
       });
 
-      const data = await actorSerializer(result);
+      // Queue image processing if we have a new image
+      if (result.newImageKey) {
+        try {
+          const { queueActorImageProcessing } = await import("#src/background/queues/image-queue.js");
+          await queueActorImageProcessing(result.actor.id, result.newImageKey, {
+            priority: 4, // Medium-high priority for updates
+            delay: 2000  // Small delay to ensure transaction completes
+          });
+          console.log(`[Update Actor] Queued image processing for actor ${result.actor.id}, image ${result.newImageKey}`);
+        } catch (queueError) {
+          console.error(`[Update Actor] Failed to queue image processing:`, queueError);
+          // Don't throw - actor update should succeed even if image processing fails to queue
+        }
+      }
+
+      const data = await actorSerializer(result.actor);
       return res
         .status(200)
         .json(successResponse(data, "Actor updated successfully"));

@@ -28,7 +28,7 @@ export const artifactWithPagesSerializer = async (artifact) => {
   
   return {
     ...baseData,
-    pages: artifact.pages ? artifact.pages.map(pageSerializer) : [],
+    pages: artifact.pages ? await Promise.all(artifact.pages.map(pageSerializer)) : [],
   };
 };
 
@@ -42,22 +42,22 @@ export const artifactListSerializer = (artifacts, pagination = {}) => {
   };
 };
 
-export const pageSerializer = (page) => {
+export const pageSerializer = async (page) => {
   return {
     id: page.id,
     page_number: page.page_number,
     text: page.text,
     image_key: page.image_key,
-    image_url: page.image_key ? mediaService.getImageUrl(page.image_key) : null,
+    image_url: page.image_key ? await mediaService.getImageUrl(page.image_key) : null,
     image_status: page.image_status || "pending",
     layout_data: page.layout_data,
     created_at: page.created_at,
   };
 };
 
-export const pageWithArtifactSerializer = (page, artifact) => {
+export const pageWithArtifactSerializer = async (page, artifact) => {
   return {
-    ...pageSerializer(page),
+    ...(await pageSerializer(page)),
     artifact: {
       id: artifact.id,
       title: artifact.title,
@@ -88,7 +88,7 @@ export const safeArtifactWithPagesSerializer = async (artifact) => {
   
   return {
     ...baseData,
-    pages: artifact.pages ? artifact.pages.map(pageSerializer) : [],
+    pages: artifact.pages ? await Promise.all(artifact.pages.map(pageSerializer)) : [],
   };
 };
 
@@ -118,12 +118,20 @@ export const adminArtifactSerializer = async (artifact) => {
 };
 
 // Admin page serializer with technical details
-export const adminPageSerializer = (page) => {
-  const baseData = pageSerializer(page);
+export const adminPageSerializer = async (page) => {
+  const baseData = await pageSerializer(page);
   
   return {
     ...baseData,
     image_prompt: page.image_prompt, // Only for admin
+    
+    // Image generation tracking (admin only)
+    image_generation_cost_usd: page.image_generation_cost_usd,
+    image_generation_time_seconds: page.image_generation_time_seconds,
+    image_ai_model: page.image_ai_model,
+    image_ai_provider: page.image_ai_provider,
+    image_generated_at: page.image_generated_at,
+    image_prompt_used: page.image_prompt_used,
   };
 };
 

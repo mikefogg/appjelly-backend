@@ -2,7 +2,7 @@ import { Artifact } from "#src/models/index.js";
 import storyCreationService from "#src/helpers/snugglebug/story-creation-service.js";
 
 export default async function generateStoryJob(job) {
-  const { inputId, artifactId, regenerate = false } = job.data;
+  const { inputId, artifactId, regenerate = false, skipImageGeneration = false } = job.data;
 
   try {
     const mode = regenerate ? "REGENERATION" : "INITIAL GENERATION";
@@ -104,7 +104,8 @@ export default async function generateStoryJob(job) {
       return await storyCreationService.saveStoryToArtifact(
         artifactId,
         generationResult,
-        trx
+        trx,
+        { skipImageGeneration }
       );
     });
 

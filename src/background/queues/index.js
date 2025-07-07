@@ -62,6 +62,8 @@ export const JOB_PROCESS_CHARACTER_CLAIM = "process-character-claim";
 export const JOB_PROCESS_IMAGE_UPLOAD = "process-image-upload";
 export const JOB_GENERATE_THUMBNAILS = "generate-thumbnails";
 export const JOB_OPTIMIZE_IMAGES = "optimize-images";
+export const JOB_PROCESS_ACTOR_IMAGE = "process-actor-image";
+export const JOB_GENERATE_PAGE_IMAGE = "generate-page-image";
 
 // Safety Jobs
 export const JOB_MODERATE_CONTENT = "moderate-content";
@@ -105,6 +107,8 @@ export const MEDIA_JOBS = {
   PROCESS_IMAGE_UPLOAD: JOB_PROCESS_IMAGE_UPLOAD,
   GENERATE_THUMBNAILS: JOB_GENERATE_THUMBNAILS,
   OPTIMIZE_IMAGES: JOB_OPTIMIZE_IMAGES,
+  PROCESS_ACTOR_IMAGE: JOB_PROCESS_ACTOR_IMAGE,
+  GENERATE_PAGE_IMAGE: JOB_GENERATE_PAGE_IMAGE,
 };
 
 export const SAFETY_JOBS = {

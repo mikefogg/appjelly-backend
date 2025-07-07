@@ -5,6 +5,8 @@ import {
   JOB_PROCESS_IMAGE_UPLOAD,
   JOB_GENERATE_THUMBNAILS,
   JOB_OPTIMIZE_IMAGES,
+  JOB_PROCESS_ACTOR_IMAGE,
+  JOB_GENERATE_PAGE_IMAGE,
   QUEUE_MEDIA_PROCESSING,
 } from "#src/background/queues/index.js";
 import { redisOpts } from "#src/utils/redis.js";
@@ -12,6 +14,8 @@ import chalk from "chalk";
 
 // Import job processors
 import ProcessImageUploadWorker from "#src/background/jobs/media/process-image-upload.js";
+import ProcessActorImageWorker from "#src/background/jobs/images/process-actor-image.js";
+import GeneratePageImageWorker from "#src/background/jobs/images/generate-page-image.js";
 
 let key = "Media Manager";
 let workers = process.env.MEDIA_WORKERS
@@ -20,7 +24,7 @@ let workers = process.env.MEDIA_WORKERS
 
 let concurrency = process.env.MEDIA_CONCURRENCY
   ? parseInt(process.env.MEDIA_CONCURRENCY)
-  : 5;
+  : 10; // Updated from 2 to 10 for higher image processing concurrency
 
 //
 // Start our actual workers
@@ -50,6 +54,12 @@ function start() {
               case JOB_OPTIMIZE_IMAGES:
                 console.log(`[%s] Image optimization not implemented yet`, key);
                 break;
+              case JOB_PROCESS_ACTOR_IMAGE:
+                await ProcessActorImageWorker(job);
+                break;
+              case JOB_GENERATE_PAGE_IMAGE:
+                await GeneratePageImageWorker(job);
+                break;
               default:
                 console.error(`[%s] Unprocessed job: %s`, key, job.name);
                 throw new Error(`Unprocessed job: ${job.name}`);
@@ -66,6 +76,10 @@ function start() {
         {
           connection: redisOpts,
           concurrency,
+          limiter: {
+            max: 5,        // Maximum 5 jobs processed
+            duration: 60000, // Per minute (60,000ms)
+          },
         }
       );
 
@@ -79,7 +93,7 @@ function start() {
       });
 
       mediaWorker.on("failed", (job, err) => {
-        console.error(chalk.red("[%s] Job failed:"), key, job.name, err.message);
+        console.error(chalk.red("[%s] Job failed:"), key, job?.name, err?.message);
       });
 
       console.log("[%s] Workers started!", key);

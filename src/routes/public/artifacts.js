@@ -154,7 +154,7 @@ router.get(
 
       const pages = await ArtifactPage.findByArtifact(id);
 
-      const data = pages.map(page => pageSerializer(page));
+      const data = await Promise.all(pages.map(page => pageSerializer(page)));
 
       return res.status(200).json(successResponse(data, "Artifact pages retrieved successfully"));
     } catch (error) {
@@ -188,7 +188,7 @@ router.get(
         return res.status(404).json(formatError("Page not found", 404));
       }
 
-      const data = pageWithArtifactSerializer(page, artifact);
+      const data = await pageWithArtifactSerializer(page, artifact);
 
       return res.status(200).json(successResponse(data, "Page retrieved successfully"));
     } catch (error) {
