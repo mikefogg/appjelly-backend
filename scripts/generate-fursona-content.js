@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Artifact, App, Input, Actor, Media } from "#src/models/index.js";
-import fursonaPetVoiceService from "#src/helpers/fursona/pet-inner-voice-service.js";
+import generateContentJob from "#src/background/jobs/content/generate-content.js";
 import fursonaAudioService from "#src/helpers/fursona/audio-generation-service.js";
 import fursonaVideoService from "#src/helpers/fursona/video-generation-service.js";
 import chalk from "chalk";
@@ -43,7 +43,7 @@ async function generateFursonaContent() {
 
     // Step 1: Get the artifact with all relations
     console.log(chalk.yellow('📋 Step 1: Loading artifact...'));
-    const artifact = await Artifact.query()
+    let artifact = await Artifact.query()
       .findById(artifactId)
       .withGraphFetched('[input, actors, app]');
       
@@ -82,26 +82,28 @@ async function generateFursonaContent() {
     if (!monologueText || artifact.status !== 'completed' || regenText || resetContent) {
       console.log(chalk.yellow('💭 Step 2: Generating pet inner monologue...'));
       
-      const generationResult = await fursonaPetVoiceService.generateMonologueFromInput(
-        artifact.input,
-        artifact.actors
-      );
+      // Use the actual content generation job with fursona app slug
+      const jobResult = await generateContentJob({
+        data: {
+          inputId: artifact.input.id,
+          artifactId: artifactId,
+          regenerate: regenText || resetContent,
+          appSlug: 'fursona'
+        }
+      });
 
-      console.log(`✓ Generated monologue (${generationResult.monologue.length} chars)`);
-      console.log(chalk.gray(`  Preview: "${generationResult.monologue.substring(0, 100)}..."`));
-      console.log(`  Tokens: ${generationResult.usage.total}`);
-      console.log(`  Cost: $${generationResult.cost.toFixed(4)}`);
+      console.log(`✓ Generated monologue via content job`);
+      console.log(`  Tokens: ${jobResult.tokens}`);
+      console.log(`  Cost: $${jobResult.cost.toFixed(4)}`);
+      console.log(`  Title: "${jobResult.title}"`);
       
-      // Save to artifact (without auto-queueing audio)
-      await fursonaPetVoiceService.saveMonologueToArtifact(
-        artifactId,
-        generationResult,
-        null,
-        { skipAudioGeneration: true }
-      );
-
-      monologueText = generationResult.monologue;
-      console.log('✓ Saved monologue to artifact');
+      // Reload artifact to get the updated monologue
+      artifact = await Artifact.query()
+        .findById(artifactId)
+        .withGraphFetched('[input, actors, app]');
+      
+      monologueText = artifact.metadata?.monologue_text || artifact.description;
+      console.log(chalk.gray(`  Preview: "${monologueText.substring(0, 100)}..."`));
       console.log('');
     } else {
       console.log(chalk.green('✓ Step 2: Monologue already exists'));

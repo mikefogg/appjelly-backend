@@ -12,12 +12,17 @@ class Input extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["account_id", "app_id", "prompt"],
+      required: ["account_id", "app_id"],
       properties: {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
-        prompt: { type: "string", minLength: 1 },
+        prompt: { 
+          oneOf: [
+            { type: "string", minLength: 1 },
+            { type: "null" }
+          ]
+        },
         length: { type: "string", enum: ["short", "medium", "long"], default: "medium" },
         actor_ids: { type: "array", items: { type: "string", format: "uuid" } },
         metadata: { type: "object" },

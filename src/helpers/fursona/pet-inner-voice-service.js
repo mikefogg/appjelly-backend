@@ -109,10 +109,10 @@ Today's Event:`
     const startTime = Date.now();
     
     const response = await this.openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4.1-nano",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.8,
-      max_tokens: 80, // Very short for 10-second videos (30-40 words max)
+      max_tokens: 60, // Very short for 10-second videos (30-40 words max)
     });
 
     const content = response.choices[0]?.message?.content;

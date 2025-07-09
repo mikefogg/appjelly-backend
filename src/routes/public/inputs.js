@@ -32,6 +32,7 @@ const router = express.Router({ mergeParams: true });
 
 const createInputValidators = [
   body("prompt")
+    .optional()
     .isLength({ min: 10, max: 1000 })
     .withMessage("Prompt must be 10-1000 characters"),
   body("actor_ids")
@@ -68,6 +69,13 @@ const createInputValidators = [
     .optional()
     .isUUID()
     .withMessage("Invalid upload session ID"),
+  // Custom validation: require either prompt OR upload_session_id
+  body().custom((value) => {
+    if (!value.prompt && !value.upload_session_id) {
+      throw new Error("Either prompt or upload_session_id is required");
+    }
+    return true;
+  }),
 ];
 
 const inferenceValidators = [
@@ -149,6 +157,7 @@ router.post(
 
       // If upload_session_id provided, verify it exists and belongs to this user
       let pendingMediaCount = 0;
+      
       if (upload_session_id) {
         const pendingMedia = await Media.findPendingBySessionId(upload_session_id);
         
@@ -183,10 +192,14 @@ router.post(
       let { input, artifact } = await createStory({
         accountId: res.locals.account.id,
         appId: res.locals.app.id,
-        prompt,
+        prompt: prompt || null, // Allow null prompt for image-only inputs
         actorIds: actor_ids,
         mainCharacterIds: main_character_ids,
-        metadata,
+        metadata: {
+          ...metadata,
+          // Track if this is an image-only input
+          ...(prompt ? {} : { image_only_input: true })
+        },
         uploadSessionId: upload_session_id,
         appConfig: res.locals.app.config
       });

@@ -151,6 +151,118 @@ Return a JSON object with this structure:
     }
   }
 
+  async generateStoryPromptFromImages(imageDescriptions) {
+    // Check if AI bypass is enabled for development
+    if (process.env.BYPASS_AI === "true") {
+      return `${imageDescriptions.join(", ")}`;
+    }
+
+    try {
+      const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+      const combinedDescriptions = imageDescriptions.join("\n\n");
+
+      const prompt = `Based on these image descriptions, create a creative story prompt that would be suitable for generating a children's story:
+
+${combinedDescriptions}
+
+The story prompt should:
+- Be 1-2 sentences long
+- Capture the essence of what's happening in the images
+- Be appropriate for children
+- Focus on potential adventures, activities, or interactions
+- Be engaging and inspiring for story creation
+
+Only return the story prompt, nothing else.`;
+
+      const response = await this.openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 200,
+      });
+
+      const generatedPrompt = response.choices[0]?.message?.content?.trim();
+
+      if (!generatedPrompt) {
+        throw new Error("No prompt generated");
+      }
+
+      return generatedPrompt;
+    } catch (error) {
+      console.error("Failed to generate story prompt from images:", error);
+      // Fallback to simple prompt based on first image description
+      const firstDescription = imageDescriptions[0];
+      if (firstDescription) {
+        // Extract the main subject and action from the description
+        const subject = firstDescription.split(".")[0];
+        // Clean up the description to make it more prompt-like
+        const cleanedSubject = subject
+          .replace(/^The image shows/, "")
+          .replace(/^A /, "")
+          .trim();
+        return cleanedSubject.charAt(0).toUpperCase() + cleanedSubject.slice(1);
+      }
+      return "A pet enjoying their day at home";
+    }
+  }
+
+  async generatePetPromptFromImages(imageDescriptions) {
+    // Check if AI bypass is enabled for development
+    if (process.env.BYPASS_AI === "true") {
+      return `${imageDescriptions.join(", ")}`;
+    }
+
+    try {
+      const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+      const combinedDescriptions = imageDescriptions.join("\n\n");
+
+      const prompt = `Based on these image descriptions of a pet, create a simple prompt describing what the pet is doing or experiencing:
+
+${combinedDescriptions}
+
+The prompt should:
+- Be short, 1-2 sentences long
+- Describe the pet's activity or situation from a neutral perspective
+- Focus on what the pet is doing, where they are, or what they're experiencing
+- Be suitable for generating a pet's inner thoughts about the situation
+- Use simple, clear language
+
+Only return the pet activity prompt, nothing else.`;
+
+      const response = await this.openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 200,
+      });
+
+      const generatedPrompt = response.choices[0]?.message?.content?.trim();
+      
+      if (!generatedPrompt) {
+        throw new Error("No prompt generated");
+      }
+
+      return generatedPrompt;
+    } catch (error) {
+      console.error("Failed to generate pet prompt from images:", error);
+      // Fallback to simple prompt based on first image description
+      const firstDescription = imageDescriptions[0];
+      if (firstDescription) {
+        // Extract the main subject and action from the description
+        const subject = firstDescription.split(".")[0];
+        // Clean up the description to make it more prompt-like
+        const cleanedSubject = subject
+          .replace(/^The image shows/, "")
+          .replace(/^A /, "")
+          .trim();
+        return cleanedSubject.charAt(0).toUpperCase() + cleanedSubject.slice(1);
+      }
+      return "A pet enjoying their day at home";
+    }
+  }
+
   async generateImagePrompt(text, style = "children's book illustration") {
     // Check if AI bypass is enabled for development
     if (process.env.BYPASS_AI === "true") {

@@ -80,11 +80,11 @@ if (options['audio-url']) {
 // Word timings will be fetched by the Remotion component via props
 // No need to fetch here since we're passing the URL through props
 
-// Prepare props
+// Prepare props - sanitize text to remove newlines that break shell commands
 const props = {
   imageUrl,
   audioUrl,
-  text,
+  text: text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim(), // Remove newlines and normalize whitespace
   durationInSeconds: duration,
   wordTimingsUrl: options['word-timings-url'] || null,
 };

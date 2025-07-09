@@ -67,11 +67,12 @@ class FursonaVideoGenerationService {
         ? Math.ceil(audioDurationSeconds)
         : durationInSeconds;
 
-      // Add buffer padding (1 second on each side)
+      // Add buffer padding (1 second on each side for intro/outro)
       const paddedDuration = actualDuration + 2;
 
       // Calculate duration in frames (30 fps)
       const durationInFrames = paddedDuration * 30;
+      const audioDurationInFrames = actualDuration * 30;
 
       // Generate speech-to-text alignment if audio is available
       let wordTimings = null;
@@ -123,7 +124,7 @@ class FursonaVideoGenerationService {
         "--output",
         outputPath,
         "--duration",
-        actualDuration.toString(),
+        paddedDuration.toString(),
       ];
 
       // Add audio argument if available (prefer R2 URL over local file)
@@ -151,7 +152,7 @@ class FursonaVideoGenerationService {
           );
         }
       }
-      
+
       // Add word timings URL if available
       if (wordTimingsData?.url) {
         args.push("--word-timings-url", wordTimingsData.url);
@@ -220,6 +221,7 @@ class FursonaVideoGenerationService {
         size_bytes: stats.size,
         duration_seconds: actualDuration,
         duration_frames: durationInFrames,
+        audio_duration_frames: audioDurationInFrames,
         fps: 30,
         width: 1080,
         height: 1920,
@@ -366,37 +368,44 @@ class FursonaVideoGenerationService {
       // Create unique filename for permanent storage
       const timestamp = Date.now();
       const r2Key = `fursona/videos/${artifactId}-${timestamp}.mp4`;
-      
+
       // Upload to R2 using Cloudflare R2 REST API (same pattern as audio/timings)
       const r2AccountId = process.env.CLOUDFLARE_R2_ACCOUNT_ID;
       const r2ApiKey = process.env.CLOUDFLARE_R2_API_KEY;
-      const r2BucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME?.replace(/['";]/g, '');
-      const r2PublicUrl = process.env.CLOUDFLARE_R2_PUBLIC_URL?.replace(/['";]/g, '');
-      
+      const r2BucketName = process.env.CLOUDFLARE_R2_BUCKET_NAME?.replace(
+        /['";]/g,
+        ""
+      );
+      const r2PublicUrl = process.env.CLOUDFLARE_R2_PUBLIC_URL?.replace(
+        /['";]/g,
+        ""
+      );
+
       const url = `https://api.cloudflare.com/client/v4/accounts/${r2AccountId}/r2/buckets/${r2BucketName}/objects/${r2Key}`;
-      
+
       const response = await fetch(url, {
-        method: 'PUT',
+        method: "PUT",
         headers: {
-          'Authorization': `Bearer ${r2ApiKey}`,
-          'Content-Type': 'video/mp4',
+          Authorization: `Bearer ${r2ApiKey}`,
+          "Content-Type": "video/mp4",
         },
         body: videoBuffer,
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`R2 upload failed: ${response.status} ${response.statusText} - ${errorText}`);
+        throw new Error(
+          `R2 upload failed: ${response.status} ${response.statusText} - ${errorText}`
+        );
       }
 
       // Return both key and URL
       return {
         key: r2Key,
-        url: `${r2PublicUrl}/${r2Key}`
+        url: `${r2PublicUrl}/${r2Key}`,
       };
-      
     } catch (error) {
-      console.error('[Fursona Video] Failed to upload video to R2:', error);
+      console.error("[Fursona Video] Failed to upload video to R2:", error);
       throw error;
     }
   }

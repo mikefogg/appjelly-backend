@@ -1,6 +1,8 @@
-import { Artifact, App } from "#src/models/index.js";
+import { Artifact, App, Media } from "#src/models/index.js";
 import snugglebugStoryService from "#src/helpers/snugglebug/story-creation-service.js";
 import fursonaPetVoiceService from "#src/helpers/fursona/pet-inner-voice-service.js";
+import imageAnalysisService from "#src/helpers/fursona/image-analysis-service.js";
+import aiService from "#src/helpers/ai-service.js";
 
 export default async function generateContentJob(job) {
   const { inputId, artifactId, regenerate = false, skipImageGeneration = false, appSlug } = job.data;
@@ -99,6 +101,79 @@ export default async function generateContentJob(job) {
           generation_count: (artifact.metadata?.generation_count || 0) + 1,
         },
       });
+    }
+
+    // Handle missing prompts by generating from images (for image-only inputs)
+    if (!artifact.input.prompt && artifact.input.metadata?.image_only_input) {
+      console.log(`[Generate Content] No prompt found, generating from uploaded images...`);
+      
+      try {
+        // Get images associated with the input
+        const inputMedia = await Media.query()
+          .where('owner_type', 'input')
+          .where('owner_id', artifact.input.id)
+          .where('media_type', 'image')
+          .where('status', 'committed');
+        
+        if (inputMedia.length === 0) {
+          throw new Error('No images found for image-only input');
+        }
+        
+        console.log(`[Generate Content] Found ${inputMedia.length} images to analyze`);
+        
+        // Analyze all images and collect descriptions
+        const imageDescriptions = [];
+        let totalAnalysisCost = 0;
+        
+        for (const media of inputMedia) {
+          // Check if already analyzed
+          const existingAnalysis = await imageAnalysisService.getAnalysisResults(media.id);
+          
+          if (existingAnalysis) {
+            imageDescriptions.push(existingAnalysis.description);
+            console.log(`[Generate Content] Using existing analysis for ${media.image_key}`);
+          } else {
+            // Analyze the image
+            const analysisResult = await imageAnalysisService.analyzeImageMedia(media);
+            imageDescriptions.push(analysisResult.description);
+            totalAnalysisCost += analysisResult.cost;
+            console.log(`[Generate Content] Analyzed ${media.image_key}, cost: $${analysisResult.cost.toFixed(6)}`);
+          }
+        }
+        
+        // Generate appropriate prompt based on app type
+        let generatedPrompt;
+        if (appSlugToUse === "fursona") {
+          generatedPrompt = await aiService.generatePetPromptFromImages(imageDescriptions);
+        } else {
+          generatedPrompt = await aiService.generateStoryPromptFromImages(imageDescriptions);
+        }
+        
+        console.log(`[Generate Content] Generated prompt: "${generatedPrompt}"`);
+        console.log(`[Generate Content] Total analysis cost: $${totalAnalysisCost.toFixed(6)}`);
+        
+        // Update the input with the generated prompt
+        await artifact.input.$query().patch({
+          prompt: generatedPrompt,
+          metadata: {
+            ...artifact.input.metadata,
+            prompt_generated_from_images: true,
+            image_analysis_cost: totalAnalysisCost,
+            prompt_generated_at: new Date().toISOString()
+          }
+        });
+        
+        // Reload the artifact to get the updated input
+        artifact = await Artifact.query()
+          .findById(artifactId)
+          .withGraphFetched("[input, actors, app]");
+        
+        console.log(`[Generate Content] Updated input with generated prompt`);
+        
+      } catch (error) {
+        console.error('[Generate Content] Failed to generate prompt from images:', error);
+        throw new Error(`Failed to generate prompt from images: ${error.message}`);
+      }
     }
 
     // Route to appropriate service based on app
