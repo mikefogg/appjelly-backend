@@ -7,6 +7,9 @@ import {
   JOB_OPTIMIZE_IMAGES,
   JOB_PROCESS_ACTOR_IMAGE,
   JOB_GENERATE_PAGE_IMAGE,
+  JOB_GENERATE_PAGE_AUDIO,
+  JOB_GENERATE_ARTIFACT_AUDIO,
+  JOB_GENERATE_STORY_AUDIO,
   QUEUE_MEDIA_PROCESSING,
 } from "#src/background/queues/index.js";
 import { redisOpts } from "#src/utils/redis.js";
@@ -16,6 +19,9 @@ import chalk from "chalk";
 import ProcessImageUploadWorker from "#src/background/jobs/media/process-image-upload.js";
 import ProcessActorImageWorker from "#src/background/jobs/images/process-actor-image.js";
 import GeneratePageImageWorker from "#src/background/jobs/images/generate-page-image.js";
+import GeneratePageAudioWorker from "#src/background/jobs/audio/generate-page-audio.js";
+import GenerateArtifactAudioWorker from "#src/background/jobs/audio/generate-artifact-audio.js";
+import GenerateStoryAudioWorker from "#src/background/jobs/audio/generate-story-audio.js";
 
 let key = "Media Manager";
 let workers = process.env.MEDIA_WORKERS
@@ -59,6 +65,15 @@ function start() {
                 break;
               case JOB_GENERATE_PAGE_IMAGE:
                 await GeneratePageImageWorker(job);
+                break;
+              case JOB_GENERATE_PAGE_AUDIO:
+                await GeneratePageAudioWorker(job);
+                break;
+              case JOB_GENERATE_ARTIFACT_AUDIO:
+                await GenerateArtifactAudioWorker(job);
+                break;
+              case JOB_GENERATE_STORY_AUDIO:
+                await GenerateStoryAudioWorker(job);
                 break;
               default:
                 console.error(`[%s] Unprocessed job: %s`, key, job.name);

@@ -2,6 +2,8 @@ import BaseModel from "#src/models/BaseModel.js";
 import Actor from "#src/models/Actor.js";
 import Input from "#src/models/Input.js";
 import Account from "#src/models/Account.js";
+import ArtifactPage from "#src/models/ArtifactPage.js";
+import Artifact from "#src/models/Artifact.js";
 
 class Media extends BaseModel {
   static get tableName() {
@@ -11,12 +13,26 @@ class Media extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["owner_type", "owner_id", "image_key"],
+      required: ["owner_type", "owner_id", "media_type"],
       properties: {
         ...super.jsonSchema.properties,
-        owner_type: { type: "string", enum: ["actor", "input", "account"] },
+        owner_type: { type: "string", enum: ["actor", "input", "account", "artifact_page", "artifact"] },
         owner_id: { type: "string", format: "uuid" },
-        image_key: { type: "string", minLength: 1 },
+        media_type: { type: "string", enum: ["image", "audio"], default: "image" },
+        
+        // Image fields
+        image_key: { type: ["string", "null"], minLength: 1 },
+        
+        // Audio fields
+        audio_key: { type: ["string", "null"], minLength: 1 },
+        audio_filename: { type: ["string", "null"] },
+        audio_format: { type: ["string", "null"], enum: ["mp3", "opus", "aac", "flac", "wav", "pcm", null] },
+        audio_duration_seconds: { type: ["integer", "null"] },
+        audio_size_bytes: { type: ["integer", "null"] },
+        audio_voice: { type: ["string", "null"], enum: ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage", null] },
+        audio_speed: { type: ["number", "null"], minimum: 0.25, maximum: 4.0 },
+        audio_text: { type: ["string", "null"] },
+        
         status: { type: "string", enum: ["pending", "committed", "expired"], default: "committed" },
         upload_session_id: { type: ["string", "null"], format: "uuid" },
         expires_at: { type: ["string", "null"], format: "date-time" },
@@ -60,6 +76,28 @@ class Media extends BaseModel {
           owner_type: "account",
         },
       },
+      artifactPage: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: ArtifactPage,
+        join: {
+          from: "media.owner_id",
+          to: "artifact_pages.id",
+        },
+        filter: {
+          owner_type: "artifact_page",
+        },
+      },
+      artifact: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: Artifact,
+        join: {
+          from: "media.owner_id",
+          to: "artifacts.id",
+        },
+        filter: {
+          owner_type: "artifact",
+        },
+      },
     };
   }
 
@@ -74,6 +112,7 @@ class Media extends BaseModel {
     return this.query().insert({
       owner_type: "actor",
       owner_id: actorId,
+      media_type: "image",
       image_key: imageKey,
       metadata,
     });
@@ -83,6 +122,7 @@ class Media extends BaseModel {
     return this.query().insert({
       owner_type: "input",
       owner_id: inputId,
+      media_type: "image",
       image_key: imageKey,
       metadata,
     });
@@ -92,8 +132,58 @@ class Media extends BaseModel {
     return this.query().insert({
       owner_type: "account",
       owner_id: accountId,
+      media_type: "image",
       image_key: imageKey,
       metadata,
+    });
+  }
+
+  // Audio creation methods
+  static async createAudioForPage(pageId, audioData, metadata = {}) {
+    return this.query().insert({
+      owner_type: "artifact_page",
+      owner_id: pageId,
+      media_type: "audio",
+      audio_key: audioData.filename,
+      audio_filename: audioData.filename,
+      audio_format: audioData.format || "mp3",
+      audio_duration_seconds: audioData.duration_seconds,
+      audio_size_bytes: audioData.audio_size_bytes,
+      audio_voice: audioData.voice,
+      audio_speed: audioData.speed,
+      audio_text: audioData.text_used,
+      metadata: {
+        ...metadata,
+        generation_cost: audioData.generation_cost,
+        generation_time: audioData.generation_time,
+        character_count: audioData.character_count,
+        model: audioData.model,
+        quality: audioData.quality,
+      },
+    });
+  }
+
+  static async createAudioForArtifact(artifactId, audioData, metadata = {}) {
+    return this.query().insert({
+      owner_type: "artifact",
+      owner_id: artifactId,
+      media_type: "audio",
+      audio_key: audioData.filename,
+      audio_filename: audioData.filename,
+      audio_format: audioData.format || "mp3",
+      audio_duration_seconds: audioData.duration_seconds,
+      audio_size_bytes: audioData.audio_size_bytes,
+      audio_voice: audioData.voice,
+      audio_speed: audioData.speed,
+      audio_text: audioData.text_used,
+      metadata: {
+        ...metadata,
+        generation_cost: audioData.generation_cost,
+        generation_time: audioData.generation_time,
+        character_count: audioData.character_count,
+        model: audioData.model,
+        quality: audioData.quality,
+      },
     });
   }
 
@@ -167,6 +257,12 @@ class Media extends BaseModel {
       },
       forAccount(builder) {
         builder.where("owner_type", "account");
+      },
+      forArtifact(builder) {
+        builder.where("owner_type", "artifact");
+      },
+      forArtifactPage(builder) {
+        builder.where("owner_type", "artifact_page");
       },
       committed(builder) {
         builder.where("status", "committed");

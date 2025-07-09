@@ -64,6 +64,9 @@ export const JOB_GENERATE_THUMBNAILS = "generate-thumbnails";
 export const JOB_OPTIMIZE_IMAGES = "optimize-images";
 export const JOB_PROCESS_ACTOR_IMAGE = "process-actor-image";
 export const JOB_GENERATE_PAGE_IMAGE = "generate-page-image";
+export const JOB_GENERATE_PAGE_AUDIO = "generate-page-audio";
+export const JOB_GENERATE_ARTIFACT_AUDIO = "generate-artifact-audio";
+export const JOB_GENERATE_STORY_AUDIO = "generate-story-audio";
 
 // Safety Jobs
 export const JOB_MODERATE_CONTENT = "moderate-content";
@@ -109,6 +112,9 @@ export const MEDIA_JOBS = {
   OPTIMIZE_IMAGES: JOB_OPTIMIZE_IMAGES,
   PROCESS_ACTOR_IMAGE: JOB_PROCESS_ACTOR_IMAGE,
   GENERATE_PAGE_IMAGE: JOB_GENERATE_PAGE_IMAGE,
+  GENERATE_PAGE_AUDIO: JOB_GENERATE_PAGE_AUDIO,
+  GENERATE_ARTIFACT_AUDIO: JOB_GENERATE_ARTIFACT_AUDIO,
+  GENERATE_STORY_AUDIO: JOB_GENERATE_STORY_AUDIO,
 };
 
 export const SAFETY_JOBS = {

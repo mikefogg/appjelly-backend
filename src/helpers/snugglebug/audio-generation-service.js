@@ -9,13 +9,32 @@ class AudioGenerationService {
     });
 
     // Audio configuration
-    this.audioModel = "tts-1"; // Options: "tts-1", "tts-1-hd"
-    this.defaultVoice = "nova"; // Options: "alloy", "echo", "fable", "onyx", "nova", "shimmer"
+    this.audioModel = "gpt-4o-mini-tts"; // Options: "tts-1", "tts-1-hd", "gpt-4o-mini-tts"
+    this.defaultVoice = "nova"; // Options: "alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage"
     this.audioFormat = "mp3"; // Options: "mp3", "opus", "aac", "flac", "wav", "pcm"
+
+    // Voice presets with custom instructions for gpt-4o-mini-tts
+    this.voicePresets = {
+      sage: {
+        voice: "sage",
+        instructions: `Affect: A gentle, curious narrator with a British accent, guiding a magical, child-friendly adventure through a fairy tale world.
+          Tone: Magical, warm, and inviting, creating a sense of wonder and excitement for young listeners.
+          Pacing: Steady and measured, with slight pauses to emphasize magical moments and maintain the storytelling flow.
+          Emotion: Wonder, curiosity, and a sense of adventure, with a lighthearted and positive vibe throughout.
+          Pronunciation: Clear and precise, with an emphasis on storytelling, ensuring the words are easy to follow and enchanting to listen to.`,
+        description:
+          "Custom sage voice for bedtime stories with deep tranquility and magic",
+      },
+      default: {
+        voice: "nova",
+        instructions: null,
+        description: "Bright and energetic default voice",
+      },
+    };
 
     // Local audio storage directory
     this.audioDir = path.join(process.cwd(), "storage", "audio");
-    
+
     // Ensure audio directory exists
     this.ensureAudioDirectory();
   }
@@ -34,6 +53,52 @@ class AudioGenerationService {
   }
 
   /**
+   * Resolve voice preset or use direct voice/speed values
+   * @param {string} voice - Voice preset name or direct voice
+   * @param {number} speed - Speed override (optional)
+   * @returns {Object} Resolved voice settings
+   */
+  resolveVoiceSettings(voice, speed = null) {
+    // Check if it's a preset
+    if (this.voicePresets[voice]) {
+      const preset = this.voicePresets[voice];
+      return {
+        voice: preset.voice,
+        speed: speed !== null ? speed : preset.speed,
+        preset: voice,
+        description: preset.description,
+      };
+    }
+
+    // Direct voice specification
+    const validVoices = [
+      "alloy",
+      "echo",
+      "fable",
+      "onyx",
+      "nova",
+      "shimmer",
+      "sage",
+    ];
+    if (validVoices.includes(voice)) {
+      return {
+        voice: voice,
+        speed: speed !== null ? speed : 1.0,
+        preset: null,
+        description: `Direct voice: ${voice}`,
+      };
+    }
+
+    // Fallback to default
+    return {
+      voice: this.defaultVoice,
+      speed: speed !== null ? speed : 1.0,
+      preset: "default",
+      description: "Default voice settings",
+    };
+  }
+
+  /**
    * Get model-specific parameters for audio generation
    * @returns {Object} Parameters for the current model
    */
@@ -46,9 +111,16 @@ class AudioGenerationService {
       };
     } else if (this.audioModel === "tts-1-hd") {
       return {
-        model: "tts-1-hd", 
+        model: "tts-1-hd",
         quality: "hd",
         speed: 1.0, // 0.25 to 4.0
+      };
+    } else if (this.audioModel === "gpt-4o-mini-tts") {
+      return {
+        model: "gpt-4o-mini-tts",
+        quality: "standard",
+        speed: 1.0, // 0.25 to 4.0
+        supportsInstructions: true,
       };
     } else {
       throw new Error(`Unsupported audio model: ${this.audioModel}`);
@@ -62,17 +134,22 @@ class AudioGenerationService {
    */
   calculateAudioCost(characterCount) {
     const modelParams = this.getModelParams();
-    
+
     // OpenAI TTS pricing (as of 2024)
     const pricing = {
       "tts-1": 0.015 / 1000, // $0.015 per 1K characters
-      "tts-1-hd": 0.030 / 1000, // $0.030 per 1K characters
+      "tts-1-hd": 0.03 / 1000, // $0.030 per 1K characters
+      "gpt-4o-mini-tts": 0.015 / 1000, // $0.015 per 1K characters (same as tts-1)
     };
 
     const costPerChar = pricing[modelParams.model] || pricing["tts-1"];
     const cost = characterCount * costPerChar;
-    
-    console.log(`[Audio Cost] ${characterCount} characters at $${costPerChar.toFixed(6)} per char = $${cost.toFixed(4)} (${modelParams.model})`);
+
+    console.log(
+      `[Audio Cost] ${characterCount} characters at $${costPerChar.toFixed(
+        6
+      )} per char = $${cost.toFixed(4)} (${modelParams.model})`
+    );
     return cost;
   }
 
@@ -88,19 +165,50 @@ class AudioGenerationService {
       const startTime = Date.now();
       const selectedVoice = voice || this.defaultVoice;
       const modelParams = this.getModelParams();
-      
-      console.log(`[Audio Generation] Generating audio for ${text.length} characters...`);
-      console.log(`[Audio Generation] Using voice: ${selectedVoice}, model: ${modelParams.model}`);
-      console.log(`[Audio Generation] Text preview: "${text.substring(0, 100)}${text.length > 100 ? '...' : ''}"`);
+      const voiceSettings = this.resolveVoiceSettings(
+        selectedVoice,
+        options.speed
+      );
 
-      // Generate audio using OpenAI TTS
-      const response = await this.openai.audio.speech.create({
+      console.log(
+        `[Audio Generation] Generating audio for ${text.length} characters...`
+      );
+      console.log(
+        `[Audio Generation] Using voice: ${voiceSettings.voice}, model: ${modelParams.model}`
+      );
+      console.log(
+        `[Audio Generation] Voice preset: ${voiceSettings.preset || "none"}`
+      );
+      console.log(
+        `[Audio Generation] Text preview: "${text.substring(0, 100)}${
+          text.length > 100 ? "..." : ""
+        }"`
+      );
+
+      // Prepare the API call parameters
+      const apiParams = {
         model: modelParams.model,
-        voice: selectedVoice,
+        voice: voiceSettings.voice,
         input: text,
         response_format: this.audioFormat,
-        speed: options.speed || modelParams.speed,
-      });
+        speed: voiceSettings.speed,
+      };
+
+      // Add custom instructions for gpt-4o-mini-tts if voice preset has them
+      if (
+        modelParams.supportsInstructions &&
+        voiceSettings.preset &&
+        this.voicePresets[voiceSettings.preset]?.instructions
+      ) {
+        apiParams.instructions =
+          this.voicePresets[voiceSettings.preset].instructions;
+        console.log(
+          `[Audio Generation] Using custom voice instructions for ${voiceSettings.preset}`
+        );
+      }
+
+      // Generate audio using OpenAI TTS
+      const response = await this.openai.audio.speech.create(apiParams);
 
       // Generate unique filename
       const timestamp = Date.now();
@@ -119,7 +227,11 @@ class AudioGenerationService {
       const generationCost = this.calculateAudioCost(text.length);
 
       console.log(`[Audio Generation] Created audio file: ${filename}`);
-      console.log(`[Audio Generation] Size: ${audioSize} bytes, Duration: ${generationTime.toFixed(2)}s`);
+      console.log(
+        `[Audio Generation] Size: ${audioSize} bytes, Duration: ${generationTime.toFixed(
+          2
+        )}s`
+      );
       console.log(`[Audio Generation] Cost: $${generationCost.toFixed(4)}`);
 
       return {
@@ -130,11 +242,16 @@ class AudioGenerationService {
         generation_cost: generationCost,
         generation_time: generationTime,
         audio_size_bytes: audioSize,
-        voice: selectedVoice,
+        voice: voiceSettings.voice,
+        voice_preset: voiceSettings.preset,
         model: modelParams.model,
         quality: modelParams.quality,
         format: this.audioFormat,
-        speed: options.speed || modelParams.speed,
+        speed: voiceSettings.speed,
+        instructions_used:
+          modelParams.supportsInstructions && voiceSettings.preset
+            ? this.voicePresets[voiceSettings.preset]?.instructions
+            : null,
       };
     } catch (error) {
       console.error(`[Audio Generation] Error generating audio:`, error);
@@ -152,23 +269,51 @@ class AudioGenerationService {
   async generatePageAudio(pageText, pageNumber, options = {}) {
     try {
       const startTime = Date.now();
-      
-      // Clean up the text for better speech synthesis
-      const cleanedText = this.cleanTextForSpeech(pageText);
-      
-      console.log(`[Page Audio] Generating audio for page ${pageNumber}...`);
-      
+
       const modelParams = this.getModelParams();
       const selectedVoice = options.voice || this.defaultVoice;
-      
-      // Generate audio using OpenAI TTS
-      const response = await this.openai.audio.speech.create({
+      const voiceSettings = this.resolveVoiceSettings(
+        selectedVoice,
+        options.speed
+      );
+
+      // Clean up the text for better speech synthesis
+      const cleanedText = this.cleanTextForSpeech(
+        pageText,
+        voiceSettings.preset
+      );
+
+      console.log(`[Page Audio] Generating audio for page ${pageNumber}...`);
+      console.log(
+        `[Page Audio] Using voice: ${voiceSettings.voice}, preset: ${
+          voiceSettings.preset || "none"
+        }`
+      );
+
+      // Prepare the API call parameters
+      const apiParams = {
         model: modelParams.model,
-        voice: selectedVoice,
+        voice: voiceSettings.voice,
         input: cleanedText,
         response_format: this.audioFormat,
-        speed: options.speed || modelParams.speed,
-      });
+        speed: voiceSettings.speed,
+      };
+
+      // Add custom instructions for gpt-4o-mini-tts if voice preset has them
+      if (
+        modelParams.supportsInstructions &&
+        voiceSettings.preset &&
+        this.voicePresets[voiceSettings.preset]?.instructions
+      ) {
+        apiParams.instructions =
+          this.voicePresets[voiceSettings.preset].instructions;
+        console.log(
+          `[Page Audio] Using custom voice instructions for ${voiceSettings.preset}`
+        );
+      }
+
+      // Generate audio using OpenAI TTS
+      const response = await this.openai.audio.speech.create(apiParams);
 
       // Generate unique filename with page number
       const timestamp = Date.now();
@@ -186,7 +331,9 @@ class AudioGenerationService {
       // Calculate cost
       const generationCost = this.calculateAudioCost(cleanedText.length);
 
-      console.log(`[Page Audio] Created audio for page ${pageNumber}: ${filename}`);
+      console.log(
+        `[Page Audio] Created audio for page ${pageNumber}: ${filename}`
+      );
       console.log(`[Page Audio] Cost: $${generationCost.toFixed(4)}`);
 
       return {
@@ -199,14 +346,22 @@ class AudioGenerationService {
         generation_cost: generationCost,
         generation_time: generationTime,
         audio_size_bytes: audioSize,
-        voice: selectedVoice,
+        voice: voiceSettings.voice,
+        voice_preset: voiceSettings.preset,
         model: modelParams.model,
         quality: modelParams.quality,
         format: this.audioFormat,
-        speed: options.speed || modelParams.speed,
+        speed: voiceSettings.speed,
+        instructions_used:
+          modelParams.supportsInstructions && voiceSettings.preset
+            ? this.voicePresets[voiceSettings.preset]?.instructions
+            : null,
       };
     } catch (error) {
-      console.error(`[Page Audio] Error generating audio for page ${pageNumber}:`, error);
+      console.error(
+        `[Page Audio] Error generating audio for page ${pageNumber}:`,
+        error
+      );
       throw error;
     }
   }
@@ -214,20 +369,68 @@ class AudioGenerationService {
   /**
    * Clean text for better speech synthesis
    * @param {string} text - Raw text from story page
+   * @param {string} voicePreset - Voice preset to optimize for
    * @returns {string} Cleaned text optimized for TTS
    */
-  cleanTextForSpeech(text) {
-    return text
+  cleanTextForSpeech(text, voicePreset = null) {
+    let cleanedText = text
       // Remove excessive whitespace
-      .replace(/\s+/g, ' ')
+      .replace(/\s+/g, " ")
       // Remove special characters that might cause issues
-      .replace(/[^\w\s\.\,\!\?\;\:\-\'\"/]/g, '')
+      .replace(/[^\w\s\.\,\!\?\;\:\-\'\"/]/g, "")
       // Ensure proper sentence endings
-      .replace(/([^\.])\s*$/g, '$1.')
-      // Add pauses for better pacing
-      .replace(/\.\s+/g, '. ')
-      .replace(/\,\s+/g, ', ')
+      .replace(/([^\.])\s*$/g, "$1.")
       .trim();
+
+    // For gpt-4o-mini-tts with custom instructions, we don't need text enhancements
+    // as the model handles voice characteristics through the instructions parameter
+    if (this.audioModel === "gpt-4o-mini-tts" && voicePreset === "sage") {
+      // Keep text clean and natural - let the instructions handle the voice characteristics
+      return cleanedText;
+    }
+
+    // For older TTS models, apply voice-specific text enhancements as fallback
+    if (voicePreset === "sage") {
+      cleanedText = this.enhanceTextForSageVoice(cleanedText);
+    } else {
+      // Standard pacing for other voices
+      cleanedText = cleanedText.replace(/\.\s+/g, ". ").replace(/\,\s+/g, ", ");
+    }
+
+    return cleanedText;
+  }
+
+  /**
+   * Enhance text specifically for the sage voice preset
+   * @param {string} text - Cleaned text
+   * @returns {string} Text with sage voice enhancements
+   */
+  enhanceTextForSageVoice(text) {
+    return (
+      text
+        // Add longer pauses after sentences for reflection
+        .replace(/\.\s+/g, "... ")
+        // Add pauses after commas for deliberate pacing
+        .replace(/\,\s+/g, ", ... ")
+        // Add pauses before and after dialogue or quoted text
+        .replace(/"/g, ' ... " ... ')
+        // Add gentle pauses around magical or emotional moments
+        .replace(
+          /\b(magic|magical|wonder|wonderful|dream|dreaming|gentle|soft|quiet|peaceful|cozy|warm)\b/gi,
+          "... $1 ..."
+        )
+        // Slightly elongate vowel sounds in key words (represented as repeated letters)
+        .replace(/\b(ooh|ahh|wow)\b/gi, "$1h")
+        // Add pauses around transitional phrases
+        .replace(
+          /\b(suddenly|meanwhile|then|next|finally|at last)\b/gi,
+          "... $1 ..."
+        )
+        // Clean up excessive pauses
+        .replace(/\.{4,}/g, "...")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
 
   /**
@@ -237,20 +440,28 @@ class AudioGenerationService {
    * @returns {Array} Array of generation results
    */
   async batchGeneratePageAudio(pages, options = {}) {
-    console.log(`[Batch Audio] Starting batch generation for ${pages.length} pages...`);
+    console.log(
+      `[Batch Audio] Starting batch generation for ${pages.length} pages...`
+    );
 
     const results = [];
     const batchSize = 5; // Process 5 at a time to avoid rate limits
 
     for (let i = 0; i < pages.length; i += batchSize) {
       const batch = pages.slice(i, i + batchSize);
-      console.log(`[Batch Audio] Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(pages.length / batchSize)}`);
+      console.log(
+        `[Batch Audio] Processing batch ${
+          Math.floor(i / batchSize) + 1
+        }/${Math.ceil(pages.length / batchSize)}`
+      );
 
       const batchPromises = batch.map((page) =>
-        this.generatePageAudio(page.text, page.page_number, options).catch((error) => ({
-          error: error.message,
-          page_number: page.page_number,
-        }))
+        this.generatePageAudio(page.text, page.page_number, options).catch(
+          (error) => ({
+            error: error.message,
+            page_number: page.page_number,
+          })
+        )
       );
 
       const batchResults = await Promise.all(batchPromises);
@@ -262,7 +473,11 @@ class AudioGenerationService {
       }
     }
 
-    console.log(`[Batch Audio] Completed batch generation. ${results.filter((r) => !r.error).length}/${pages.length} successful`);
+    console.log(
+      `[Batch Audio] Completed batch generation. ${
+        results.filter((r) => !r.error).length
+      }/${pages.length} successful`
+    );
     return results;
   }
 
@@ -279,7 +494,7 @@ class AudioGenerationService {
         gender: "neutral",
       },
       {
-        id: "echo", 
+        id: "echo",
         name: "Echo",
         description: "Male voice with clear pronunciation",
         gender: "male",
@@ -298,7 +513,7 @@ class AudioGenerationService {
       },
       {
         id: "nova",
-        name: "Nova", 
+        name: "Nova",
         description: "Female voice, bright and energetic",
         gender: "female",
       },
@@ -320,7 +535,7 @@ class AudioGenerationService {
     try {
       const filePath = path.join(this.audioDir, filename);
       const stats = await fs.stat(filePath);
-      
+
       return {
         filename,
         file_path: filePath,

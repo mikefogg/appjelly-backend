@@ -50,6 +50,8 @@ async function generatePageImage() {
     console.log(`✅ Queued page image generation job ${job.id}`);
     console.log(`🔄 Processing will: use character continuity → generate page image`);
 
+    process.exit(0);
+
   } catch (error) {
     console.error("❌ Error:", error.message);
     process.exit(1);
