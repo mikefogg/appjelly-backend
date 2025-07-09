@@ -18,7 +18,7 @@ class Media extends BaseModel {
         ...super.jsonSchema.properties,
         owner_type: { type: "string", enum: ["actor", "input", "account", "artifact_page", "artifact"] },
         owner_id: { type: "string", format: "uuid" },
-        media_type: { type: "string", enum: ["image", "audio"], default: "image" },
+        media_type: { type: "string", enum: ["image", "audio", "video"], default: "image" },
         
         // Image fields
         image_key: { type: ["string", "null"], minLength: 1 },
@@ -32,6 +32,17 @@ class Media extends BaseModel {
         audio_voice: { type: ["string", "null"], enum: ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage", null] },
         audio_speed: { type: ["number", "null"], minimum: 0.25, maximum: 4.0 },
         audio_text: { type: ["string", "null"] },
+        audio_timing_key: { type: ["string", "null"], minLength: 1 },
+        
+        // Video fields
+        video_key: { type: ["string", "null"], minLength: 1 },
+        video_filename: { type: ["string", "null"] },
+        video_format: { type: ["string", "null"], enum: ["mp4", "mov", "avi", "webm", null] },
+        video_duration_seconds: { type: ["integer", "null"] },
+        video_size_bytes: { type: ["integer", "null"] },
+        video_width: { type: ["integer", "null"] },
+        video_height: { type: ["integer", "null"] },
+        video_fps: { type: ["integer", "null"] },
         
         status: { type: "string", enum: ["pending", "committed", "expired"], default: "committed" },
         upload_session_id: { type: ["string", "null"], format: "uuid" },
@@ -168,7 +179,7 @@ class Media extends BaseModel {
       owner_type: "artifact",
       owner_id: artifactId,
       media_type: "audio",
-      audio_key: audioData.filename,
+      audio_key: audioData.r2_key,
       audio_filename: audioData.filename,
       audio_format: audioData.format || "mp3",
       audio_duration_seconds: audioData.duration_seconds,

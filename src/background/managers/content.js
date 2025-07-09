@@ -3,6 +3,7 @@ import throng from "throng";
 import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import {
   JOB_GENERATE_STORY,
+  JOB_GENERATE_CONTENT,
   JOB_GENERATE_STORY_IMAGES,
   JOB_REGENERATE_CONTENT,
   JOB_PROCESS_CHARACTER_CLAIM,
@@ -16,6 +17,7 @@ import chalk from "chalk";
 // Import and execute content regeneration job
 import ProcessRevenueCatWebhookWorker from "#src/background/jobs/subscriptions/process-revenuecat-webhook.js";
 import GenerateStoryWorker from "#src/background/jobs/content/generate-story.js";
+import GenerateContentWorker from "#src/background/jobs/content/generate-content.js";
 import GenerateStoryImagesWorker from "#src/background/jobs/content/generate-story-images.js";
 
 let key = "Content Manager";
@@ -48,6 +50,9 @@ function start() {
             switch (job.name) {
               case JOB_GENERATE_STORY:
                 await GenerateStoryWorker(job);
+                break;
+              case JOB_GENERATE_CONTENT:
+                await GenerateContentWorker(job);
                 break;
               case JOB_GENERATE_STORY_IMAGES:
                 await GenerateStoryImagesWorker(job);

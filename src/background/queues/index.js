@@ -22,6 +22,7 @@ export const QUEUE_NOTIFICATIONS = "notifications";
 export const QUEUE_ANALYTICS = "analytics";
 export const QUEUE_CONTENT_GENERATION = "content-generation";
 export const QUEUE_MEDIA_PROCESSING = "media-processing";
+export const QUEUE_VIDEO_GENERATION = "video-generation";
 export const QUEUE_CONTENT_SAFETY = "content-safety";
 export const QUEUE_CLEANUP = "cleanup";
 
@@ -31,6 +32,7 @@ export const notificationQueue = new Queue(QUEUE_NOTIFICATIONS, { connection: re
 export const analyticsQueue = new Queue(QUEUE_ANALYTICS, { connection: redisOpts, defaultJobOptions });
 export const contentQueue = new Queue(QUEUE_CONTENT_GENERATION, { connection: redisOpts, defaultJobOptions });
 export const mediaQueue = new Queue(QUEUE_MEDIA_PROCESSING, { connection: redisOpts, defaultJobOptions });
+export const videoQueue = new Queue(QUEUE_VIDEO_GENERATION, { connection: redisOpts, defaultJobOptions });
 export const safetyQueue = new Queue(QUEUE_CONTENT_SAFETY, { connection: redisOpts, defaultJobOptions });
 export const cleanupQueue = new Queue(QUEUE_CLEANUP, { connection: redisOpts, defaultJobOptions });
 
@@ -54,6 +56,7 @@ export const JOB_DAILY_USAGE_REPORT = "daily-usage-report";
 
 // Content Jobs
 export const JOB_GENERATE_STORY = "generate-story";
+export const JOB_GENERATE_CONTENT = "generate-content"; // Unified content generation
 export const JOB_GENERATE_STORY_IMAGES = "generate-story-images";
 export const JOB_REGENERATE_CONTENT = "regenerate-content";
 export const JOB_PROCESS_CHARACTER_CLAIM = "process-character-claim";
@@ -67,6 +70,9 @@ export const JOB_GENERATE_PAGE_IMAGE = "generate-page-image";
 export const JOB_GENERATE_PAGE_AUDIO = "generate-page-audio";
 export const JOB_GENERATE_ARTIFACT_AUDIO = "generate-artifact-audio";
 export const JOB_GENERATE_STORY_AUDIO = "generate-story-audio";
+
+// Video Jobs
+export const JOB_GENERATE_ARTIFACT_VIDEO = "generate-artifact-video";
 
 // Safety Jobs
 export const JOB_MODERATE_CONTENT = "moderate-content";
@@ -101,6 +107,7 @@ export const ANALYTICS_JOBS = {
 
 export const CONTENT_JOBS = {
   GENERATE_STORY: JOB_GENERATE_STORY,
+  GENERATE_CONTENT: JOB_GENERATE_CONTENT,
   GENERATE_STORY_IMAGES: JOB_GENERATE_STORY_IMAGES,
   REGENERATE_CONTENT: JOB_REGENERATE_CONTENT,
   PROCESS_CHARACTER_CLAIM: JOB_PROCESS_CHARACTER_CLAIM,
@@ -129,6 +136,10 @@ export const CLEANUP_JOBS = {
   CLEANUP_ORPHANED_DATA: JOB_CLEANUP_ORPHANED_DATA,
 };
 
+export const VIDEO_JOBS = {
+  GENERATE_ARTIFACT_VIDEO: JOB_GENERATE_ARTIFACT_VIDEO,
+};
+
 // Queue health check utility
 export const getQueueHealth = async () => {
   const queues = [
@@ -137,6 +148,7 @@ export const getQueueHealth = async () => {
     { name: "analytics", queue: analyticsQueue },
     { name: "content", queue: contentQueue },
     { name: "media", queue: mediaQueue },
+    { name: "video", queue: videoQueue },
     { name: "safety", queue: safetyQueue },
     { name: "cleanup", queue: cleanupQueue },
   ];

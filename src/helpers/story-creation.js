@@ -1,5 +1,5 @@
 import { Input, Artifact, ArtifactActor, Media, Actor } from "#src/models/index.js";
-import { contentQueue, JOB_GENERATE_STORY } from "#src/background/queues/index.js";
+import { contentQueue, JOB_GENERATE_CONTENT } from "#src/background/queues/index.js";
 
 /**
  * Create a story (input + artifact) with proper validation and setup
@@ -170,12 +170,13 @@ export async function queueStoryGeneration({
 }) {
   const jobPriority = priority === 'high' ? 10 : 5;
   
-  await contentQueue.add(JOB_GENERATE_STORY, {
+  await contentQueue.add(JOB_GENERATE_CONTENT, {
     inputId,
     artifactId,
     prompt,
     actorIds,
     appConfig,
+    appSlug: appConfig?.slug, // Pass app slug for content routing
   }, {
     priority: jobPriority,
     delay: 1000, // Small delay to ensure DB writes are committed
