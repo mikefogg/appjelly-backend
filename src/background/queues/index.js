@@ -25,6 +25,7 @@ export const QUEUE_MEDIA_PROCESSING = "media-processing";
 export const QUEUE_VIDEO_GENERATION = "video-generation";
 export const QUEUE_CONTENT_SAFETY = "content-safety";
 export const QUEUE_CLEANUP = "cleanup";
+export const QUEUE_GHOST = "ghost";
 
 // Queue Instances
 export const subscriptionQueue = new Queue(QUEUE_SUBSCRIPTION_PROCESSING, { connection: redisOpts, defaultJobOptions });
@@ -35,6 +36,7 @@ export const mediaQueue = new Queue(QUEUE_MEDIA_PROCESSING, { connection: redisO
 export const videoQueue = new Queue(QUEUE_VIDEO_GENERATION, { connection: redisOpts, defaultJobOptions });
 export const safetyQueue = new Queue(QUEUE_CONTENT_SAFETY, { connection: redisOpts, defaultJobOptions });
 export const cleanupQueue = new Queue(QUEUE_CLEANUP, { connection: redisOpts, defaultJobOptions });
+export const ghostQueue = new Queue(QUEUE_GHOST, { connection: redisOpts, defaultJobOptions });
 
 // Job Constants
 // Subscription Jobs
@@ -83,6 +85,12 @@ export const JOB_SCAN_USER_CONTENT = "scan-user-content";
 export const JOB_CLEANUP_EXPIRED_MEDIA = "cleanup-expired-media";
 export const JOB_CLEANUP_OLD_ARTIFACTS = "cleanup-old-artifacts";
 export const JOB_CLEANUP_ORPHANED_DATA = "cleanup-orphaned-data";
+
+// Ghost Jobs
+export const JOB_SYNC_NETWORK = "sync-network";
+export const JOB_ANALYZE_STYLE = "analyze-style";
+export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
+export const JOB_GENERATE_POST = "generate-post";
 
 // Organized job objects for backward compatibility
 export const SUBSCRIPTION_JOBS = {
@@ -140,6 +148,13 @@ export const VIDEO_JOBS = {
   GENERATE_ARTIFACT_VIDEO: JOB_GENERATE_ARTIFACT_VIDEO,
 };
 
+export const GHOST_JOBS = {
+  SYNC_NETWORK: JOB_SYNC_NETWORK,
+  ANALYZE_STYLE: JOB_ANALYZE_STYLE,
+  GENERATE_SUGGESTIONS: JOB_GENERATE_SUGGESTIONS,
+  GENERATE_POST: JOB_GENERATE_POST,
+};
+
 // Queue health check utility
 export const getQueueHealth = async () => {
   const queues = [
@@ -151,6 +166,7 @@ export const getQueueHealth = async () => {
     { name: "video", queue: videoQueue },
     { name: "safety", queue: safetyQueue },
     { name: "cleanup", queue: cleanupQueue },
+    { name: "ghost", queue: ghostQueue },
   ];
 
   const health = {};

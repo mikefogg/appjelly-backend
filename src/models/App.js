@@ -1,9 +1,8 @@
 import BaseModel from "#src/models/BaseModel.js";
 import Account from "#src/models/Account.js";
-import Actor from "#src/models/Actor.js";
 import Input from "#src/models/Input.js";
 import Artifact from "#src/models/Artifact.js";
-import AccountLink from "#src/models/AccountLink.js";
+import ConnectedAccount from "#src/models/ConnectedAccount.js";
 
 class App extends BaseModel {
   static get tableName() {
@@ -33,14 +32,6 @@ class App extends BaseModel {
           to: "accounts.app_id",
         },
       },
-      actors: {
-        relation: BaseModel.HasManyRelation,
-        modelClass: Actor,
-        join: {
-          from: "apps.id",
-          to: "actors.app_id",
-        },
-      },
       inputs: {
         relation: BaseModel.HasManyRelation,
         modelClass: Input,
@@ -57,12 +48,12 @@ class App extends BaseModel {
           to: "artifacts.app_id",
         },
       },
-      account_links: {
+      connected_accounts: {
         relation: BaseModel.HasManyRelation,
-        modelClass: AccountLink,
+        modelClass: ConnectedAccount,
         join: {
           from: "apps.id",
-          to: "account_links.app_id",
+          to: "connected_accounts.app_id",
         },
       },
     };

@@ -294,6 +294,59 @@ Only return the story prompt, nothing else.`;
     }
   }
 
+  async generateText(prompt, options = {}) {
+    // Check if AI bypass is enabled for development
+    if (process.env.BYPASS_AI === "true") {
+      return {
+        text: "This is an improved version of your content with better engagement and clarity!",
+        usage: {
+          totalTokens: 100,
+          promptTokens: 50,
+          completionTokens: 50,
+        },
+        cost: 0.0001,
+        model: "development-bypass",
+      };
+    }
+
+    try {
+      const model = options.model || process.env.OPENAI_MODEL || "gpt-4o-mini";
+      const temperature = options.temperature !== undefined ? options.temperature : 0.7;
+      const maxTokens = options.maxTokens || 1000;
+
+      const response = await this.openai.chat.completions.create({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature,
+        max_tokens: maxTokens,
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error("No content generated");
+      }
+
+      // Calculate cost (rough estimates per 1K tokens)
+      const costPer1KTokens = model.includes("gpt-4") ? 0.03 : 0.00015;
+      const totalTokens = response.usage?.total_tokens || 0;
+      const cost = (totalTokens / 1000) * costPer1KTokens;
+
+      return {
+        text: content.trim(),
+        usage: {
+          totalTokens: response.usage?.total_tokens || 0,
+          promptTokens: response.usage?.prompt_tokens || 0,
+          completionTokens: response.usage?.completion_tokens || 0,
+        },
+        cost,
+        model,
+      };
+    } catch (error) {
+      console.error("AI text generation error:", error);
+      throw new Error("Failed to generate text");
+    }
+  }
+
   async moderateContent(text) {
     // Check if AI bypass is enabled for development
     if (process.env.BYPASS_AI === "true") {

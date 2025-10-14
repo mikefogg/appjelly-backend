@@ -1,0 +1,222 @@
+import BaseModel from "#src/models/BaseModel.js";
+import Account from "#src/models/Account.js";
+import App from "#src/models/App.js";
+import NetworkProfile from "#src/models/NetworkProfile.js";
+import NetworkPost from "#src/models/NetworkPost.js";
+import PostSuggestion from "#src/models/PostSuggestion.js";
+import WritingStyle from "#src/models/WritingStyle.js";
+import UserPostHistory from "#src/models/UserPostHistory.js";
+import { decrypt } from "#src/helpers/encryption.js";
+
+class ConnectedAccount extends BaseModel {
+  static get tableName() {
+    return "connected_accounts";
+  }
+
+  static get jsonSchema() {
+    return {
+      type: "object",
+      required: ["account_id", "app_id", "platform", "platform_user_id", "username", "access_token"],
+      properties: {
+        ...super.jsonSchema.properties,
+        account_id: { type: "string", format: "uuid" },
+        app_id: { type: "string", format: "uuid" },
+        platform: { type: "string", enum: ["twitter", "facebook", "linkedin"] },
+        platform_user_id: { type: "string", minLength: 1 },
+        username: { type: "string", minLength: 1 },
+        display_name: { type: ["string", "null"] },
+        access_token: { type: "string", minLength: 1 },
+        refresh_token: { type: ["string", "null"] },
+        token_expires_at: { type: ["string", "null"], format: "date-time" },
+        profile_data: { type: "object" },
+        last_synced_at: { type: ["string", "null"], format: "date-time" },
+        last_analyzed_at: { type: ["string", "null"], format: "date-time" },
+        sync_status: {
+          type: "string",
+          enum: ["pending", "syncing", "ready", "error"],
+          default: "pending"
+        },
+        is_active: { type: "boolean", default: true },
+        metadata: { type: "object" },
+      },
+    };
+  }
+
+  static get relationMappings() {
+    return {
+      account: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: Account,
+        join: {
+          from: "connected_accounts.account_id",
+          to: "accounts.id",
+        },
+      },
+      app: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: App,
+        join: {
+          from: "connected_accounts.app_id",
+          to: "apps.id",
+        },
+      },
+      network_profiles: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: NetworkProfile,
+        join: {
+          from: "connected_accounts.id",
+          to: "network_profiles.connected_account_id",
+        },
+      },
+      network_posts: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: NetworkPost,
+        join: {
+          from: "connected_accounts.id",
+          to: "network_posts.connected_account_id",
+        },
+      },
+      post_suggestions: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: PostSuggestion,
+        join: {
+          from: "connected_accounts.id",
+          to: "post_suggestions.connected_account_id",
+        },
+      },
+      writing_style: {
+        relation: BaseModel.HasOneRelation,
+        modelClass: WritingStyle,
+        join: {
+          from: "connected_accounts.id",
+          to: "writing_styles.connected_account_id",
+        },
+      },
+      user_post_history: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: UserPostHistory,
+        join: {
+          from: "connected_accounts.id",
+          to: "user_post_history.connected_account_id",
+        },
+      },
+    };
+  }
+
+  static async findByAccountAndApp(accountId, appId) {
+    return this.query()
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("is_active", true)
+      .orderBy("created_at", "desc");
+  }
+
+  static async findByPlatform(accountId, appId, platform) {
+    return this.query()
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("platform", platform)
+      .where("is_active", true)
+      .orderBy("created_at", "desc");
+  }
+
+  async markAsSyncing() {
+    return this.$query().patchAndFetch({
+      sync_status: "syncing",
+      metadata: {
+        ...this.metadata,
+        sync_started_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  async markAsReady() {
+    return this.$query().patchAndFetch({
+      sync_status: "ready",
+      last_synced_at: new Date().toISOString(),
+      metadata: {
+        ...this.metadata,
+        last_sync_completed_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  async markAsError(error) {
+    return this.$query().patchAndFetch({
+      sync_status: "error",
+      metadata: {
+        ...this.metadata,
+        last_error: error.message,
+        error_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  needsSync(hoursThreshold = 24) {
+    if (!this.last_synced_at) return true;
+    const hoursSinceSync = (new Date() - new Date(this.last_synced_at)) / (1000 * 60 * 60);
+    return hoursSinceSync >= hoursThreshold;
+  }
+
+  needsAnalysis(daysThreshold = 7) {
+    if (!this.last_analyzed_at) return true;
+    const daysSinceAnalysis = (new Date() - new Date(this.last_analyzed_at)) / (1000 * 60 * 60 * 24);
+    return daysSinceAnalysis >= daysThreshold;
+  }
+
+  static get modifiers() {
+    return {
+      active(builder) {
+        builder.where("is_active", true);
+      },
+      ready(builder) {
+        builder.where("sync_status", "ready");
+      },
+      needsSync(builder, hoursThreshold = 24) {
+        const threshold = new Date();
+        threshold.setHours(threshold.getHours() - hoursThreshold);
+        builder.where((qb) => {
+          qb.whereNull("last_synced_at").orWhere("last_synced_at", "<", threshold.toISOString());
+        });
+      },
+    };
+  }
+
+  /**
+   * Get decrypted access token
+   * Tokens are stored encrypted in database
+   */
+  getDecryptedAccessToken() {
+    if (!this.access_token) return null;
+    try {
+      return decrypt(this.access_token);
+    } catch (error) {
+      console.error("Failed to decrypt access token:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Get decrypted refresh token
+   * Tokens are stored encrypted in database
+   */
+  getDecryptedRefreshToken() {
+    if (!this.refresh_token) return null;
+    try {
+      return decrypt(this.refresh_token);
+    } catch (error) {
+      console.error("Failed to decrypt refresh token:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Check if access token is expired
+   */
+  isTokenExpired() {
+    if (!this.token_expires_at) return false;
+    return new Date() >= new Date(this.token_expires_at);
+  }
+}
+
+export default ConnectedAccount;

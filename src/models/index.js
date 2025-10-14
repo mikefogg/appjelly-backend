@@ -8,14 +8,17 @@ Model.knex(knexConnection);
 export { default as BaseModel } from "#src/models/BaseModel.js";
 export { default as App } from "#src/models/App.js";
 export { default as Account } from "#src/models/Account.js";
-export { default as AccountLink } from "#src/models/AccountLink.js";
-export { default as Actor } from "#src/models/Actor.js";
 export { default as Media } from "#src/models/Media.js";
 export { default as Input } from "#src/models/Input.js";
 export { default as Artifact } from "#src/models/Artifact.js";
-export { default as ArtifactActor } from "#src/models/ArtifactActor.js";
-export { default as ArtifactPage } from "#src/models/ArtifactPage.js";
-export { default as SharedView } from "#src/models/SharedView.js";
 export { default as Subscription } from "#src/models/Subscription.js";
+
+// Ghost models
+export { default as ConnectedAccount } from "#src/models/ConnectedAccount.js";
+export { default as NetworkProfile } from "#src/models/NetworkProfile.js";
+export { default as NetworkPost } from "#src/models/NetworkPost.js";
+export { default as UserPostHistory } from "#src/models/UserPostHistory.js";
+export { default as PostSuggestion } from "#src/models/PostSuggestion.js";
+export { default as WritingStyle } from "#src/models/WritingStyle.js";
 
 export { knexConnection as knex };

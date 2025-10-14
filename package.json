@@ -1,5 +1,5 @@
 {
-  "name": "appjelly-platform",
+  "name": "ghost-platform",
   "version": "1.0.0",
   "type": "module",
   "main": "src/index.js",
@@ -16,17 +16,10 @@
     "db:migrate": "dotenvx run -f .env.development.local -f .env.development -f .env -- knex migrate:latest",
     "db:migrate:test": "NODE_ENV=TEST dotenvx run -f .env.test.local -f .env.test -- knex migrate:latest",
     "db:seed": "dotenvx run -f .env.development.local -f .env.development -f .env -- knex seed:run",
-    "content-worker": "node src/background/managers/content.js",
-    "content-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/content.js",
     "cleanup-worker": "node src/background/managers/cleanup.js",
     "cleanup-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/cleanup.js",
-    "media-worker": "node src/background/managers/media.js",
-    "media-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/media.js",
-    "video-worker": "node src/background/managers/video.js",
-    "video-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/video.js",
-    "generate-fursona": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-fursona-content.js",
-    "setup-cleanup-schedules": "node src/background/repeatables/cleanup-scheduler.js",
-    "setup-cleanup-schedules-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- node src/background/repeatables/cleanup-scheduler.js"
+    "ghost-worker": "node src/background/managers/ghost.js",
+    "ghost-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/ghost.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.842.0",
@@ -57,18 +50,12 @@
   },
   "devDependencies": {
     "@faker-js/faker": "^9.0.0",
-    "@remotion/bundler": "^4.0.322",
-    "@remotion/cli": "^4.0.322",
     "@vitest/coverage-v8": "^2.0.0",
     "nodemon": "^3.1.0",
-    "puppeteer": "^24.12.0",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "remotion": "^4.0.322",
     "supertest": "^7.0.0",
     "vitest": "^2.0.0"
   },
   "author": "",
   "license": "ISC",
-  "description": "Multi-tenant platform for AI-generated content creation apps"
+  "description": "Ghost - AI-powered social media assistant platform"
 }

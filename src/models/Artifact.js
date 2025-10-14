@@ -2,10 +2,7 @@ import BaseModel from "#src/models/BaseModel.js";
 import Input from "#src/models/Input.js";
 import Account from "#src/models/Account.js";
 import App from "#src/models/App.js";
-import ArtifactPage from "#src/models/ArtifactPage.js";
-import ArtifactActor from "#src/models/ArtifactActor.js";
-import SharedView from "#src/models/SharedView.js";
-import Actor from "#src/models/Actor.js";
+import ConnectedAccount from "#src/models/ConnectedAccount.js";
 
 class Artifact extends BaseModel {
   static get tableName() {
@@ -15,37 +12,29 @@ class Artifact extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["input_id", "account_id", "app_id", "artifact_type"],
+      required: ["account_id", "app_id", "artifact_type"],
       properties: {
         ...super.jsonSchema.properties,
-        input_id: { type: "string", format: "uuid" },
+        input_id: { type: ["string", "null"], format: "uuid" },
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
+        connected_account_id: { type: ["string", "null"], format: "uuid" },
         artifact_type: { type: "string", minLength: 1 },
-        status: { 
-          type: "string", 
-          enum: ["pending", "generating", "completed", "failed"],
+        status: {
+          type: "string",
+          enum: ["draft", "pending", "generating", "completed", "failed"],
           default: "pending"
         },
         title: { type: ["string", "null"] },
-        subtitle: { type: ["string", "null"] },
-        description: { type: ["string", "null"] },
+        content: { type: ["string", "null"] },
         metadata: { type: "object" },
-        
-        // Token tracking fields
+
+        // AI generation tracking
         total_tokens: { type: ["integer", "null"], minimum: 0 },
-        plotline_tokens: { type: ["integer", "null"], minimum: 0 },
-        story_tokens: { type: ["integer", "null"], minimum: 0 },
-        plotline_prompt_tokens: { type: ["integer", "null"], minimum: 0 },
-        plotline_completion_tokens: { type: ["integer", "null"], minimum: 0 },
-        story_prompt_tokens: { type: ["integer", "null"], minimum: 0 },
-        story_completion_tokens: { type: ["integer", "null"], minimum: 0 },
-        
-        // Cost and performance
+        prompt_tokens: { type: ["integer", "null"], minimum: 0 },
+        completion_tokens: { type: ["integer", "null"], minimum: 0 },
         cost_usd: { type: ["number", "null"], minimum: 0 },
         generation_time_seconds: { type: ["number", "null"], minimum: 0 },
-        
-        // Model info
         ai_model: { type: ["string", "null"] },
         ai_provider: { type: ["string", "null"] },
       },
@@ -78,41 +67,12 @@ class Artifact extends BaseModel {
           to: "apps.id",
         },
       },
-      pages: {
-        relation: BaseModel.HasManyRelation,
-        modelClass: ArtifactPage,
+      connected_account: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: ConnectedAccount,
         join: {
-          from: "artifacts.id",
-          to: "artifact_pages.artifact_id",
-        },
-      },
-      shared_views: {
-        relation: BaseModel.HasManyRelation,
-        modelClass: SharedView,
-        join: {
-          from: "artifacts.id",
-          to: "shared_views.artifact_id",
-        },
-      },
-      artifact_actors: {
-        relation: BaseModel.HasManyRelation,
-        modelClass: ArtifactActor,
-        join: {
-          from: "artifacts.id",
-          to: "artifact_actors.artifact_id",
-        },
-      },
-      actors: {
-        relation: BaseModel.ManyToManyRelation,
-        modelClass: Actor,
-        join: {
-          from: "artifacts.id",
-          through: {
-            from: "artifact_actors.artifact_id",
-            to: "artifact_actors.actor_id",
-            extra: ["is_main_character"],
-          },
-          to: "actors.id",
+          from: "artifacts.connected_account_id",
+          to: "connected_accounts.id",
         },
       },
     };
@@ -122,80 +82,10 @@ class Artifact extends BaseModel {
     const query = this.query()
       .where("account_id", accountId)
       .where("app_id", appId)
-      .withGraphFetched("[input.media(committed), pages(orderedPages)]")
-      .modifiers({
-        orderedPages: (builder) => {
-          builder.orderBy("page_number", "asc");
-        },
-        committed: (builder) => {
-          builder.where("status", "committed");
-        },
-      });
+      .withGraphFetched("[input]")
+      .orderBy("created_at", "desc");
 
     return this.getBasePaginationQuery(query, pagination);
-  }
-
-  static async findAccessibleArtifacts(accountId, appId, pagination = {}) {
-    const knex = this.knex();
-    
-    const query = this.query()
-      .where((builder) => {
-        builder
-          .where("artifacts.account_id", accountId)
-          .orWhereExists((subquery) => {
-            subquery
-              .select("*")
-              .from("account_links")
-              .whereRaw("account_links.linked_account_id = artifacts.account_id")
-              .where("account_links.account_id", accountId)
-              .where("account_links.app_id", appId)
-              .where("account_links.status", "accepted");
-          });
-      })
-      .where("artifacts.app_id", appId)
-      .withGraphFetched("[account(publicProfile), input.media(committed), pages(orderedPages)]")
-      .modifiers({
-        orderedPages: (builder) => {
-          builder.orderBy("page_number", "asc");
-        },
-        committed: (builder) => {
-          builder.where("status", "committed");
-        },
-      });
-
-    return this.getBasePaginationQuery(query, pagination);
-  }
-
-  static async findSharedWithAccount(accountId, appId, pagination = {}) {
-    const query = this.query()
-      .whereExists((subquery) => {
-        subquery
-          .select("*")
-          .from("account_links")
-          .whereRaw("account_links.account_id = artifacts.account_id")
-          .where("account_links.linked_account_id", accountId)
-          .where("account_links.app_id", appId)
-          .where("account_links.status", "accepted");
-      })
-      .where("artifacts.app_id", appId)
-      .withGraphFetched("[account(publicProfile), input.media(committed), pages(orderedPages)]")
-      .modifiers({
-        orderedPages: (builder) => {
-          builder.orderBy("page_number", "asc");
-        },
-        committed: (builder) => {
-          builder.where("status", "committed");
-        },
-      });
-
-    return this.getBasePaginationQuery(query, pagination);
-  }
-
-  async getActorsFromInput() {
-    if (!this.input) {
-      await this.$loadRelated("input");
-    }
-    return this.input.getActors();
   }
 
   // Status management helpers
@@ -235,6 +125,10 @@ class Artifact extends BaseModel {
     return this.query().where("status", status);
   }
 
+  static draft() {
+    return this.byStatus("draft");
+  }
+
   static pending() {
     return this.byStatus("pending");
   }
@@ -251,15 +145,18 @@ class Artifact extends BaseModel {
     return this.byStatus("failed");
   }
 
+  // Check if artifact is a user draft (no input_id)
+  isDraft() {
+    return !this.input_id && this.status === "draft";
+  }
+
+  // Check if artifact is AI-generated (has input_id)
+  isGenerated() {
+    return !!this.input_id;
+  }
+
   static get modifiers() {
     return {
-      withPages(builder) {
-        builder.withGraphFetched("[pages(orderedPages)]").modifiers({
-          orderedPages: (builder) => {
-            builder.orderBy("page_number", "asc");
-          },
-        });
-      },
       withInput(builder) {
         builder.withGraphFetched("[input]");
       },

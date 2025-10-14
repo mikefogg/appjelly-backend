@@ -1,205 +1,119 @@
-# MVP App Overview
+# 🧠 Ghost – MVP Product Overview (Behavioral & Functional Thinking)
 
-# 🧸 SnuggleBug Stories – Platform Overview
+## ✨ Core Idea
 
-[Technical Overview](https://www.notion.so/Technical-Overview-1f95ec016e89805c9cbfd9a911c16508?pvs=21)
+Ghost exists to remove the friction of posting on social media for people who *want to be consistent*, but struggle with knowing *what* to say each day.
 
-## 1. Overview
-
-**SnuggleBug Stories** is a mobile app that uses AI to create personalized bedtime stories for children, based on their interests, photos, and daily activities. Parents can generate stories starring their children, add siblings, friends, pets, or family members, and even share these stories with other parents — who can reimagine the same adventure from their own child’s perspective.
-
-Stories are beautifully written and optionally illustrated with **AI-generated images** that bring your child’s imagination to life. All stories are saved in automatically synced family libraries that grow with every shared tale.
+> Think of it like a daily ghostwriter that syncs with your network, understands what’s going on, and helps you show up — without ever starting from a blank page.
 
 ---
 
-## 2. 💸 Pricing
+## 🧭 Primary User Journey
 
-| Plan | Price | Notes |
-| --- | --- | --- |
-| Weekly | $1.99/week | Low-friction entry, but higher churn |
-| Monthly | $5.99/month | Mid-tier recurring option |
-| Yearly | $29.99/year | **Best value** with 3-day free trial |
-- 🧪 **Trial**: 3-day free trial is offered with the Yearly plan.
-- 📖 Free viewers can read shared stories fully, but must subscribe to create their own.
-- 🌟 *In-app: “Best Value” badge will highlight the Yearly option.*
+1. **User opens the app.**
 
----
+2. They’re greeted with a friendly animation and a strong, clear message:
 
-## 3. 📄 Page Explanations
+   > *“Never think about what to post again.”*
 
-- **Welcome** – Branded intro screen with a "Create Your Story" CTA.
-- **Sample Story** – Shows an example story to preview the experience.
-- **Your Kids** – Manage multiple kid profiles, each with photos and interests.
-- **Kid Details** – Add a new child, upload up to 10 photos to train appearance/personality.
-- **Additional Characters** – Add friends, family, pets for inclusion in stories.
-- **Story Library** – Main hub showing saved stories and stories your children appear in.
-- **Create Story** – Start the creation flow by entering a prompt and selecting characters.
-- **Story Page 1** – View the first page for free, with a “Continue” CTA.
-- **Paywall** – Triggered to unlock the full story and subscribe.*→ Soft-locked after page 1 to maximize conversion without sacrificing experience.*
-- **Story Complete** – Full story view (text first, images load after).
-- **Image Ready** – View fully illustrated version when images finish generating.
-- **Invite Friend** – Share a story with another parent.
-- **Shared Story View** – A parent can view a story starring someone else’s child.
-- **Repersonalize** – Claim a character and regenerate the story for their own child.
+3. They either:
+
+   * Create an account (via email or social login)
+   * Or explore the app to get a feel for it first
+
+4. Once logged in, they connect a network (e.g. Twitter/X).
+
+5. Ghost syncs their account silently in the background — reading who they follow, recent conversations, and what they've posted before.
+
+6. The homepage then activates with three options:
+
+   * A high-quality post suggestion tailored to their audience
+   * A few recent tweets from people they follow, with an option to “Reply for engagement”
+   * A text input that says *“Write a topic, I’ll make you a post…”*
+
+7. They tap, post, or reply — and close the app.
 
 ---
 
-## 4. 🧭 Page Flow
+## 🧩 Core Functional Concepts
 
-1. Welcome → “Create Your Story”
-2. Sample Story
-3. Your Kids
-4. Kid Details (Add Ava, Ella, etc.)
-5. Additional Characters (Josh, Grandma, etc.)
-6. Story Library
-7. Tap “Create Story”
-8. Bottom Sheet:
-    - Prompt + Length
-    - Confirm Characters
-    - Loading
-9. View Story Page 1
-10. Hit paywall → Subscribe
-11. Full Story Text View
-12. Image View (when ready)
-13. Share Story
-14. Others view & re-personalize
+### 1. **“One Post a Day” Flow**
 
----
+The app encourages consistency without pressure. One great idea a day is enough. This mirrors fitness and habit-building apps: show up, do one thing, and leave.
 
-## 5. 🔗 Sharing & Permissions
+The user never has to scroll, tap into deep menus, or decide what to do next. The app presents the *next best action* clearly:
 
-SnuggleBug Stories is built around a trusted, privacy-preserving network of families who can share and co-create stories involving their kids, relatives, and friends — **without ever exposing sensitive personal information**.
+* Post this
+* Or reply to this
+* Or ask me for something custom
 
-> SnuggleBug trusts parents to build small, private networks of co-creators.
-> 
+### 2. **Network-Aware Suggestions**
 
----
+Suggestions aren’t generic. They’re shaped by:
 
-### 🧾 What Can Be Shared?
+* Who the user follows
+* What’s being talked about in their network
+* Their past posting style or themes
+  This makes the post suggestions feel *familiar, timely, and contextual*. The user feels like Ghost knows them.
 
-| Data | Shared? | Notes |
-| --- | --- | --- |
-| Name | ✅ Yes | Always shared when a child appears in a story |
-| Nickname | ❌ No | Local-only, never used in stories or shared |
-| Photos | ✅ View-only (linked families only) | Only shown when a child is a claimed character, in-story |
-| Interests / Personality | ❌ No | Private to the owning parent |
-| Story Appearance | ✅ Yes | Stories sync across trusted families |
-| Profile Edit Access | ❌ No | Only the original parent can edit a child’s profile |
+### 3. **Reply-First Engagement Strategy**
 
-> Claiming a character does not notify the original parent — it's a silent link.
-> 
+Rather than just posting into the void, the app also nudges users to reply to people they follow — especially those with high engagement. This drives visibility and connection *without* the user needing to think:
 
----
+> “Who should I engage with today?”
 
-### 🔄 Story Sharing Flow
+This makes the app feel like a growth coach — not just a writing tool.
 
-1. A parent creates a story starring their child and includes other characters (friends, family).
-2. They share a read-only link (or QR) with other parents (e.g., in a group chat).
-3. Recipients can:
-    - View the full story for free
-    - Tap to view the story from another character’s perspective
-    - Set up their own child if not yet claimed
-4. Upon claiming a character:
-    - The new parent is auto-linked to **all other claimed families in the story**
-    - Future stories sync automatically between them
+### 4. **Chat-Like Prompt Box**
+
+At the bottom, a fixed text input invites the user to just type whatever’s on their mind — like ChatGPT. But instead of a blank canvas, the prompt is:
+
+> “Write a topic, I’ll make you a post…”
+
+This shifts the pressure of “writing a perfect post” into a low-friction collaboration. The ghost does the hard part.
+
+### 5. **Motivating UX**
+
+The tone is always encouraging:
+
+* “Nice work being consistent.”
+* “Let’s go.”
+* “Here’s what to say today.”
+
+The app acts like a quiet coach or assistant — not a productivity tool. The focus is **momentum, not metrics**.
 
 ---
 
-### 👨‍👩‍👧 Trusted Families
+## 🔄 How the App Thinks (Under the Hood)
 
-**Trusted Families** are account-to-account links that allow:
+> You don’t have to tell it much. It observes, suggests, and nudges — lightly.
 
-- Automatic syncing of shared stories
-- Access to each other's **claimed kids by name only**
-- Use of each other's kids in future stories (with no manual re-entry)
+* When a user connects a network, it quietly syncs their follow list and recent posts
+* Each morning, the app generates a few suggestions based on:
 
-**How Families Become Linked:**
-
-- A parent claims a child via a shared story → auto-link to all other claimed families in that story
-- A parent shares a **link or QR code** explicitly to connect families
-
-**How to Unlink:**
-
-- Parents can manage and remove Trusted Family connections at any time from Settings
+  * What’s trending
+  * What the user cares about
+  * Their past tone and behavior
+* It also pulls in 2–3 popular posts from people they follow, encouraging engagement
+* Every interaction improves the next day’s suggestions
 
 ---
 
-### 📚 Auto-Synced Libraries
+## 🌱 What Makes This MVP “Enough”
 
-Each parent sees two story libraries:
-
-| Library | Contains |
-| --- | --- |
-| **My Stories** | Stories where their own child is the main character |
-| **Stories I'm In** | Stories where their child appears as a side character (from linked families) |
-
-> You’ll never lose a story — everything is backed up and shared instantly between trusted families.
-> 
+* It solves a **daily anxiety**: “What do I say online today?”
+* It requires **no learning curve**: users just tap, post, or prompt
+* It builds a **new habit**: consistency in showing up online
+* It creates **perceived intelligence**: it feels like the app “gets” the user
 
 ---
 
-### 🏷️ Character Nicknames
+## 🪄 The Emotional Design Principle
 
-To manage similar names (e.g., multiple Joshes), parents can assign **private nicknames**.
+Ghost is **low-pressure but high-leverage**.
 
-- **Examples**:
-    - “Josh (Soccer)”
-    - “Josh (Cousin)”
-- Used only in your app for selection and disambiguation
-- **Never shown to others**
-- **Never used in story generation**
-- The actual `name` field is always what appears in the story
+It never judges. It never feels busy. It just quietly gives you the *best next thing to say* — and gets out of the way.
 
----
+> The goal isn’t to be a social media dashboard.
+> The goal is to make the user feel like they’re always ready to say something good.
 
-### 🧠 Local Characters vs. Linked Characters
-
-| State | Editable by You | Re-usable by You | Has Images | Syncs Stories |
-| --- | --- | --- | --- | --- |
-| Placeholder (local) | ✅ Yes | ✅ Yes | ✅ Yours (if uploaded) | ❌ No |
-| Claimed (unlinked) | ❌ No | ❌ No | ❌ No | ❌ No |
-| Linked (claimed) | ❌ No | ✅ Yes | ✅ From owner | ✅ Yes |
-
-> When a character you've created is later claimed by their real parent and linked, your version is automatically replaced with theirs.
-> 
-> 
-> Your nickname remains visible only to you, but their name and photo take over for display and generation.
-> 
-
----
-
-## 6. ✨ Story Creation Flow
-
-### Bottom Sheet Structure (3 screens):
-
-1. **Prompt + Length**
-    - Enter optional prompt
-    - Select length: Short / Medium / Long
-    - Tap “Next”
-2. **Confirm Characters**
-    - Characters inferred from prompt
-    - Auto-link any known profiles (e.g., “Josh” if already linked)
-    - Add/remove others (e.g., Grandma, Max the dog)
-    - Assign optional types or relationships
-3. **Loading Screen**
-    - While generating page 1
-    - Show animation or avatar carousel
-    - Ends on Page 1 screen
-
----
-
-### 🤖 Smart Behaviors
-
-- Inference API: Detects names in prompt and matches to known characters
-- Placeholders are used for new characters (e.g. “Otto”)
-- Once a character is claimed (e.g. Otto’s mom signs up), future stories sync automatically
-- If a name matches multiple characters (e.g. two Joshes), you’ll be prompted to choose
-
----
-
-## 7. 💡 Bonus Notes
-
-- Characters can be **kids, adults, pets, or imaginary** — not limited to children
-- All stories are **view-only in-app** — no downloads
-- Parents can manage permissions and linked families in Settings
-- “Stories I’m In” auto-populates from all Trusted Families

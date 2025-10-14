@@ -3,6 +3,7 @@ import Account from "#src/models/Account.js";
 import App from "#src/models/App.js";
 import Artifact from "#src/models/Artifact.js";
 import Media from "#src/models/Media.js";
+import ConnectedAccount from "#src/models/ConnectedAccount.js";
 
 class Input extends BaseModel {
   static get tableName() {
@@ -17,14 +18,8 @@ class Input extends BaseModel {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
-        prompt: { 
-          oneOf: [
-            { type: "string", minLength: 1 },
-            { type: "null" }
-          ]
-        },
-        length: { type: "string", enum: ["short", "medium", "long"], default: "medium" },
-        actor_ids: { type: "array", items: { type: "string", format: "uuid" } },
+        connected_account_id: { type: ["string", "null"], format: "uuid" },
+        prompt: { type: ["string", "null"] },
         metadata: { type: "object" },
       },
     };
@@ -67,6 +62,14 @@ class Input extends BaseModel {
           owner_type: "input",
         },
       },
+      connected_account: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: ConnectedAccount,
+        join: {
+          from: "inputs.connected_account_id",
+          to: "connected_accounts.id",
+        },
+      },
     };
   }
 
@@ -79,20 +82,10 @@ class Input extends BaseModel {
         latest: (builder) => {
           builder.orderBy("created_at", "desc").first();
         },
-      });
+      })
+      .orderBy("created_at", "desc");
 
     return this.getBasePaginationQuery(query, pagination);
-  }
-
-  async getActors() {
-    if (!this.actor_ids || this.actor_ids.length === 0) {
-      return [];
-    }
-
-    const { Actor } = await import("#src/models/index.js");
-    return Actor.query()
-      .whereIn("id", this.actor_ids)
-      .where("app_id", this.app_id);
   }
 
   static get modifiers() {
