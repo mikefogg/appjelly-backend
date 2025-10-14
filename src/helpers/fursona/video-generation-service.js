@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 class FursonaVideoGenerationService {
   constructor() {
     this.remotionDir = path.join(__dirname, "../../../src/remotion/fursona");
-    this.outputDir = path.join(process.cwd(), "storage", "videos", "fursona");
+    this.outputDir = path.join(process.cwd(), "storage", "videos", "saywut");
 
     // Ensure output directory exists
     this.ensureOutputDirectory();
@@ -159,8 +159,17 @@ class FursonaVideoGenerationService {
       }
 
       try {
-        // Build command with proper quoting for shell execution
-        const quotedArgs = args.map((arg) => `"${arg.replace(/"/g, '\\"')}"`);
+        // Build command with proper shell escaping for complex text
+        const escapeShellArg = (arg) => {
+          // For arguments containing quotes, use single quotes and escape any single quotes
+          if (arg.includes('"')) {
+            return `'${arg.replace(/'/g, "'\"'\"'")}'`;
+          }
+          // For simple arguments, use double quotes with basic escaping
+          return `"${arg.replace(/"/g, '\\"')}"`;
+        };
+
+        const quotedArgs = args.map(escapeShellArg);
         const command = `cd "${this.remotionDir}" && node ${quotedArgs.join(
           " "
         )}`;
@@ -198,26 +207,40 @@ class FursonaVideoGenerationService {
         `[Fursona Video] Generation time: ${generationTime.toFixed(2)}s`
       );
 
-      // Upload video to R2
-      console.log(`[Fursona Video] Uploading video to R2...`);
-      const videoBuffer = await fs.readFile(outputPath);
-      const r2VideoData = await this.uploadVideoToR2(videoBuffer, artifactId);
+      // Check if we should use local storage instead of R2
+      const useLocalStorage = process.env.LOCAL_STORAGE === "true";
+      
+      let r2VideoData = null;
+      let localVideoPath = null;
+      
+      if (useLocalStorage) {
+        // Keep video locally
+        console.log(`[Fursona Video] LOCAL_STORAGE=true, keeping video locally`);
+        localVideoPath = `/storage/videos/fursona/${outputFilename}`;
+        console.log(`[Fursona Video] Local video path: ${localVideoPath}`);
+      } else {
+        // Upload video to R2
+        console.log(`[Fursona Video] Uploading video to R2...`);
+        const videoBuffer = await fs.readFile(outputPath);
+        r2VideoData = await this.uploadVideoToR2(videoBuffer, artifactId);
 
-      console.log(`[Fursona Video] Video uploaded to R2: ${r2VideoData.key}`);
+        console.log(`[Fursona Video] Video uploaded to R2: ${r2VideoData.key}`);
 
-      // Clean up local file after successful upload
-      try {
-        await fs.unlink(outputPath);
-        console.log(`[Fursona Video] Cleaned up local file: ${outputFilename}`);
-      } catch (cleanupError) {
-        console.warn(
-          `[Fursona Video] Failed to cleanup local file: ${cleanupError.message}`
-        );
+        // Clean up local file after successful upload
+        try {
+          await fs.unlink(outputPath);
+          console.log(`[Fursona Video] Cleaned up local file: ${outputFilename}`);
+        } catch (cleanupError) {
+          console.warn(
+            `[Fursona Video] Failed to cleanup local file: ${cleanupError.message}`
+          );
+        }
       }
 
       return {
         filename: outputFilename,
-        file_path: outputPath,
+        file_path: useLocalStorage ? outputPath : null,
+        local_path: localVideoPath,
         size_bytes: stats.size,
         duration_seconds: actualDuration,
         duration_frames: durationInFrames,
@@ -227,9 +250,9 @@ class FursonaVideoGenerationService {
         height: 1920,
         generation_time: generationTime,
         artifact_id: artifactId,
-        // R2 video data
-        r2_key: r2VideoData.key,
-        r2_url: r2VideoData.url,
+        // R2 video data (null if using local storage)
+        r2_key: r2VideoData?.key || null,
+        r2_url: r2VideoData?.url || null,
         // Include timing data for storage
         timing_data: wordTimingsData
           ? {

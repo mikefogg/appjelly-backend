@@ -17,7 +17,7 @@ export default async function generateFursonaVideoJob(job) {
     }
 
     // Verify this is a fursona artifact
-    if (artifact.app?.slug !== 'fursona') {
+    if (artifact.app?.slug !== 'saywut') {
       throw new Error(`Artifact ${artifactId} is not from fursona app`);
     }
 

@@ -88,7 +88,7 @@ async function generateFursonaContent() {
           inputId: artifact.input.id,
           artifactId: artifactId,
           regenerate: regenText || resetContent,
-          appSlug: 'fursona'
+          appSlug: 'saywut'
         }
       });
 
@@ -137,8 +137,8 @@ async function generateFursonaContent() {
       // Create media record
       audioMedia = await Media.createAudioForArtifact(artifactId, audioResult, {
         artifact_id: artifactId,
-        app_slug: 'fursona',
-        content_type: 'pet_monologue',
+        app_slug: 'saywut',
+        content_type: 'monologue',
         title: artifact.title,
         voice_preset: audioResult.voice_preset,
         instructions_used: audioResult.instructions_used,
@@ -238,8 +238,8 @@ async function generateFursonaContent() {
           video_fps: videoResult.fps,
           metadata: {
             ...videoResult,
-            app_slug: 'fursona',
-            content_type: 'pet_monologue',
+            app_slug: 'saywut',
+            content_type: 'monologue',
             title: artifact.title,
             source_image_id: imageMedia?.id || null,
             source_audio_id: audioMedia.id,

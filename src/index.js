@@ -49,6 +49,12 @@ if (process.env.NODE_ENV === "development") {
 // Webhook routes (before standard middleware to handle raw body parsing)
 app.use("/webhooks", webhookRoutes);
 
+// Serve static files from storage directory when LOCAL_STORAGE=true
+if (process.env.LOCAL_STORAGE === "true") {
+  app.use("/storage", express.static("storage"));
+  console.log("📁 Local storage serving enabled at /storage");
+}
+
 // Standard API routes
 app.use("/", publicRoutes);
 

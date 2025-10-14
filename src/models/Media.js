@@ -16,35 +16,65 @@ class Media extends BaseModel {
       required: ["owner_type", "owner_id", "media_type"],
       properties: {
         ...super.jsonSchema.properties,
-        owner_type: { type: "string", enum: ["actor", "input", "account", "artifact_page", "artifact"] },
+        owner_type: {
+          type: "string",
+          enum: ["actor", "input", "account", "artifact_page", "artifact"],
+        },
         owner_id: { type: "string", format: "uuid" },
-        media_type: { type: "string", enum: ["image", "audio", "video"], default: "image" },
-        
+        media_type: {
+          type: "string",
+          enum: ["image", "audio", "video"],
+          default: "image",
+        },
+
         // Image fields
         image_key: { type: ["string", "null"], minLength: 1 },
-        
+
         // Audio fields
         audio_key: { type: ["string", "null"], minLength: 1 },
         audio_filename: { type: ["string", "null"] },
-        audio_format: { type: ["string", "null"], enum: ["mp3", "opus", "aac", "flac", "wav", "pcm", null] },
+        audio_format: {
+          type: ["string", "null"],
+          enum: ["mp3", "opus", "aac", "flac", "wav", "pcm", null],
+        },
         audio_duration_seconds: { type: ["integer", "null"] },
         audio_size_bytes: { type: ["integer", "null"] },
-        audio_voice: { type: ["string", "null"], enum: ["alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage", null] },
+        audio_voice: {
+          type: ["string", "null"],
+          enum: [
+            "alloy",
+            "echo",
+            "fable",
+            "onyx",
+            "nova",
+            "shimmer",
+            "sage",
+            "coral",
+            null,
+          ],
+        },
         audio_speed: { type: ["number", "null"], minimum: 0.25, maximum: 4.0 },
         audio_text: { type: ["string", "null"] },
         audio_timing_key: { type: ["string", "null"], minLength: 1 },
-        
+
         // Video fields
         video_key: { type: ["string", "null"], minLength: 1 },
         video_filename: { type: ["string", "null"] },
-        video_format: { type: ["string", "null"], enum: ["mp4", "mov", "avi", "webm", null] },
+        video_format: {
+          type: ["string", "null"],
+          enum: ["mp4", "mov", "avi", "webm", null],
+        },
         video_duration_seconds: { type: ["integer", "null"] },
         video_size_bytes: { type: ["integer", "null"] },
         video_width: { type: ["integer", "null"] },
         video_height: { type: ["integer", "null"] },
         video_fps: { type: ["integer", "null"] },
-        
-        status: { type: "string", enum: ["pending", "committed", "expired"], default: "committed" },
+
+        status: {
+          type: "string",
+          enum: ["pending", "committed", "expired"],
+          default: "committed",
+        },
         upload_session_id: { type: ["string", "null"], format: "uuid" },
         expires_at: { type: ["string", "null"], format: "date-time" },
         metadata: { type: "object" },
@@ -199,7 +229,12 @@ class Media extends BaseModel {
   }
 
   // Pending upload methods
-  static async createPendingUpload(uploadSessionId, imageKey, accountId, metadata = {}) {
+  static async createPendingUpload(
+    uploadSessionId,
+    imageKey,
+    accountId,
+    metadata = {}
+  ) {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour expiration
 
@@ -292,7 +327,15 @@ class Media extends BaseModel {
         builder.select("id", "image_key", "metadata", "created_at", "status");
       },
       sessionInfo(builder) {
-        builder.select("id", "image_key", "upload_session_id", "status", "expires_at", "metadata", "created_at");
+        builder.select(
+          "id",
+          "image_key",
+          "upload_session_id",
+          "status",
+          "expires_at",
+          "metadata",
+          "created_at"
+        );
       },
     };
   }

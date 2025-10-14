@@ -10,8 +10,8 @@ class AudioGenerationService {
 
     // Audio configuration
     this.audioModel = "gpt-4o-mini-tts"; // Options: "tts-1", "tts-1-hd", "gpt-4o-mini-tts"
-    this.defaultVoice = "nova"; // Options: "alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage"
-    this.audioFormat = "mp3"; // Options: "mp3", "opus", "aac", "flac", "wav", "pcm"
+    this.defaultVoice = "sage"; // Options: "alloy", "echo", "fable", "onyx", "nova", "shimmer", "sage"
+    this.audioFormat = "wav"; // Options: "mp3", "opus", "aac", "flac", "wav", "pcm"
 
     // Voice presets with custom instructions for gpt-4o-mini-tts
     this.voicePresets = {
@@ -382,21 +382,6 @@ class AudioGenerationService {
       .replace(/([^\.])\s*$/g, "$1.")
       .trim();
 
-    // For gpt-4o-mini-tts with custom instructions, we don't need text enhancements
-    // as the model handles voice characteristics through the instructions parameter
-    if (this.audioModel === "gpt-4o-mini-tts" && voicePreset === "sage") {
-      // Keep text clean and natural - let the instructions handle the voice characteristics
-      return cleanedText;
-    }
-
-    // For older TTS models, apply voice-specific text enhancements as fallback
-    if (voicePreset === "sage") {
-      cleanedText = this.enhanceTextForSageVoice(cleanedText);
-    } else {
-      // Standard pacing for other voices
-      cleanedText = cleanedText.replace(/\.\s+/g, ". ").replace(/\,\s+/g, ", ");
-    }
-
     return cleanedText;
   }
 
@@ -431,54 +416,6 @@ class AudioGenerationService {
         .replace(/\s+/g, " ")
         .trim()
     );
-  }
-
-  /**
-   * Batch generate audio for multiple story pages
-   * @param {Array} pages - Array of page objects with text content
-   * @param {Object} options - Generation options
-   * @returns {Array} Array of generation results
-   */
-  async batchGeneratePageAudio(pages, options = {}) {
-    console.log(
-      `[Batch Audio] Starting batch generation for ${pages.length} pages...`
-    );
-
-    const results = [];
-    const batchSize = 5; // Process 5 at a time to avoid rate limits
-
-    for (let i = 0; i < pages.length; i += batchSize) {
-      const batch = pages.slice(i, i + batchSize);
-      console.log(
-        `[Batch Audio] Processing batch ${
-          Math.floor(i / batchSize) + 1
-        }/${Math.ceil(pages.length / batchSize)}`
-      );
-
-      const batchPromises = batch.map((page) =>
-        this.generatePageAudio(page.text, page.page_number, options).catch(
-          (error) => ({
-            error: error.message,
-            page_number: page.page_number,
-          })
-        )
-      );
-
-      const batchResults = await Promise.all(batchPromises);
-      results.push(...batchResults);
-
-      // Small delay between batches to respect rate limits
-      if (i + batchSize < pages.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    }
-
-    console.log(
-      `[Batch Audio] Completed batch generation. ${
-        results.filter((r) => !r.error).length
-      }/${pages.length} successful`
-    );
-    return results;
   }
 
   /**

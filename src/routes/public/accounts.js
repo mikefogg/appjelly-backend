@@ -32,45 +32,39 @@ const updateAccountValidators = [
   // etc.
 ];
 
-router.get(
-  "/me",
-  requireAppContext,
-  requireAuth,
+router.get("/me", requireAppContext, requireAuth, async (req, res) => {
+  try {
+    const account = res.locals.account;
 
-  async (req, res) => {
+    // Get counts for stats
+    const { Actor, Artifact } = await import("#src/models/index.js");
+    let actorsCount = 0;
+    let artifactsCount = 0;
+
     try {
-      const account = res.locals.account;
-
-      // Get counts for stats
-      const { Actor, Artifact } = await import("#src/models/index.js");
-      let actorsCount = 0;
-      let artifactsCount = 0;
-
-      try {
-        [actorsCount, artifactsCount] = await Promise.all([
-          Actor.query().where("account_id", account.id).resultSize(),
-          Artifact.query().where("account_id", account.id).resultSize(),
-        ]);
-      } catch (error) {
-        console.warn("Failed to get counts for account stats:", error);
-      }
-
-      // Add counts to account for serializer
-      account.actors = { length: actorsCount };
-      account.artifacts = { length: artifactsCount };
-
-      const data = currentAccountSerializer(account);
-      return res
-        .status(200)
-        .json(successResponse(data, "Account details retrieved"));
+      [actorsCount, artifactsCount] = await Promise.all([
+        Actor.query().where("account_id", account.id).resultSize(),
+        Artifact.query().where("account_id", account.id).resultSize(),
+      ]);
     } catch (error) {
-      console.error("Get account error:", error);
-      return res
-        .status(500)
-        .json(formatError("Failed to retrieve account details"));
+      console.warn("Failed to get counts for account stats:", error);
     }
+
+    // Add counts to account for serializer
+    account.actors = { length: actorsCount };
+    account.artifacts = { length: artifactsCount };
+
+    const data = currentAccountSerializer(account);
+    return res
+      .status(200)
+      .json(successResponse(data, "Account details retrieved"));
+  } catch (error) {
+    console.error("Get account error:", error);
+    return res
+      .status(500)
+      .json(formatError("Failed to retrieve account details"));
   }
-);
+});
 
 router.patch(
   "/me",
@@ -88,7 +82,7 @@ router.patch(
       // If name is being updated, use the special method that regenerates display name
       if (name !== undefined) {
         updatedAccount = await account.updateAccountName(name);
-        
+
         // Also update metadata if provided
         if (metadata) {
           updatedAccount = await updatedAccount.$query().patchAndFetch({
@@ -133,15 +127,15 @@ router.post(
 
       // Regenerate display name based on current data
       const displayName = await account.generateDisplayName();
-      
+
       // Update the account with new display name
       const updatedAccount = await account.$query().patchAndFetch({
         metadata: {
           ...account.metadata,
           display_name: displayName,
           display_name_updated_at: new Date().toISOString(),
-          display_name_source: account.name ? "account_name" : "children_names"
-        }
+          display_name_source: account.name ? "account_name" : "children_names",
+        },
       });
 
       // Use the updated account directly (app relationship already loaded from middleware)
@@ -153,7 +147,9 @@ router.post(
         .json(successResponse(data, "Display name regenerated successfully"));
     } catch (error) {
       console.error("Regenerate display name error:", error);
-      return res.status(500).json(formatError("Failed to regenerate display name"));
+      return res
+        .status(500)
+        .json(formatError("Failed to regenerate display name"));
     }
   }
 );

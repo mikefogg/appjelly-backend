@@ -44,6 +44,7 @@ async function main() {
     "nova",
     "shimmer",
     "sage",
+    "coral",
   ];
   if (!validVoices.includes(voice)) {
     console.error(chalk.red(`Error: Invalid voice "${voice}"`));

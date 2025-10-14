@@ -5,18 +5,25 @@ import imageAnalysisService from "#src/helpers/fursona/image-analysis-service.js
 import aiService from "#src/helpers/ai-service.js";
 
 export default async function generateContentJob(job) {
-  const { inputId, artifactId, regenerate = false, skipImageGeneration = false, appSlug } = job.data;
+  const {
+    artifactId,
+    regenerate = false,
+    skipImageGeneration = false,
+    appSlug,
+  } = job.data;
 
   try {
     const mode = regenerate ? "REGENERATION" : "INITIAL GENERATION";
-    console.log(`[Generate Content] Processing ${mode} job for artifact ${artifactId}`);
+    console.log(
+      `[Generate Content] Processing ${mode} job for artifact ${artifactId}`
+    );
     console.log(`[Generate Content] App: ${appSlug}`);
 
     // Get the artifact with input, actors, and app
     let artifact = await Artifact.query()
       .findById(artifactId)
       .withGraphFetched("[input, actors, app]");
-      
+
     if (!artifact) {
       throw new Error(`Artifact ${artifactId} not found`);
     }
@@ -31,33 +38,39 @@ export default async function generateContentJob(job) {
     console.log(`[Generate Content] Found input: "${artifact.input.prompt}"`);
     console.log(`[Generate Content] Found ${artifact.actors.length} actors`);
     console.log(`[Generate Content] Current status: ${artifact.status}`);
-    
+
     // Validate regeneration request
     if (regenerate && artifact.status !== "completed") {
-      console.log(`[Generate Content] Warning: Regenerating artifact with status "${artifact.status}" (expected "completed")`);
+      console.log(
+        `[Generate Content] Warning: Regenerating artifact with status "${artifact.status}" (expected "completed")`
+      );
     }
-    
+
     if (!regenerate && artifact.status === "completed") {
-      console.log(`[Generate Content] Warning: Initial generation for already completed artifact (should use regenerate=true)`);
+      console.log(
+        `[Generate Content] Warning: Initial generation for already completed artifact (should use regenerate=true)`
+      );
     }
 
     // For regeneration: Reset the artifact based on content type
     if (regenerate) {
       console.log(`[Generate Content] Resetting artifact for regeneration...`);
-      
+
+      // Delete all existing pages if they exist (for stories)
       await Artifact.transaction(async (trx) => {
-        // Delete all existing pages if they exist (for stories)
         const existingPages = await artifact.$relatedQuery("pages", trx);
         if (existingPages.length > 0) {
           await artifact.$relatedQuery("pages", trx).delete();
-          console.log(`[Generate Content] Deleted ${existingPages.length} existing pages`);
+          console.log(
+            `[Generate Content] Deleted ${existingPages.length} existing pages`
+          );
         }
-        
+
         // Reset artifact fields to initial state
         await artifact.$query(trx).patch({
           status: "generating",
           title: null,
-          subtitle: null, 
+          subtitle: null,
           description: null,
           total_tokens: null,
           plotline_tokens: null,
@@ -83,9 +96,11 @@ export default async function generateContentJob(job) {
             pet_actor: null,
           },
         });
-        console.log(`[Generate Content] Reset artifact fields to initial state`);
+        console.log(
+          `[Generate Content] Reset artifact fields to initial state`
+        );
       });
-      
+
       // Reload artifact after reset
       artifact = await Artifact.query()
         .findById(artifactId)
@@ -105,53 +120,79 @@ export default async function generateContentJob(job) {
 
     // Handle missing prompts by generating from images (for image-only inputs)
     if (!artifact.input.prompt && artifact.input.metadata?.image_only_input) {
-      console.log(`[Generate Content] No prompt found, generating from uploaded images...`);
-      
+      console.log(
+        `[Generate Content] No prompt found, generating from uploaded images...`
+      );
+
       try {
         // Get images associated with the input
         const inputMedia = await Media.query()
-          .where('owner_type', 'input')
-          .where('owner_id', artifact.input.id)
-          .where('media_type', 'image')
-          .where('status', 'committed');
-        
+          .where("owner_type", "input")
+          .where("owner_id", artifact.input.id)
+          .where("media_type", "image")
+          .where("status", "committed");
+
         if (inputMedia.length === 0) {
-          throw new Error('No images found for image-only input');
+          throw new Error("No images found for image-only input");
         }
-        
-        console.log(`[Generate Content] Found ${inputMedia.length} images to analyze`);
-        
+
+        console.log(
+          `[Generate Content] Found ${inputMedia.length} images to analyze`
+        );
+
         // Analyze all images and collect descriptions
         const imageDescriptions = [];
         let totalAnalysisCost = 0;
-        
+
         for (const media of inputMedia) {
           // Check if already analyzed
-          const existingAnalysis = await imageAnalysisService.getAnalysisResults(media.id);
-          
+          const existingAnalysis =
+            await imageAnalysisService.getAnalysisResults(media.id);
+
           if (existingAnalysis) {
             imageDescriptions.push(existingAnalysis.description);
-            console.log(`[Generate Content] Using existing analysis for ${media.image_key}`);
+            console.log(
+              `[Generate Content] Using existing analysis for ${media.image_key}`
+            );
           } else {
             // Analyze the image
-            const analysisResult = await imageAnalysisService.analyzeImageMedia(media);
+            const analysisResult = await imageAnalysisService.analyzeImageMedia(
+              media
+            );
             imageDescriptions.push(analysisResult.description);
             totalAnalysisCost += analysisResult.cost;
-            console.log(`[Generate Content] Analyzed ${media.image_key}, cost: $${analysisResult.cost.toFixed(6)}`);
+            console.log(
+              `[Generate Content] Analyzed ${
+                media.image_key
+              }, cost: $${analysisResult.cost.toFixed(6)}`
+            );
           }
         }
-        
+
         // Generate appropriate prompt based on app type
         let generatedPrompt;
-        if (appSlugToUse === "fursona") {
-          generatedPrompt = await aiService.generatePetPromptFromImages(imageDescriptions);
-        } else {
-          generatedPrompt = await aiService.generateStoryPromptFromImages(imageDescriptions);
+        switch (appSlugToUse) {
+          case "saywut":
+            generatedPrompt = await aiService.generateThoughtFromImages(
+              imageDescriptions
+            );
+            break;
+          default:
+            generatedPrompt = await aiService.generateStoryPromptFromImages(
+              imageDescriptions
+            );
+            break;
         }
-        
-        console.log(`[Generate Content] Generated prompt: "${generatedPrompt}"`);
-        console.log(`[Generate Content] Total analysis cost: $${totalAnalysisCost.toFixed(6)}`);
-        
+
+        console.log(
+          `[Generate Content] Generated prompt: "${generatedPrompt}"`
+        );
+        console.log(
+          `[Generate Content] Total analysis cost: $${totalAnalysisCost.toFixed(
+            6
+          )}`
+        );
+
         // Update the input with the generated prompt
         await artifact.input.$query().patch({
           prompt: generatedPrompt,
@@ -159,20 +200,24 @@ export default async function generateContentJob(job) {
             ...artifact.input.metadata,
             prompt_generated_from_images: true,
             image_analysis_cost: totalAnalysisCost,
-            prompt_generated_at: new Date().toISOString()
-          }
+            prompt_generated_at: new Date().toISOString(),
+          },
         });
-        
+
         // Reload the artifact to get the updated input
         artifact = await Artifact.query()
           .findById(artifactId)
           .withGraphFetched("[input, actors, app]");
-        
+
         console.log(`[Generate Content] Updated input with generated prompt`);
-        
       } catch (error) {
-        console.error('[Generate Content] Failed to generate prompt from images:', error);
-        throw new Error(`Failed to generate prompt from images: ${error.message}`);
+        console.error(
+          "[Generate Content] Failed to generate prompt from images:",
+          error
+        );
+        throw new Error(
+          `Failed to generate prompt from images: ${error.message}`
+        );
       }
     }
 
@@ -180,13 +225,16 @@ export default async function generateContentJob(job) {
     let generationResult;
     let updatedArtifact;
 
-    if (appSlugToUse === "fursona") {
+    if (appSlugToUse === "saywut") {
       // Generate pet inner monologue for fursona app
-      console.log(`[Generate Content] Starting AI generation for pet inner monologue...`);
-      generationResult = await fursonaPetVoiceService.generateMonologueFromInput(
-        artifact.input,
-        artifact.actors
+      console.log(
+        `[Generate Content] Starting AI generation for pet inner monologue...`
       );
+      generationResult =
+        await fursonaPetVoiceService.generateMonologueFromInput(
+          artifact.input,
+          artifact.actors
+        );
 
       // Save the monologue to the artifact
       console.log(`[Generate Content] Saving generated monologue...`);
@@ -221,20 +269,26 @@ export default async function generateContentJob(job) {
       });
 
       console.log(
-        `[Generate Content] Successfully generated "${updatedArtifact.title}" with ${updatedArtifact.pages?.length || 0} pages`
+        `[Generate Content] Successfully generated "${
+          updatedArtifact.title
+        }" with ${updatedArtifact.pages?.length || 0} pages`
       );
     }
 
     const generationCount = updatedArtifact.metadata?.generation_count || 1;
     const generationType = regenerate ? "regenerated" : "generated";
-    
+
     console.log(
       `[Generate Content] Content ${generationType} (generation #${generationCount})`
     );
-    console.log(`[Generate Content] Token usage: ${updatedArtifact.total_tokens}, Cost: $${parseFloat(updatedArtifact.cost_usd).toFixed(4)}`);
+    console.log(
+      `[Generate Content] Token usage: ${
+        updatedArtifact.total_tokens
+      }, Cost: $${parseFloat(updatedArtifact.cost_usd).toFixed(4)}`
+    );
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       artifactId: artifact.id,
       title: updatedArtifact.title,
       pages: updatedArtifact.pages?.length || 0,
@@ -243,7 +297,7 @@ export default async function generateContentJob(job) {
       regenerate: regenerate,
       generation_count: generationCount,
       app_slug: appSlugToUse,
-      content_type: appSlugToUse === "fursona" ? "pet_monologue" : "story"
+      content_type: appSlugToUse === "saywut" ? "monologue" : "story",
     };
   } catch (error) {
     console.error(
@@ -257,7 +311,9 @@ export default async function generateContentJob(job) {
         const failedArtifact = await Artifact.query().findById(artifactId);
         if (failedArtifact) {
           await failedArtifact.markAsFailed(error);
-          console.log(`[Generate Content] Updated artifact ${artifactId} status to failed`);
+          console.log(
+            `[Generate Content] Updated artifact ${artifactId} status to failed`
+          );
         }
       } catch (updateError) {
         console.error(

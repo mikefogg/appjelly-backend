@@ -75,13 +75,15 @@ class ImageAnalysisService {
             content: [
               {
                 type: "text",
-                text: `Analyze this image and describe what the subjects (people, animals, objects) are doing. Focus on:
-                - What activities or actions are happening
-                - The setting/environment
-                - The mood or atmosphere
-                - Any interactions between subjects
-                
-                Keep the description concise but detailed enough to understand the scene.`
+                text: `You’re a sharp‑eyed, meme‑ready AI.  
+                  Analyze the uploaded image and produce a detailed list of all visual elements that could serve as comic hooks.  
+                  Include:
+                  - The subject’s facial expression and body language  
+                  - Clothing, blankets, props and textures  
+                  - Colors, patterns and contrasts  
+                  - Surroundings or background objects  
+                  - Any quirky or unexpected details  
+                  Output as a series short sentences.`
               },
               {
                 type: "image_url",
@@ -177,6 +179,7 @@ class ImageAnalysisService {
    */
   async getAnalysisResults(mediaId) {
     try {
+      console.log("Getting analysis results for media:", mediaId);
       const media = await Media.query().findById(mediaId);
       return media?.metadata?.image_analysis || null;
     } catch (error) {

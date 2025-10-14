@@ -207,7 +207,7 @@ Only return the story prompt, nothing else.`;
     }
   }
 
-  async generatePetPromptFromImages(imageDescriptions) {
+  async generateThoughtFromImages(imageDescriptions) {
     // Check if AI bypass is enabled for development
     if (process.env.BYPASS_AI === "true") {
       return `${imageDescriptions.join(", ")}`;
@@ -218,18 +218,15 @@ Only return the story prompt, nothing else.`;
 
       const combinedDescriptions = imageDescriptions.join("\n\n");
 
-      const prompt = `Based on these image descriptions of a pet, create a simple prompt describing what the pet is doing or experiencing:
+      const prompt = `You’re a witty, meme‑making AI narrator.  
+        Look at the combined descriptions and imagine you’re inside the subject’s head.  
+        Write one ultra‑short (1–2 sentence) inner monologue—enclosed in quotes—with natural pauses (ellipses or commas) and simple punctuation, so it can be spoken by a TTS engine.  
+        Keep it relatable, punchy, and unexpectedly funny.
 
-${combinedDescriptions}
+        Descriptions:
+        ${combinedDescriptions}
 
-The prompt should:
-- Be short, 1-2 sentences long
-- Describe the pet's activity or situation from a neutral perspective
-- Focus on what the pet is doing, where they are, or what they're experiencing
-- Be suitable for generating a pet's inner thoughts about the situation
-- Use simple, clear language
-
-Only return the pet activity prompt, nothing else.`;
+        Only return the inner monologue, nothing else.`;
 
       const response = await this.openai.chat.completions.create({
         model,
@@ -239,7 +236,7 @@ Only return the pet activity prompt, nothing else.`;
       });
 
       const generatedPrompt = response.choices[0]?.message?.content?.trim();
-      
+
       if (!generatedPrompt) {
         throw new Error("No prompt generated");
       }

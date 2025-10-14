@@ -28,7 +28,7 @@ export default async function generateArtifactAudioJob(job) {
     let audioResult;
     let textContent;
 
-    if (appSlug === "fursona") {
+    if (appSlug === "saywut") {
       // For fursona, generate audio from the monologue text
       if (!artifact.metadata?.monologue_text && !artifact.description) {
         throw new Error(`Artifact ${artifactId} has no monologue text`);
@@ -99,7 +99,7 @@ export default async function generateArtifactAudioJob(job) {
     const audioMedia = await Media.createAudioForArtifact(artifactId, audioResult, {
       artifact_id: artifactId,
       app_slug: appSlug,
-      content_type: appSlug === "fursona" ? "pet_monologue" : "story",
+      content_type: appSlug === "saywut" ? "monologue" : "story",
       title: artifact.title,
       voice_preset: audioResult.voice_preset,
       instructions_used: audioResult.instructions_used,
@@ -111,7 +111,7 @@ export default async function generateArtifactAudioJob(job) {
     console.log(`[Generate Artifact Audio] Successfully generated audio: ${audioResult.filename}`);
 
     // For fursona, automatically queue video generation after audio is ready
-    if (appSlug === "fursona") {
+    if (appSlug === "saywut") {
       try {
         const { videoQueue, JOB_GENERATE_ARTIFACT_VIDEO } = await import("#src/background/queues/index.js");
         
@@ -143,7 +143,7 @@ export default async function generateArtifactAudioJob(job) {
       voice: audioResult.voice,
       voicePreset: audioResult.voice_preset,
       appSlug: appSlug,
-      contentType: appSlug === "fursona" ? "pet_monologue" : "story"
+      contentType: appSlug === "saywut" ? "monologue" : "story"
     };
 
   } catch (error) {

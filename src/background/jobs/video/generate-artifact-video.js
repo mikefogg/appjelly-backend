@@ -20,7 +20,7 @@ export default async function generateArtifactVideoJob(job) {
     console.log(`[Generate Artifact Video] App: ${appSlug}, Artifact type: ${artifact.artifact_type}`);
 
     // Currently only support fursona videos
-    if (appSlug !== "fursona") {
+    if (appSlug !== "saywut") {
       throw new Error(`Video generation not supported for app: ${appSlug}`);
     }
 
@@ -56,20 +56,29 @@ export default async function generateArtifactVideoJob(job) {
 
     console.log(`[Generate Artifact Video] Video generated: ${videoResult.filename}, Size: ${(videoResult.size_bytes / 1024 / 1024).toFixed(2)} MB`);
 
+    // Check if we're using local storage
+    const useLocalStorage = process.env.LOCAL_STORAGE === "true";
+    
     // Create media record for the video
     const videoMedia = await Media.query().insert({
       owner_type: 'artifact',
       owner_id: artifactId,
       media_type: 'video',
-      video_key: videoResult.filename,
+      video_key: useLocalStorage ? null : videoResult.r2_key,
       metadata: {
         ...videoResult,
         app_slug: appSlug,
-        content_type: 'pet_monologue',
+        content_type: 'monologue',
         title: artifact.title,
         source_image_id: imageMedia?.id || null,
         source_audio_id: audioMedia.id,
         monologue_preview: monologueText.substring(0, 100),
+        // Add local storage info if applicable
+        ...(useLocalStorage && {
+          local_storage: true,
+          local_path: videoResult.local_path,
+          file_path: videoResult.file_path
+        })
       },
       status: 'completed',
     });
@@ -97,7 +106,7 @@ export default async function generateArtifactVideoJob(job) {
       videoDurationSeconds: videoResult.duration_seconds,
       generationTime: videoResult.generation_time,
       appSlug: appSlug,
-      contentType: 'pet_monologue'
+      contentType: 'monologue'
     };
 
   } catch (error) {

@@ -1,12 +1,12 @@
-import React from 'react';
-import { Composition } from 'remotion';
-import { FursonaScene } from './FursonaScene';
+import React from "react";
+import { Composition } from "remotion";
+import { FursonaScene } from "./FursonaScene";
 
 // Default props for development
 const defaultProps = {
-  imageUrl: 'https://via.placeholder.com/1080x1920',
+  imageUrl: "https://via.placeholder.com/1080x1920",
   audioUrl: null,
-  text: 'Today I discovered that the mailman is actually a treat dispenser in disguise!',
+  text: "Today I discovered that the mailman is actually a treat dispenser in disguise!",
 };
 
 export const RemotionRoot = () => {

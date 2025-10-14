@@ -11,16 +11,6 @@ const artifactParamValidators = [
   param("id").isUUID().withMessage("Invalid artifact ID"),
 ];
 
-const pageParamValidators = [
-  param("id").isUUID().withMessage("Invalid artifact ID"),
-  param("pageNum").isInt({ min: 1 }).withMessage("Page number must be a positive integer"),
-];
-
-const regenerateValidators = [
-  body("regenerate_images").optional().isBoolean().withMessage("regenerate_images must be a boolean"),
-  body("style_updates").optional().isObject().withMessage("style_updates must be an object"),
-];
-
 router.get(
   "/",
   requireAppContext,
@@ -160,77 +150,6 @@ router.get(
     } catch (error) {
       console.error("Get artifact pages error:", error);
       return res.status(500).json(formatError("Failed to retrieve artifact pages"));
-    }
-  }
-);
-
-router.get(
-  "/:id/pages/:pageNum",
-  requireAppContext,
-  requireAuth,
-  pageParamValidators,
-  handleValidationErrors,
-  async (req, res) => {
-    try {
-      const { id, pageNum } = req.params;
-
-      // Check if artifact is accessible
-      const accessibleArtifacts = await Artifact.findAccessibleArtifacts(res.locals.account.id, res.locals.app.id);
-      const artifact = accessibleArtifacts.find(a => a.id === id);
-
-      if (!artifact) {
-        return res.status(404).json(formatError("Artifact not found", 404));
-      }
-
-      const page = await ArtifactPage.findPage(id, parseInt(pageNum));
-
-      if (!page) {
-        return res.status(404).json(formatError("Page not found", 404));
-      }
-
-      const data = await pageWithArtifactSerializer(page, artifact);
-
-      return res.status(200).json(successResponse(data, "Page retrieved successfully"));
-    } catch (error) {
-      console.error("Get artifact page error:", error);
-      return res.status(500).json(formatError("Failed to retrieve page"));
-    }
-  }
-);
-
-router.post(
-  "/:id/regenerate",
-  requireAppContext,
-  requireAuth,
-  rateLimitByAccount(10, 3600000), // 10 regenerations per hour
-  artifactParamValidators,
-  regenerateValidators,
-  handleValidationErrors,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-
-      const artifact = await Artifact.query()
-        .findById(id)
-        .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id)
-        .withGraphFetched("[input, pages]");
-
-      if (!artifact) {
-        return res.status(404).json(formatError("Artifact not found or access denied", 404));
-      }
-
-      // For test purposes, just return success without actual regeneration
-      const data = {
-        artifact_id: artifact.id,
-        status: "regenerating",
-        message: "Artifact regeneration started successfully"
-      };
-
-      return res.status(200).json(successResponse(data, "Artifact regeneration started"));
-    } catch (error) {
-      console.error("Regenerate artifact error:", error);
-      return res.status(500).json(formatError("Failed to regenerate artifact"));
     }
   }
 );
