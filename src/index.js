@@ -66,7 +66,7 @@ if (process.env.NODE_ENV !== "TEST") {
   const PORT = process.env.PORT ?? 4001;
 
   const server = app.listen(PORT, () => {
-    console.log(`🚀 SnuggleBug Platform API running on port ${PORT}`);
+    console.log(`🚀 Ghost Platform API running on port ${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || "development"}`);
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
   });

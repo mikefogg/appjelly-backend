@@ -1,3 +1,4 @@
+// Ghost app serializers - only includes what's actually used
 export {
   appSerializer,
   appListSerializer,
@@ -10,72 +11,7 @@ export {
   publicAccountSerializer,
 } from "#src/serializers/account-serializer.js";
 
-export {
-  actorSerializer,
-  actorListSerializer,
-  actorWithAccessSerializer,
-  publicActorSerializer,
-} from "#src/serializers/actor-serializer.js";
-
-export {
-  artifactSerializer,
-  artifactWithPagesSerializer,
-  artifactListSerializer,
-  sharedArtifactSerializer,
-  safeArtifactSerializer,
-  safeArtifactWithPagesSerializer,
-  pageSerializer,
-  pageWithArtifactSerializer,
-} from "#src/serializers/artifact-serializer.js";
-
-export {
-  subscriptionSerializer,
-  subscriptionStatusSerializer,
-  paywallSerializer,
-} from "#src/serializers/subscription-serializer.js";
-
-export {
-  inputSerializer,
-  inputWithArtifactSerializer,
-  inputListSerializer,
-  safeInputSerializer,
-} from "#src/serializers/input-serializer.js";
-
-export {
-  inferenceSerializer,
-} from "#src/serializers/inference-serializer.js";
-
-export {
-  mediaSerializer,
-  mediaUploadSerializer,
-  batchUploadSerializer,
-  mediaDetailSerializer,
-  mediaListSerializer,
-} from "#src/serializers/media-serializer.js";
-
-export {
-  accountLinkSerializer,
-  accountLinkListSerializer,
-} from "#src/serializers/account-link-serializer.js";
-
-export {
-  contentReportSerializer,
-  contentGuidelinesSerializer,
-  contentModerationSerializer,
-  safetyTipsSerializer,
-} from "#src/serializers/content-safety-serializer.js";
-
-export {
-  sampleStorySerializer,
-  onboardingCompleteSerializer,
-  suggestionsSerializer,
-} from "#src/serializers/onboarding-serializer.js";
-
-export {
-  sharedViewSerializer,
-  claimCharacterSerializer,
-} from "#src/serializers/shared-view-serializer.js";
-
+// Utility response formatters
 export const successResponse = (data, message = "Success") => {
   return {
     code: 200,

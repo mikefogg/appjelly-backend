@@ -190,8 +190,72 @@ Headers:
 - `GET /suggestions/:id` - Get specific suggestion details
 - `POST /suggestions/:id/use` - Mark suggestion as used
 - `POST /suggestions/:id/dismiss` - Mark suggestion as dismissed
+- `POST /suggestions/:id/generate-response` - Generate AI reply to source post ✅
 - `POST /suggestions/generate` - Manually trigger generation (202 queued response)
 - `POST /suggestions/:id/regenerate` - ❌ Not implemented (501 status)
+
+---
+
+## ✅ 6a. Generate Response to Tweet
+
+**Status**: ✅ IMPLEMENTED
+
+**Endpoint**: `POST /suggestions/:id/generate-response`
+
+**Implementation**: `src/routes/public/suggestions.js:203`
+
+**How it works**:
+```
+POST /suggestions/{suggestion_id}/generate-response
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "additional_instructions": "Make it funny and engaging" // optional
+}
+
+→ Fetches the suggestion's source post
+→ Creates Input with reply prompt
+→ Creates Artifact (status: "pending", is_reply: true)
+→ Queues background job for AI generation
+→ Returns 202 Accepted immediately
+```
+
+**Request validation**:
+- `additional_instructions`: 1-200 characters, optional
+- Suggestion must have a source post
+- Connected account must have `sync_status = "ready"`
+
+**Response** (202 Accepted):
+```json
+{
+  "code": 202,
+  "status": "Success",
+  "data": {
+    "id": "artifact_uuid",
+    "status": "pending",
+    "message": "Response generation queued",
+    "input": {
+      "id": "input_uuid",
+      "prompt": "Generate a reply to this post from @author: '...'"
+    },
+    "reply_to": {
+      "post_id": "source_post_uuid",
+      "author": "original_author",
+      "content": "Original tweet text"
+    }
+  }
+}
+```
+
+**Polling for completion**: Use `GET /posts/{artifact_id}` to check status
+
+**Key Features**:
+- ✅ Generates AI replies to suggested posts
+- ✅ Optional custom instructions for tone/style
+- ✅ Includes context of original post
+- ✅ Async generation with polling
+- ✅ Respects user's writing style
 
 ---
 
@@ -478,6 +542,8 @@ Headers:
 | Create drafts | ✅ | `POST /posts/drafts` | User-written content |
 | AI improve drafts | ✅ | `POST /posts/:id/improve` | Preview-only, doesn't save |
 | Filter posts by type | ✅ | `GET /posts?type=draft\|generated` | Draft/generated filtering |
+| Generate response to tweet | ✅ | `POST /suggestions/:id/generate-response` | AI reply with optional instructions |
+| Delete account | ✅ | `DELETE /accounts/me` | Soft delete with subscription notice |
 
 ---
 
@@ -528,6 +594,54 @@ Body: {
 - ✅ Comprehensive test coverage (105 tests passing)
 
 **React Native Integration Guide**: See `REACT_NATIVE_OAUTH_GUIDE.md`
+
+---
+
+## ✅ 7. Account Management & Deletion
+
+**Status**: ✅ IMPLEMENTED
+
+**Endpoint**: `DELETE /accounts/me`
+
+**Implementation**: `src/routes/public/accounts.js:157`
+
+**How it works**:
+```
+DELETE /accounts/me
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Soft deletes account (sets metadata.deleted_at)
+→ Disconnects all connected social accounts
+→ Returns subscription notice
+→ Data retained for compliance/audit purposes
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Account deleted successfully",
+    "disconnected_platforms": 2,
+    "subscription_notice": "Please note: We cannot automatically cancel your subscription. Please manage your subscription through your payment provider (App Store, Google Play, or Stripe)."
+  }
+}
+```
+
+**What happens on deletion**:
+- ✅ Account soft deleted (metadata.deleted_at timestamp added)
+- ✅ All connected accounts deactivated (is_active = false)
+- ✅ Disconnection timestamps added to each platform
+- ✅ Data retained for compliance (no hard delete)
+- ✅ User notified to manually cancel subscription
+
+**Additional account endpoints**:
+- `GET /accounts/me` - Get current account details
+- `PATCH /accounts/me` - Update account metadata
+- `POST /accounts/me/regenerate-display-name` - Regenerate display name
 
 ---
 

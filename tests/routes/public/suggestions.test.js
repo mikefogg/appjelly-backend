@@ -262,6 +262,180 @@ describe("Suggestions Routes", () => {
     });
   });
 
+  describe("POST /suggestions/:id/generate-response", () => {
+    let suggestionWithSource;
+    let sourcePost;
+    let networkProfile;
+
+    beforeEach(async () => {
+      // Create a network profile and source post for testing
+      const { NetworkProfile, NetworkPost, PostSuggestion } = await import("#src/models/index.js");
+
+      networkProfile = await NetworkProfile.query().insert({
+        connected_account_id: context.connectedAccount.id,
+        platform: "twitter",
+        platform_user_id: "test_user_123",
+        username: "testauthor",
+        display_name: "Test Author",
+        profile_data: {},
+      });
+
+      sourcePost = await NetworkPost.query().insert({
+        connected_account_id: context.connectedAccount.id,
+        network_profile_id: networkProfile.id,
+        platform: "twitter",
+        post_id: "post_123",
+        content: "This is an interesting post about AI technology",
+        posted_at: new Date().toISOString(),
+        engagement_score: 150,
+      });
+
+      suggestionWithSource = await PostSuggestion.query().insert({
+        account_id: context.account.id,
+        app_id: context.app.id,
+        connected_account_id: context.connectedAccount.id,
+        source_post_id: sourcePost.id,
+        suggestion_type: "reply",
+        content: "Great point about AI!",
+        reasoning: "This is relevant to your interests",
+        status: "pending",
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+    });
+
+    it("generates AI response to source post", async () => {
+
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionWithSource.id}/generate-response`
+      ).send({});
+
+      const data = expectSuccessResponse(response, 202);
+      expect(data.status).toBe("pending");
+      expect(data.message).toContain("queued");
+      expect(data).toHaveProperty("id"); // artifact ID
+      expect(data).toHaveProperty("input");
+      expect(data.input).toHaveProperty("prompt");
+      expect(data).toHaveProperty("reply_to");
+      expect(data.reply_to).toHaveProperty("post_id");
+      expect(data.reply_to).toHaveProperty("author");
+      expect(data.reply_to).toHaveProperty("content");
+
+      // Verify job was queued
+      expect(ghostQueue.add).toHaveBeenCalledWith(
+        "generate-post",
+        expect.objectContaining({
+          artifactId: data.id,
+        })
+      );
+
+      // Verify input was created
+      const { Input } = await import("#src/models/index.js");
+      const input = await Input.query().findById(data.input.id);
+      expect(input).toBeTruthy();
+      expect(input.prompt).toContain("Generate a reply");
+
+      // Verify artifact was created
+      const { Artifact } = await import("#src/models/index.js");
+      const artifact = await Artifact.query().findById(data.id);
+      expect(artifact).toBeTruthy();
+      expect(artifact.status).toBe("pending");
+      expect(artifact.metadata.is_reply).toBe(true);
+      expect(artifact.metadata.reply_to_post_id).toBe(data.reply_to.post_id);
+    });
+
+    it("generates response with additional instructions", async () => {
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionWithSource.id}/generate-response`
+      ).send({
+        additional_instructions: "Make it funny and add a joke",
+      });
+
+      const data = expectSuccessResponse(response, 202);
+      expect(data.status).toBe("pending");
+
+      // Verify prompt includes instructions
+      const { Input } = await import("#src/models/index.js");
+      const input = await Input.query().findById(data.input.id);
+      expect(input.prompt).toContain("Make it funny and add a joke");
+    });
+
+    it("validates additional_instructions max length", async () => {
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionWithSource.id}/generate-response`
+      ).send({
+        additional_instructions: "a".repeat(201), // Too long
+      });
+
+      expectValidationError(response, "additional_instructions");
+    });
+
+    it("returns 404 for non-existent suggestion", async () => {
+      const fakeId = "00000000-0000-0000-0000-000000000000";
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${fakeId}/generate-response`
+      ).send({});
+
+      expectErrorResponse(response, 404, "not found");
+    });
+
+    it("returns 400 for suggestion without source post", async () => {
+      // Create a suggestion without source_post_id
+      const { PostSuggestion } = await import("#src/models/index.js");
+      const suggestionNoSource = await PostSuggestion.query().insert({
+        account_id: context.account.id,
+        app_id: context.app.id,
+        connected_account_id: context.connectedAccount.id,
+        suggestion_type: "original_post",
+        content: "Standalone suggestion",
+        reasoning: "Test",
+        status: "pending",
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionNoSource.id}/generate-response`
+      ).send({});
+
+      expectErrorResponse(response, 400, "no source post");
+    });
+
+    it("requires connected account to be ready", async () => {
+      // Set sync status to pending
+      await context.connectedAccount.$query().patch({ sync_status: "pending" });
+
+      const response = await authenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionWithSource.id}/generate-response`
+      ).send({});
+
+      expectErrorResponse(response, 400, "not ready");
+
+      // Reset for other tests
+      await context.connectedAccount.$query().patch({ sync_status: "ready" });
+    });
+
+    it("requires authentication", async () => {
+      const response = await unauthenticatedRequest(
+        app,
+        "post",
+        `/suggestions/${suggestionWithSource.id}/generate-response`
+      ).send({});
+
+      expectUnauthenticatedError(response);
+    });
+  });
+
   describe("POST /suggestions/:id/regenerate", () => {
     it("returns 501 not implemented", async () => {
       const response = await authenticatedRequest(

@@ -1,7 +1,7 @@
 import express from "express";
 import crypto from "crypto";
 import { raw } from "objection";
-import { Artifact, Media, Input, Account, Actor } from "#src/models/index.js";
+import { Artifact, Media, Input, Account } from "#src/models/index.js"; // Actor removed - story generation feature not used in Ghost
 import { formatError } from "#src/helpers/index.js";
 import { notificationQueue, safetyQueue, NOTIFICATION_JOBS, SAFETY_JOBS } from "#src/background/queues/index.js";
 
@@ -339,10 +339,11 @@ const getContentOwner = async (contentType, contentId) => {
       return input?.account;
     case "media":
       const media = await Media.query().findById(contentId);
-      if (media?.owner_type === "actor") {
-        const actor = await Actor.query().findById(media.owner_id).withGraphFetched("account");
-        return actor?.account;
-      }
+      // Story generation feature - not used in Ghost
+      // if (media?.owner_type === "actor") {
+      //   const actor = await Actor.query().findById(media.owner_id).withGraphFetched("account");
+      //   return actor?.account;
+      // }
       return null;
     default:
       return null;

@@ -157,19 +157,50 @@ router.post(
 router.delete("/me", requireAppContext, requireAuth, async (req, res) => {
   try {
     const account = res.locals.account;
+    const { ConnectedAccount } = await import("#src/models/index.js");
 
-    // Soft delete by updating metadata
-    await account.$query().patchAndFetch({
+    // Get all connected accounts
+    const connections = await ConnectedAccount.query()
+      .where("account_id", account.id)
+      .where("app_id", res.locals.app.id)
+      .where("is_active", true);
+
+    // Soft delete all connected accounts (disconnect all platforms)
+    if (connections.length > 0) {
+      await ConnectedAccount.query()
+        .where("account_id", account.id)
+        .where("app_id", res.locals.app.id)
+        .where("is_active", true)
+        .patch({
+          is_active: false,
+          metadata: ConnectedAccount.raw(
+            "jsonb_set(metadata, '{disconnected_at}', to_jsonb(?::text))",
+            [new Date().toISOString()]
+          ),
+        });
+    }
+
+    // Soft delete account by updating metadata
+    await account.$query().patch({
       metadata: {
         ...account.metadata,
         deleted_at: new Date().toISOString(),
         deletion_reason: "user_requested",
+        disconnected_platforms: connections.length,
       },
     });
 
-    return res
-      .status(200)
-      .json(successResponse(null, "Account deleted successfully"));
+    return res.status(200).json(
+      successResponse(
+        {
+          message: "Account deleted successfully",
+          disconnected_platforms: connections.length,
+          subscription_notice:
+            "Please note: We cannot automatically cancel your subscription. Please manage your subscription through your payment provider (App Store, Google Play, or Stripe).",
+        },
+        "Account deleted successfully"
+      )
+    );
   } catch (error) {
     console.error("Delete account error:", error);
     return res.status(500).json(formatError("Failed to delete account"));

@@ -1,6 +1,6 @@
 import express from "express";
 import crypto from "crypto";
-import { Media, Actor, ArtifactPage } from "#src/models/index.js";
+import { Media } from "#src/models/index.js"; // Actor, ArtifactPage removed - story generation features not used in Ghost
 import { formatError } from "#src/helpers/index.js";
 import { mediaQueue, safetyQueue, notificationQueue, analyticsQueue, MEDIA_JOBS, SAFETY_JOBS } from "#src/background/queues/index.js";
 
@@ -118,13 +118,14 @@ const handleImageUploaded = async (imageKey, metadata) => {
     });
 
     // Queue content safety scan for user-uploaded images
-    if (media.owner_type === "actor") {
-      await safetyQueue.add(SAFETY_JOBS.MODERATE_CONTENT, {
-        content_type: "image",
-        content_id: media.id,
-        image_key: imageKey,
-      });
-    }
+    // Story generation feature - not used in Ghost
+    // if (media.owner_type === "actor") {
+    //   await safetyQueue.add(SAFETY_JOBS.MODERATE_CONTENT, {
+    //     content_type: "image",
+    //     content_id: media.id,
+    //     image_key: imageKey,
+    //   });
+    // }
 
   } catch (error) {
     console.error("Error handling image.uploaded:", error);
@@ -157,22 +158,23 @@ const handleImageProcessed = async (imageKey, status, metadata) => {
         optimization_stats: metadata?.optimization_stats,
       };
 
-      // If this is an actor image that was successfully processed, 
+      // Story generation feature - not used in Ghost
+      // If this is an actor image that was successfully processed,
       // notify the owner that their character image is ready
-      if (media.owner_type === "actor") {
-        const actor = await Actor.query()
-          .findById(media.owner_id)
-          .withGraphFetched("account");
-
-        if (actor?.account) {
-          // Queue notification job
-          await notificationQueue.add("character-image-ready", {
-            accountId: actor.account.id,
-            actorId: actor.id,
-            imageKey,
-          });
-        }
-      }
+      // if (media.owner_type === "actor") {
+      //   const actor = await Actor.query()
+      //     .findById(media.owner_id)
+      //     .withGraphFetched("account");
+      //
+      //   if (actor?.account) {
+      //     // Queue notification job
+      //     await notificationQueue.add("character-image-ready", {
+      //       accountId: actor.account.id,
+      //       actorId: actor.id,
+      //       imageKey,
+      //     });
+      //   }
+      // }
     } else if (status === "failed") {
       updateData.metadata = {
         ...updateData.metadata,
@@ -251,22 +253,23 @@ const handleImageFailed = async (imageKey, metadata) => {
       },
     });
 
-    // If this was a user's character image and it failed, 
+    // Story generation feature - not used in Ghost
+    // If this was a user's character image and it failed,
     // notify them and suggest alternatives
-    if (media.owner_type === "actor") {
-      const actor = await Actor.query()
-        .findById(media.owner_id)
-        .withGraphFetched("account");
-
-      if (actor?.account) {
-        await notificationQueue.add("image-processing-failed", {
-          accountId: actor.account.id,
-          actorId: actor.id,
-          imageKey,
-          errorMessage: metadata?.error_message,
-        });
-      }
-    }
+    // if (media.owner_type === "actor") {
+    //   const actor = await Actor.query()
+    //     .findById(media.owner_id)
+    //     .withGraphFetched("account");
+    //
+    //   if (actor?.account) {
+    //     await notificationQueue.add("image-processing-failed", {
+    //       accountId: actor.account.id,
+    //       actorId: actor.id,
+    //       imageKey,
+    //       errorMessage: metadata?.error_message,
+    //     });
+    //   }
+    // }
 
   } catch (error) {
     console.error("Error handling image.failed:", error);

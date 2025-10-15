@@ -22,7 +22,10 @@ class TwitterOAuthService extends BaseOAuthService {
       ],
     });
 
-    this.validateConfig();
+    // Only validate config if env vars are present (allows dev mode without OAuth setup)
+    if (process.env.TWITTER_CLIENT_ID) {
+      this.validateConfig();
+    }
   }
 
   /**

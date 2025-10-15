@@ -122,18 +122,78 @@ describe("Accounts Routes", () => {
   });
 
   describe("DELETE /accounts/me", () => {
-    it("soft deletes account", async () => {
+    it("soft deletes account and returns subscription notice", async () => {
       const response = await request(app)
         .delete("/accounts/me")
         .set(headers);
 
-      expectSuccessResponse(response);
+      const data = expectSuccessResponse(response);
+      expect(data.message).toContain("deleted");
+      expect(data).toHaveProperty("subscription_notice");
+      expect(data.subscription_notice).toContain("subscription");
+      expect(data.subscription_notice).toContain("payment provider");
 
       // Verify account is marked as deleted
       const { Account } = await import("#src/models/index.js");
       const account = await Account.query().findById(user.account.id);
       expect(account.metadata.deleted_at).toBeDefined();
       expect(account.metadata.deletion_reason).toBe("user_requested");
+    });
+
+    it("disconnects all connected accounts when deleting", async () => {
+      // Create connected accounts for the user
+      const { ConnectedAccount } = await import("#src/models/index.js");
+
+      const connection1 = await ConnectedAccount.query().insert({
+        account_id: user.account.id,
+        app_id: user.app.id,
+        platform: "twitter",
+        platform_user_id: "twitter_123",
+        username: "testuser",
+        display_name: "Test User",
+        access_token: "encrypted_token",
+        sync_status: "ready",
+        is_active: true,
+      });
+
+      const connection2 = await ConnectedAccount.query().insert({
+        account_id: user.account.id,
+        app_id: user.app.id,
+        platform: "linkedin",
+        platform_user_id: "linkedin_456",
+        username: "testuser2",
+        display_name: "Test User 2",
+        access_token: "encrypted_token_2",
+        sync_status: "ready",
+        is_active: true,
+      });
+
+      // Delete account
+      const response = await request(app)
+        .delete("/accounts/me")
+        .set(headers);
+
+      const data = expectSuccessResponse(response);
+      expect(data.disconnected_platforms).toBe(2);
+
+      // Verify connections are deactivated
+      const updatedConnection1 = await ConnectedAccount.query().findById(connection1.id);
+      const updatedConnection2 = await ConnectedAccount.query().findById(connection2.id);
+
+      expect(updatedConnection1.is_active).toBe(false);
+      expect(updatedConnection2.is_active).toBe(false);
+      expect(updatedConnection1.metadata.disconnected_at).toBeDefined();
+      expect(updatedConnection2.metadata.disconnected_at).toBeDefined();
+    });
+
+    it("handles deletion when no connected accounts exist", async () => {
+      const response = await request(app)
+        .delete("/accounts/me")
+        .set(headers);
+
+      const data = expectSuccessResponse(response);
+      expect(data.disconnected_platforms).toBe(0);
+      expect(data.message).toContain("deleted");
     });
 
     it("requires authentication", async () => {

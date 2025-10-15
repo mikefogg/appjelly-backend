@@ -25,7 +25,10 @@ class FacebookOAuthService extends BaseOAuthService {
       ],
     });
 
-    this.validateConfig();
+    // Only validate config if env vars are present (allows dev mode without OAuth setup)
+    if (process.env.FACEBOOK_APP_ID) {
+      this.validateConfig();
+    }
     this.graphApiUrl = "https://graph.facebook.com/v18.0";
   }
 

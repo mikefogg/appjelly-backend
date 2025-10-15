@@ -21,7 +21,10 @@ class LinkedInOAuthService extends BaseOAuthService {
       ],
     });
 
-    this.validateConfig();
+    // Only validate config if env vars are present (allows dev mode without OAuth setup)
+    if (process.env.LINKEDIN_CLIENT_ID) {
+      this.validateConfig();
+    }
     this.apiUrl = "https://api.linkedin.com/v2";
   }
 

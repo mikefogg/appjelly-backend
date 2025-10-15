@@ -1,10 +1,10 @@
 import express from "express";
 import { param, query, body } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { PostSuggestion, ConnectedAccount } from "#src/models/index.js";
+import { PostSuggestion, ConnectedAccount, Input, Artifact } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
-import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
+import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_POST } from "#src/background/queues/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -195,6 +195,115 @@ router.post(
     } catch (error) {
       console.error("Dismiss suggestion error:", error);
       return res.status(500).json(formatError("Failed to dismiss suggestion"));
+    }
+  }
+);
+
+// POST /suggestions/:id/generate-response - Generate a reply to the source post
+router.post(
+  "/:id/generate-response",
+  requireAppContext,
+  requireAuth,
+  [
+    ...suggestionParamValidators,
+    body("additional_instructions")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage("Additional instructions must be between 1 and 200 characters"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { additional_instructions } = req.body;
+
+      // Fetch suggestion with source post
+      const suggestion = await PostSuggestion.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .withGraphFetched("[source_post.network_profile, connected_account]");
+
+      if (!suggestion) {
+        return res.status(404).json(formatError("Suggestion not found", 404));
+      }
+
+      if (!suggestion.source_post) {
+        return res.status(400).json(formatError("This suggestion has no source post to reply to", 400));
+      }
+
+      if (suggestion.connected_account.sync_status !== "ready") {
+        return res.status(400).json(formatError("Connected account is not ready. Please wait for initial sync to complete.", 400));
+      }
+
+      // Build prompt for generating response
+      const sourceAuthor = suggestion.source_post.network_profile?.username || "someone";
+      const sourceContent = suggestion.source_post.content;
+
+      let prompt = `Generate a reply to this post from @${sourceAuthor}: "${sourceContent}"`;
+
+      if (additional_instructions) {
+        prompt += `\n\nAdditional instructions: ${additional_instructions}`;
+      }
+
+      // Create input record
+      const input = await Input.query().insert({
+        account_id: res.locals.account.id,
+        app_id: res.locals.app.id,
+        connected_account_id: suggestion.connected_account_id,
+        prompt,
+        metadata: {
+          platform: suggestion.connected_account.platform,
+          reply_to: {
+            post_id: suggestion.source_post.id,
+            author: sourceAuthor,
+            content: sourceContent,
+          },
+        },
+      });
+
+      // Create artifact (pending generation)
+      const artifact = await Artifact.query().insert({
+        input_id: input.id,
+        account_id: res.locals.account.id,
+        app_id: res.locals.app.id,
+        connected_account_id: suggestion.connected_account_id,
+        artifact_type: "social_post",
+        status: "pending",
+        metadata: {
+          platform: suggestion.connected_account.platform,
+          prompt,
+          is_reply: true,
+          reply_to_post_id: suggestion.source_post.id,
+        },
+      });
+
+      // Trigger background job for AI generation
+      await ghostQueue.add(JOB_GENERATE_POST, {
+        artifactId: artifact.id,
+      });
+
+      // Return pending response
+      const data = {
+        id: artifact.id,
+        status: "pending",
+        message: "Response generation queued",
+        input: {
+          id: input.id,
+          prompt: input.prompt,
+        },
+        reply_to: {
+          post_id: suggestion.source_post.id,
+          author: sourceAuthor,
+          content: sourceContent,
+        },
+      };
+
+      return res.status(202).json(successResponse(data));
+    } catch (error) {
+      console.error("Generate response error:", error);
+      return res.status(500).json(formatError("Failed to generate response"));
     }
   }
 );
