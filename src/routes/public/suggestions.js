@@ -38,9 +38,9 @@ router.get(
       }
 
       // Get all suggestions (sorted by most recent first)
+      // Return ALL suggestions regardless of status - used ones will have status: "used"
       const suggestions = await PostSuggestion.query()
         .where("connected_account_id", connected_account_id)
-        .where("status", "pending")
         .withGraphFetched("[source_post.network_profile]")
         .orderBy("created_at", "desc");
 
@@ -53,6 +53,7 @@ router.get(
         topics: suggestion.topics,
         angle: suggestion.angle,
         length: suggestion.length,
+        status: suggestion.status,
         source_post: suggestion.source_post ? {
           id: suggestion.source_post.id,
           content: suggestion.source_post.content,
@@ -150,11 +151,11 @@ router.post(
         return res.status(404).json(formatError("Suggestion not found", 404));
       }
 
-      if (suggestion.status !== "pending") {
-        return res.status(400).json(formatError("Suggestion has already been used or dismissed", 400));
+      // Allow marking as used multiple times (user can copy the same suggestion repeatedly)
+      // Make it idempotent - if already used, just return success
+      if (suggestion.status !== "used") {
+        await suggestion.markAsUsed();
       }
-
-      await suggestion.markAsUsed();
 
       return res.status(200).json(successResponse({
         message: "Suggestion marked as used",

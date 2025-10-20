@@ -113,7 +113,7 @@ export async function createNetworkPosts(connectedAccount, networkProfile, count
       like_count: i * 10,
       quote_count: i,
       engagement_score: i * 20,
-      topics: knex.raw("ARRAY['tech', 'ai']::text[]"),
+      topics: ['tech', 'ai'],
       sentiment: "positive",
     });
     posts.push(post);
@@ -137,7 +137,7 @@ export async function createPostSuggestions(account, connectedAccount, app, coun
       suggestion_type: i === 0 ? "reply" : "original_post",
       content: `Suggestion ${i + 1}: Great insight about AI!`,
       reasoning: `This is relevant because ${i + 1}`,
-      topics: knex.raw("ARRAY['ai', 'tech']::text[]"),
+      topics: ['ai', 'tech'],
       character_count: 40 + i,
       expires_at: expiresAt.toISOString(),
       status: "pending",
@@ -151,16 +151,16 @@ export async function createPostSuggestions(account, connectedAccount, app, coun
  * Create writing style for a connected account
  */
 export async function createWritingStyle(connectedAccount, overrides = {}) {
-  return await WritingStyle.query().insert({
+  return await WritingStyle.query().insertAndFetch({
     connected_account_id: connectedAccount.id,
     tone: overrides.tone || "casual and conversational",
     avg_length: overrides.avg_length || 150,
     emoji_frequency: overrides.emoji_frequency || 0.3,
     hashtag_frequency: overrides.hashtag_frequency || 0.2,
     question_frequency: overrides.question_frequency || 0.1,
-    common_phrases: overrides.common_phrases || knex.raw("ARRAY['I think', 'hot take', 'here''s the thing']::text[]"),
-    common_topics: overrides.common_topics || knex.raw("ARRAY['tech', 'ai', 'startups']::text[]"),
-    posting_times: overrides.posting_times || knex.raw("ARRAY[9, 12, 15, 18]::integer[]"),
+    common_phrases: overrides.common_phrases || knex.raw("?", ['{I think,hot take,heres the thing}']),
+    common_topics: overrides.common_topics || knex.raw("?", ['{tech,ai,startups}']),
+    posting_times: overrides.posting_times || knex.raw("?", ['{9,12,15,18}']),
     style_summary: overrides.style_summary || "Casual and thoughtful. Uses clear language with occasional humor.",
     sample_size: overrides.sample_size || 50,
     confidence_score: overrides.confidence_score || 0.85,

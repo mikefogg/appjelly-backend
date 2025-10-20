@@ -3,6 +3,8 @@
  * Handles all Twitter API interactions for Ghost
  */
 
+import rateLimiter from "./rate-limiter.js";
+
 class TwitterService {
   constructor() {
     this.apiKey = process.env.TWITTER_API_KEY;
@@ -11,16 +13,66 @@ class TwitterService {
   }
 
   /**
+   * Determine the rate limit endpoint key from the API endpoint
+   */
+  getEndpointKey(endpoint) {
+    if (endpoint.includes("/timelines/reverse_chronological")) return "timeline";
+    if (endpoint.match(/\/users\/\d+\/tweets/)) return "user_tweets";
+    if (endpoint.includes("/following")) return "following";
+    if (endpoint === "/users/me") return "user_me";
+    if (endpoint.includes("/tweets/search")) return "search";
+    return null; // No rate limiting for unknown endpoints
+  }
+
+  /**
+   * Extract user ID from endpoint for rate limiting
+   */
+  extractUserId(endpoint) {
+    const match = endpoint.match(/\/users\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
    * Make authenticated request to Twitter API
    */
   async makeRequest(endpoint, options = {}) {
-    const { accessToken, method = "GET", body } = options;
+    const { accessToken, method = "GET", body, userId } = options;
 
     if (!accessToken) {
       throw new Error("Twitter access token is required");
     }
 
     const url = `${this.baseUrl}${endpoint}`;
+
+    // Determine rate limit endpoint and user
+    const endpointKey = this.getEndpointKey(endpoint);
+    const rateLimitUserId = userId || this.extractUserId(endpoint);
+
+    // Check and apply rate limiting if applicable
+    if (endpointKey && rateLimitUserId) {
+      const check = await rateLimiter.checkRateLimit(endpointKey, rateLimitUserId);
+      if (!check.allowed) {
+        console.warn(
+          `[Twitter API] Rate limit exceeded for ${endpointKey} (user ${rateLimitUserId}). ` +
+          `Retry after ${check.retryAfter}s`
+        );
+        throw new Error(
+          `Rate limit exceeded. Please retry after ${check.retryAfter} seconds.`
+        );
+      }
+    }
+
+    // Log the API call details
+    console.log(`[Twitter API] ${method} ${url}`);
+    console.log(`[Twitter API] Access token prefix: ${accessToken.substring(0, 20)}...`);
+    if (endpointKey && rateLimitUserId) {
+      const status = await rateLimiter.getStatus(endpointKey, rateLimitUserId);
+      console.log(
+        `[Twitter API] Rate limit: ${status.remaining}/${status.limit} remaining ` +
+        `(${status.windowMinutes}min window)`
+      );
+    }
+
     const headers = {
       "Authorization": `Bearer ${accessToken}`,
       "Content-Type": "application/json",
@@ -37,9 +89,47 @@ class TwitterService {
 
     const response = await fetch(url, fetchOptions);
 
+    // Extract rate limit headers from Twitter
+    const rateLimitLimit = response.headers.get("x-rate-limit-limit");
+    const rateLimitRemaining = response.headers.get("x-rate-limit-remaining");
+    const rateLimitReset = response.headers.get("x-rate-limit-reset");
+
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: response.statusText }));
+      console.error(`[Twitter API] Error response for ${method} ${url}:`, error);
+
+      // If rate limited, calculate retry delay from reset timestamp
+      if (response.status === 429 && rateLimitReset) {
+        const resetTime = parseInt(rateLimitReset) * 1000; // Convert to milliseconds
+        const now = Date.now();
+        const retryAfterMs = Math.max(0, resetTime - now);
+        const retryAfterSeconds = Math.ceil(retryAfterMs / 1000);
+
+        console.error(
+          `[Twitter API] Rate limit will reset at ${new Date(resetTime).toISOString()} ` +
+          `(in ${retryAfterSeconds}s)`
+        );
+
+        const rateLimitError = new Error(`Twitter API rate limit exceeded`);
+        rateLimitError.retryAfter = retryAfterSeconds;
+        rateLimitError.resetAt = resetTime;
+        throw rateLimitError;
+      }
+
       throw new Error(`Twitter API error: ${error.error || error.detail || "Unknown error"}`);
+    }
+
+    // Log actual Twitter rate limit status
+    if (rateLimitLimit && rateLimitRemaining) {
+      console.log(
+        `[Twitter API] Twitter rate limit: ${rateLimitRemaining}/${rateLimitLimit} remaining ` +
+        `(resets at ${rateLimitReset ? new Date(parseInt(rateLimitReset) * 1000).toISOString() : 'unknown'})`
+      );
+    }
+
+    // Record successful request for rate limiting
+    if (endpointKey && rateLimitUserId) {
+      await rateLimiter.recordRequest(endpointKey, rateLimitUserId);
     }
 
     return response.json();
@@ -48,10 +138,11 @@ class TwitterService {
   /**
    * Get authenticated user's profile
    */
-  async getMe(accessToken) {
+  async getMe(accessToken, userId = null) {
     const data = await this.makeRequest("/users/me", {
       accessToken,
       method: "GET",
+      userId, // For rate limiting
     });
 
     return {

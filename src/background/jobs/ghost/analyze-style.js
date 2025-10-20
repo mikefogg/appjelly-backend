@@ -7,6 +7,8 @@
 import { ConnectedAccount, UserPostHistory, WritingStyle, SamplePost } from "#src/models/index.js";
 import twitterService from "#src/services/twitter.js";
 import styleAnalyzer from "#src/services/ai/style-analyzer.js";
+import rateLimiter from "#src/services/rate-limiter.js";
+import { ghostQueue } from "#src/background/queues/index.js";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -180,12 +182,50 @@ export default async function analyzeStyle(job) {
       throw new Error(`Connected account ${connectedAccountId} has no access token`);
     }
 
-    const { access_token, platform_user_id } = connectedAccount;
+    // Decrypt the access token
+    const access_token = connectedAccount.getDecryptedAccessToken();
+    const { platform_user_id } = connectedAccount;
+
+    if (!access_token) {
+      throw new Error(`Failed to decrypt access token for account ${connectedAccountId}`);
+    }
+
+    // Check rate limit BEFORE making any API call
+    console.log(`[Analyze Style] Checking rate limit for user_tweets endpoint...`);
+    const rateLimitCheck = await rateLimiter.checkRateLimit("user_tweets", platform_user_id);
+
+    if (!rateLimitCheck.allowed) {
+      const delayMs = rateLimitCheck.retryAfter * 1000;
+      console.log(
+        `[Analyze Style] Rate limited! Scheduling delayed job in ${rateLimitCheck.retryAfter}s ` +
+        `(at ${new Date(Date.now() + delayMs).toISOString()})`
+      );
+
+      // Schedule a delayed job with the same jobId (will replace this one)
+      await ghostQueue.add(
+        JOB_ANALYZE_STYLE,
+        { connectedAccountId },
+        {
+          jobId: `analyze-style-${connectedAccountId}`,
+          delay: delayMs,
+        }
+      );
+
+      // Return success - no error, just rescheduled
+      return {
+        success: true,
+        rescheduled: true,
+        retryAfter: rateLimitCheck.retryAfter,
+        message: `Job rescheduled due to rate limit. Will retry in ${rateLimitCheck.retryAfter}s`,
+      };
+    }
+
+    console.log(`[Analyze Style] Rate limit OK - proceeding with API call`);
 
     // Step 1: Fetch user's recent tweets
     console.log(`[Analyze Style] Fetching user's posts...`);
     const { tweets } = await twitterService.getUserTweets(access_token, platform_user_id, {
-      maxResults: 100,
+      maxResults: 10, // Conservative limit for Free tier (100 posts/month cap)
     });
 
     console.log(`[Analyze Style] Found ${tweets.length} posts`);
@@ -252,6 +292,8 @@ export default async function analyzeStyle(job) {
 
     // Step 4: Save or update writing style
     console.log(`[Analyze Style] Saving writing style...`);
+    console.log(`[Analyze Style] Style data:`, JSON.stringify(styleData, null, 2));
+
     await WritingStyle.query()
       .insert({
         connected_account_id: connectedAccount.id,
@@ -260,9 +302,9 @@ export default async function analyzeStyle(job) {
         emoji_frequency: styleData.emoji_frequency,
         hashtag_frequency: styleData.hashtag_frequency,
         question_frequency: styleData.question_frequency,
-        common_phrases: styleData.common_phrases,
-        common_topics: styleData.common_topics,
-        posting_times: styleData.posting_times,
+        common_phrases: styleData.common_phrases || null,
+        common_topics: styleData.common_topics || null,
+        posting_times: styleData.posting_times || null,
         style_summary: styleData.style_summary,
         sample_size: styleData.sample_size,
         confidence_score: styleData.confidence_score,
@@ -285,7 +327,7 @@ export default async function analyzeStyle(job) {
       // Delete existing auto-generated samples (keep manually created ones)
       await SamplePost.query()
         .where("connected_account_id", connectedAccount.id)
-        .where("metadata:auto_generated", true)
+        .whereJsonSupersetOf("metadata", { auto_generated: true })
         .delete();
 
       // Create sample posts from top posts (at least 1, up to 5)

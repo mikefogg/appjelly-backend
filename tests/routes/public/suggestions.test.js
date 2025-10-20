@@ -52,7 +52,7 @@ describe("Suggestions Routes", () => {
       expect(data[0]).toHaveProperty("topics");
     });
 
-    it("filters out expired suggestions", async () => {
+    it("returns all pending suggestions including expired ones", async () => {
       // Create an expired suggestion with all required fields
       const { PostSuggestion } = await import("#src/models/index.js");
       const expired = await PostSuggestion.query().insert({
@@ -70,8 +70,13 @@ describe("Suggestions Routes", () => {
         .query({ connected_account_id: context.connectedAccount.id });
 
       const data = expectSuccessResponse(response);
-      const expiredIds = data.map(s => s.id);
-      expect(expiredIds).not.toContain(expired.id);
+      const returnedIds = data.map(s => s.id);
+      // API returns all pending suggestions regardless of expiration
+      expect(returnedIds).toContain(expired.id);
+      // The expired suggestion should have expires_at in the response
+      const expiredSuggestion = data.find(s => s.id === expired.id);
+      expect(expiredSuggestion).toHaveProperty("expires_at");
+      expect(new Date(expiredSuggestion.expires_at).getTime()).toBeLessThan(Date.now());
     });
 
     it("requires connected_account_id parameter", async () => {

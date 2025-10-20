@@ -29,36 +29,7 @@ class WritingStyle extends BaseModel {
     };
   }
 
-  // Handle PostgreSQL array conversion
-  $parseDatabaseJson(json) {
-    json = super.$parseDatabaseJson(json);
-    // Convert PostgreSQL arrays to JavaScript arrays
-    ['common_phrases', 'common_topics', 'posting_times'].forEach(field => {
-      if (json[field] && typeof json[field] === 'string') {
-        json[field] = json[field].replace(/[{}]/g, '').split(',').filter(t => t);
-        // Convert posting_times to integers
-        if (field === 'posting_times') {
-          json[field] = json[field].map(t => parseInt(t, 10));
-        }
-      }
-    });
-    return json;
-  }
-
-  $formatDatabaseJson(json) {
-    json = super.$formatDatabaseJson(json);
-    // Convert JavaScript arrays to PostgreSQL array format
-    if (Array.isArray(json.common_phrases)) {
-      json.common_phrases = `{${json.common_phrases.join(',')}}`;
-    }
-    if (Array.isArray(json.common_topics)) {
-      json.common_topics = `{${json.common_topics.join(',')}}`;
-    }
-    if (Array.isArray(json.posting_times)) {
-      json.posting_times = `{${json.posting_times.join(',')}}`;
-    }
-    return json;
-  }
+  // JSONB columns handle arrays automatically - no conversion needed
 
   static get relationMappings() {
     return {

@@ -5,8 +5,57 @@
 
 import { ConnectedAccount, NetworkProfile, NetworkPost } from "#src/models/index.js";
 import twitterService from "#src/services/twitter.js";
+import rateLimiter from "#src/services/rate-limiter.js";
+import { ghostQueue } from "#src/background/queues/index.js";
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 export const JOB_SYNC_NETWORK = "sync-network";
+
+/**
+ * Extract topics from a batch of tweets using AI
+ * Returns array of topic arrays, one per tweet
+ */
+async function extractTopicsFromBatch(tweets) {
+  if (tweets.length === 0) return [];
+
+  try {
+    const prompt = `Extract 2-4 main topics from each of these social media posts. Topics should be specific concepts, projects, events, or themes being discussed (e.g., "DeFi protocol audits", "NFT airdrops", "Monad ecosystem").
+
+Posts:
+${tweets.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}
+
+Return ONLY a JSON object with a "topics" array where each element is an array of topic strings:
+{"topics": [["topic1", "topic2"], ["topic3", "topic4"], ...]}`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You extract topics from social media posts. Return only valid JSON."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 500,
+    });
+
+    const result = JSON.parse(response.choices[0].message.content);
+    return result.topics || [];
+  } catch (error) {
+    console.warn(`[Sync Network] Failed to extract topics with AI:`, error.message);
+    // Fallback: return empty arrays for each tweet
+    return tweets.map(() => []);
+  }
+}
 
 export default async function syncNetwork(job) {
   const { connectedAccountId } = job.data;
@@ -28,82 +77,92 @@ export default async function syncNetwork(job) {
     // Mark as syncing
     await connectedAccount.markAsSyncing();
 
-    const { access_token, platform_user_id } = connectedAccount;
+    // Decrypt the access token
+    const access_token = connectedAccount.getDecryptedAccessToken();
+    const { platform_user_id } = connectedAccount;
 
-    // Step 1: Sync following list
-    console.log(`[Sync Network] Fetching following list...`);
-    const following = await twitterService.getFollowing(access_token, platform_user_id, {
-      maxResults: 1000,
+    if (!access_token) {
+      throw new Error(`Failed to decrypt access token for account ${connectedAccountId}`);
+    }
+
+    // Check rate limit BEFORE making any API call
+    console.log(`[Sync Network] Checking rate limit for timeline endpoint...`);
+    const rateLimitCheck = await rateLimiter.checkRateLimit("timeline", platform_user_id);
+
+    if (!rateLimitCheck.allowed) {
+      const delayMs = rateLimitCheck.retryAfter * 1000;
+      console.log(
+        `[Sync Network] Rate limited! Scheduling delayed job in ${rateLimitCheck.retryAfter}s ` +
+        `(at ${new Date(Date.now() + delayMs).toISOString()})`
+      );
+
+      // Schedule a delayed job with the same jobId (will replace this one)
+      await ghostQueue.add(
+        JOB_SYNC_NETWORK,
+        { connectedAccountId },
+        {
+          jobId: `sync-network-${connectedAccountId}`,
+          delay: delayMs,
+        }
+      );
+
+      // Return success - no error, just rescheduled
+      return {
+        success: true,
+        rescheduled: true,
+        retryAfter: rateLimitCheck.retryAfter,
+        message: `Job rescheduled due to rate limit. Will retry in ${rateLimitCheck.retryAfter}s`,
+      };
+    }
+
+    console.log(`[Sync Network] Rate limit OK - proceeding with API call`);
+
+    // Step 1: Fetch recent posts from timeline
+    console.log(`[Sync Network] Fetching home timeline...`);
+    const { tweets } = await twitterService.getHomeTimeline(access_token, platform_user_id, {
+      maxResults: 10, // Conservative limit for Free tier (100 posts/month cap)
     });
 
-    console.log(`[Sync Network] Found ${following.length} accounts in network`);
+    console.log(`[Sync Network] Found ${tweets.length} recent posts`);
 
-    // Save or update network profiles
-    let profilesSynced = 0;
-    for (const profile of following) {
+    // Extract topics from all posts in one batch using AI
+    console.log(`[Sync Network] Extracting topics with AI...`);
+    const batchTopics = await extractTopicsFromBatch(tweets);
+    console.log(`[Sync Network] Extracted topics for ${batchTopics.length} posts`);
+
+    // Save posts and create/update author profiles on-demand
+    let postsSynced = 0;
+    let profilesCreated = 0;
+
+    for (let i = 0; i < tweets.length; i++) {
+      const tweet = tweets[i];
       try {
-        await NetworkProfile.query()
+        // Create/update network profile for this author (on-demand from timeline)
+        const authorProfile = await NetworkProfile.query()
           .insert({
             connected_account_id: connectedAccount.id,
             platform: connectedAccount.platform,
-            platform_user_id: profile.platform_user_id,
-            username: profile.username,
-            display_name: profile.display_name,
-            bio: profile.bio,
-            follower_count: profile.follower_count,
-            following_count: profile.following_count,
-            is_verified: profile.is_verified,
-            profile_image_url: profile.profile_image_url,
-            profile_data: profile.profile_data,
+            platform_user_id: tweet.author_id,
+            username: tweet.author_username,
+            display_name: tweet.author_name || tweet.author_username,
+            engagement_score: 0,
+            relevance_score: 0,
+            profile_data: {},
             last_synced_at: new Date().toISOString(),
           })
           .onConflict(["connected_account_id", "platform_user_id"])
           .merge([
             "username",
             "display_name",
-            "bio",
-            "follower_count",
-            "following_count",
-            "is_verified",
-            "profile_image_url",
-            "profile_data",
             "last_synced_at",
-          ]);
+          ])
+          .returning("*")
+          .first(); // Get single object instead of array
 
-        profilesSynced++;
-      } catch (error) {
-        console.warn(`Failed to sync profile ${profile.username}:`, error.message);
-      }
-    }
+        profilesCreated++;
 
-    job.updateProgress(30);
-    console.log(`[Sync Network] Synced ${profilesSynced} profiles`);
-
-    // Step 2: Fetch recent posts from timeline
-    console.log(`[Sync Network] Fetching home timeline...`);
-    const { tweets } = await twitterService.getHomeTimeline(access_token, platform_user_id, {
-      maxResults: 100,
-    });
-
-    console.log(`[Sync Network] Found ${tweets.length} recent posts`);
-
-    // Save posts
-    let postsSynced = 0;
-    for (const tweet of tweets) {
-      try {
-        // Find the network profile for this author
-        const authorProfile = await NetworkProfile.query()
-          .where("connected_account_id", connectedAccount.id)
-          .where("platform_user_id", tweet.author_id)
-          .first();
-
-        if (!authorProfile) {
-          console.warn(`Author profile not found for ${tweet.author_username}`);
-          continue;
-        }
-
-        // Extract topics and sentiment
-        const topics = twitterService.extractTopics(tweet.content);
+        // Use AI-extracted topics for this post
+        const topics = batchTopics[i] || [];
         const sentiment = twitterService.analyzeSentiment(tweet.content);
         const engagementScore = twitterService.calculateEngagement({
           reply_count: tweet.reply_count,
@@ -135,6 +194,7 @@ export default async function syncNetwork(job) {
             "like_count",
             "quote_count",
             "engagement_score",
+            "topics", // Update topics on conflict
           ]);
 
         postsSynced++;
@@ -143,10 +203,10 @@ export default async function syncNetwork(job) {
       }
     }
 
-    job.updateProgress(80);
-    console.log(`[Sync Network] Synced ${postsSynced} posts`);
+    job.updateProgress(60);
+    console.log(`[Sync Network] Synced ${postsSynced} posts from ${profilesCreated} authors`);
 
-    // Step 3: Calculate engagement scores for network profiles
+    // Step 2: Calculate engagement scores for network profiles
     console.log(`[Sync Network] Calculating engagement scores...`);
     const profiles = await NetworkProfile.query()
       .where("connected_account_id", connectedAccount.id);
@@ -159,9 +219,12 @@ export default async function syncNetwork(job) {
       if (posts.length > 0) {
         const avgEngagement = posts.reduce((sum, p) => sum + (p.engagement_score || 0), 0) / posts.length;
 
+        // Ensure valid number (not NaN or Infinity)
+        const validEngagement = Number.isFinite(avgEngagement) ? avgEngagement : 0;
+
         await profile.$query().patch({
-          engagement_score: avgEngagement,
-          relevance_score: avgEngagement, // Can be more sophisticated
+          engagement_score: validEngagement,
+          relevance_score: validEngagement, // Can be more sophisticated
         });
       }
     }
@@ -177,7 +240,7 @@ export default async function syncNetwork(job) {
 
     return {
       success: true,
-      profiles_synced: profilesSynced,
+      profiles_created: profilesCreated,
       posts_synced: postsSynced,
       completed_at: new Date().toISOString(),
     };

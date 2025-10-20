@@ -222,7 +222,9 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
     })),
     trendingTopics: trendingTopics.map(t => ({
       topic: t.topic,
-      count: t.count,
+      mention_count: t.mention_count,
+      total_engagement: t.total_engagement,
+      last_mentioned: t.last_mentioned,
     })),
     writingStyle: writingStyle ? {
       tone: writingStyle.tone,

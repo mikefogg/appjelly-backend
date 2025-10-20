@@ -31,24 +31,7 @@ class NetworkPost extends BaseModel {
     };
   }
 
-  // Handle PostgreSQL array conversion
-  $parseDatabaseJson(json) {
-    json = super.$parseDatabaseJson(json);
-    // PostgreSQL arrays come as strings, convert to JS arrays
-    if (json.topics && typeof json.topics === 'string') {
-      json.topics = json.topics.replace(/[{}]/g, '').split(',').filter(t => t);
-    }
-    return json;
-  }
-
-  $formatDatabaseJson(json) {
-    json = super.$formatDatabaseJson(json);
-    // Convert JS arrays to PostgreSQL array format
-    if (Array.isArray(json.topics)) {
-      json.topics = `{${json.topics.join(',')}}`;
-    }
-    return json;
-  }
+  // JSONB columns handle arrays automatically - no conversion needed
 
   static get relationMappings() {
     return {
@@ -93,22 +76,33 @@ class NetworkPost extends BaseModel {
   static async findByTopic(connectedAccountId, topic) {
     return this.query()
       .where("connected_account_id", connectedAccountId)
-      .whereRaw("? = ANY(topics)", [topic])
+      .whereRaw("topics @> ?::jsonb", [JSON.stringify([topic])])
       .orderBy("posted_at", "desc");
   }
 
   // Calculate trending topics from recent posts
+  // Weighs by both frequency (how many posts mention it) and total engagement
   static async getTrendingTopics(connectedAccountId, hours = 48, limit = 10) {
     const threshold = new Date();
     threshold.setHours(threshold.getHours() - hours);
 
+    // Use jsonb_array_elements_text for JSONB arrays
+    // Weight: mention_count × total_engagement for true "hotness"
     const result = await this.query()
       .where("connected_account_id", connectedAccountId)
       .where("posted_at", ">=", threshold.toISOString())
       .whereNotNull("topics")
-      .select(this.knex().raw("unnest(topics) as topic, COUNT(*) as count"))
+      .whereRaw("jsonb_array_length(topics) > 0") // Filter out empty arrays
+      .select(
+        this.knex().raw(`
+          jsonb_array_elements_text(topics) as topic,
+          COUNT(*) as mention_count,
+          COALESCE(SUM(engagement_score), 0) as total_engagement,
+          MAX(posted_at) as last_mentioned
+        `)
+      )
       .groupBy("topic")
-      .orderBy("count", "desc")
+      .orderByRaw("COUNT(*) * COALESCE(SUM(engagement_score), 1) DESC") // Frequency × Engagement
       .limit(limit);
 
     return result;

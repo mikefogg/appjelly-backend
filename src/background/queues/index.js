@@ -9,11 +9,7 @@ const removeOnFailCount = process.env.KEEP_FAILED_JOBS_COUNT
 const defaultJobOptions = {
   removeOnComplete: true,
   removeOnFail: removeOnFailCount,
-  attempts: 10,
-  backoff: {
-    type: "exponential",
-    delay: 1000,
-  },
+  attempts: 1, // No retries - jobs handle their own rescheduling
 };
 
 // Queue Names

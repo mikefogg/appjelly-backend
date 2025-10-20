@@ -137,7 +137,7 @@ router.get(
   }
 );
 
-// PATCH /connections/:id/sync - Trigger manual sync
+// PATCH /connections/:id/sync - Trigger manual sync (both jobs)
 router.patch(
   "/:id/sync",
   requireAppContext,
@@ -159,12 +159,17 @@ router.patch(
       await connection.markAsSyncing();
 
       // Trigger background jobs to sync network and analyze style in parallel
+      // Use connection ID as job ID to prevent duplicates
       await Promise.all([
         ghostQueue.add(JOB_SYNC_NETWORK, {
           connectedAccountId: connection.id,
+        }, {
+          jobId: `sync-network-${connection.id}`,
         }),
         ghostQueue.add(JOB_ANALYZE_STYLE, {
           connectedAccountId: connection.id,
+        }, {
+          jobId: `analyze-style-${connection.id}`,
         }),
       ]);
 
@@ -175,6 +180,78 @@ router.patch(
     } catch (error) {
       console.error("Sync connection error:", error);
       return res.status(500).json(formatError("Failed to sync connection"));
+    }
+  }
+);
+
+// PATCH /connections/:id/sync-network - Trigger network sync only
+router.patch(
+  "/:id/sync-network",
+  requireAppContext,
+  requireAuth,
+  connectionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Trigger sync-network job (use connection ID as job ID to prevent duplicates)
+      const job = await ghostQueue.add(JOB_SYNC_NETWORK, {
+        connectedAccountId: connection.id,
+      }, {
+        jobId: `sync-network-${connection.id}`,
+      });
+
+      return res.status(200).json(successResponse({
+        message: "Network sync initiated",
+        job_id: job.id,
+      }));
+    } catch (error) {
+      console.error("Sync network error:", error);
+      return res.status(500).json(formatError("Failed to sync network"));
+    }
+  }
+);
+
+// PATCH /connections/:id/analyze-style - Trigger style analysis only
+router.patch(
+  "/:id/analyze-style",
+  requireAppContext,
+  requireAuth,
+  connectionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Trigger analyze-style job (use connection ID as job ID to prevent duplicates)
+      const job = await ghostQueue.add(JOB_ANALYZE_STYLE, {
+        connectedAccountId: connection.id,
+      }, {
+        jobId: `analyze-style-${connection.id}`,
+      });
+
+      return res.status(200).json(successResponse({
+        message: "Style analysis initiated",
+        job_id: job.id,
+      }));
+    } catch (error) {
+      console.error("Analyze style error:", error);
+      return res.status(500).json(formatError("Failed to analyze style"));
     }
   }
 );

@@ -21,7 +21,9 @@
     "ghost-worker": "node src/background/managers/ghost.js",
     "ghost-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/ghost.js",
     "backfill:ghost-accounts": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/backfill-ghost-accounts.js",
-    "generate-suggestions": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-suggestions-for-account.js"
+    "generate-suggestions": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-suggestions-for-account.js",
+    "sync-network": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/sync-network.js",
+    "analyze-style": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/analyze-style.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.842.0",

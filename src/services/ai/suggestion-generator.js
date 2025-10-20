@@ -90,6 +90,8 @@ class SuggestionGeneratorService {
       trendingPosts = [],
       trendingTopics = [],
       writingStyle = null,
+      voice = null,
+      samplePosts = [],
       platform = "twitter",
       suggestionCount = 3,
     } = options;
@@ -103,7 +105,7 @@ class SuggestionGeneratorService {
         length: this.randomLength(),
       }));
 
-      const systemPrompt = this.buildSystemPrompt(platform, writingStyle);
+      const systemPrompt = this.buildSystemPrompt(platform, writingStyle, voice, samplePosts);
       const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
@@ -278,17 +280,45 @@ Create ${count} diverse post suggestions that:
   /**
    * Build system prompt for suggestions
    */
-  buildSystemPrompt(platform, writingStyle) {
+  buildSystemPrompt(platform, writingStyle, voice, samplePosts) {
     let prompt = `You are a social media ghostwriter that creates engaging ${platform} post suggestions.
 
 Your goal is to suggest posts that:
-1. Feel authentic and natural
-2. Relate to what's being discussed in the user's network
+1. Feel authentic and natural to the user's voice
+2. Can optionally draw inspiration from what's trending in their network
 3. Are likely to get engagement (replies, likes, shares)
 4. Match the user's writing style`;
 
+    // CRITICAL: Voice and samples come FIRST - highest priority
+    const hasVoice = voice && voice.trim().length > 0;
+    const hasSamples = samplePosts && samplePosts.length > 0;
+
+    if (hasVoice || hasSamples) {
+      prompt += `\n\n🎯 CRITICAL - YOUR #1 PRIORITY:`;
+
+      if (hasVoice) {
+        prompt += `\n\nYou MUST write in this exact voice and style:
+${voice}
+
+This voice is non-negotiable. Every word must reflect this style.`;
+      }
+
+      if (hasSamples) {
+        prompt += `\n\nYou MUST match the tone, style, and patterns from these example posts:`;
+        samplePosts.forEach((sample, index) => {
+          prompt += `\n\nExample ${index + 1}:
+"${sample.content}"`;
+          if (sample.notes) {
+            prompt += `\n→ Key insight: ${sample.notes}`;
+          }
+        });
+        prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality.`;
+      }
+    }
+
+    // Writing style is secondary to voice/samples
     if (writingStyle) {
-      prompt += `\n\nUser's writing style:
+      prompt += `\n\nAdditional style metadata:
 - Tone: ${writingStyle.tone || "casual"}
 - Average length: ${writingStyle.avg_length || 150} characters
 - Emoji usage: ${writingStyle.emoji_frequency > 0.5 ? "frequent" : "occasional"}
@@ -331,18 +361,19 @@ Your goal is to suggest posts that:
    * Build prompt for generating suggestions
    */
   buildSuggestionPrompt(trendingPosts, trendingTopics, count, suggestionsConfig) {
-    let prompt = `Based on what's happening in the user's network, suggest ${count} post ideas.\n\n`;
+    let prompt = `Generate ${count} post suggestions that match the user's voice and interests.\n\n`;
 
+    // Trending topics are OPTIONAL context, not requirements
     if (trendingTopics.length > 0) {
-      prompt += `Trending topics in their network:\n`;
+      prompt += `📊 OPTIONAL INSPIRATION - Trending topics in their network (you can use these for ideas, but they're not required):\n`;
       trendingTopics.forEach(topic => {
-        prompt += `- ${topic.topic} (${topic.count} mentions)\n`;
+        prompt += `- ${topic.topic} (${topic.mention_count} mentions, ${topic.total_engagement} total engagement)\n`;
       });
       prompt += "\n";
     }
 
     if (trendingPosts.length > 0) {
-      prompt += `High-engagement posts from their network:\n`;
+      prompt += `📊 OPTIONAL INSPIRATION - High-engagement posts from their network (you can reference these for ideas, but they're not required):\n`;
       trendingPosts.slice(0, 5).forEach((post, idx) => {
         prompt += `${idx + 1}. "${post.content.substring(0, 100)}${post.content.length > 100 ? "..." : ""}" (${post.engagement_score} engagement)\n`;
       });
@@ -366,10 +397,11 @@ Length targets:
 - long: ~400-500 characters (detailed, thoughtful)
 
 Create ${count} diverse post suggestions that:
-1. Match the specified angle and length for each
-2. Add unique perspective to the trending topics
-3. Are likely to start conversations
-4. Feel authentic to the user's style`;
+1. MUST match the user's voice and style (top priority)
+2. MUST match the specified angle and length for each suggestion
+3. CAN optionally draw inspiration from trending topics if relevant to the user's interests
+4. Should feel authentic and natural to how the user writes
+5. Are likely to start conversations and get engagement`;
 
     return prompt;
   }
