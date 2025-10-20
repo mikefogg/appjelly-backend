@@ -6,6 +6,7 @@ import NetworkPost from "#src/models/NetworkPost.js";
 import PostSuggestion from "#src/models/PostSuggestion.js";
 import WritingStyle from "#src/models/WritingStyle.js";
 import UserPostHistory from "#src/models/UserPostHistory.js";
+import SamplePost from "#src/models/SamplePost.js";
 import { decrypt } from "#src/helpers/encryption.js";
 
 class ConnectedAccount extends BaseModel {
@@ -21,7 +22,7 @@ class ConnectedAccount extends BaseModel {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
-        platform: { type: "string", enum: ["twitter", "facebook", "linkedin", "ghost"] },
+        platform: { type: "string", enum: ["twitter", "facebook", "linkedin", "threads", "ghost"] },
         platform_user_id: { type: ["string", "null"], minLength: 1 },
         username: { type: "string", minLength: 1 },
         display_name: { type: ["string", "null"] },
@@ -39,6 +40,7 @@ class ConnectedAccount extends BaseModel {
         is_active: { type: "boolean", default: true },
         is_default: { type: "boolean", default: false },
         is_deletable: { type: "boolean", default: true },
+        voice: { type: ["string", "null"] },
         metadata: { type: "object" },
       },
     };
@@ -102,6 +104,14 @@ class ConnectedAccount extends BaseModel {
           to: "user_post_history.connected_account_id",
         },
       },
+      sample_posts: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: SamplePost,
+        join: {
+          from: "connected_accounts.id",
+          to: "sample_posts.connected_account_id",
+        },
+      },
     };
   }
 
@@ -140,23 +150,47 @@ class ConnectedAccount extends BaseModel {
     }
 
     // Create new ghost account
-    return this.query().insert({
-      account_id: accountId,
-      app_id: appId,
-      platform: "ghost",
-      platform_user_id: null,
-      username: "My Drafts",
-      display_name: "My Drafts",
-      access_token: null,
-      sync_status: "ready", // Ghost accounts are always ready
-      is_default: true,
-      is_deletable: false,
-      is_active: true,
-      metadata: {
-        created_reason: "default_ghost_account",
-        created_at: new Date().toISOString(),
-      },
-    });
+    try {
+      return await this.query().insert({
+        account_id: accountId,
+        app_id: appId,
+        platform: "ghost",
+        platform_user_id: null,
+        username: "My Drafts",
+        display_name: "My Drafts",
+        access_token: null,
+        sync_status: "ready", // Ghost accounts are always ready
+        is_default: true,
+        is_deletable: false,
+        is_active: true,
+        metadata: {
+          created_reason: "default_ghost_account",
+          created_at: new Date().toISOString(),
+        },
+      });
+    } catch (error) {
+      // If unique constraint violation (race condition), fetch the existing account
+      // Check both raw PostgreSQL error code and db-errors wrapped error
+      const isUniqueViolation =
+        error.code === "23505" || // Raw PostgreSQL error
+        error.constraint === "connected_accounts_unique_default_ghost" || // db-errors constraint name
+        error.name === "UniqueViolationError"; // db-errors error name
+
+      if (isUniqueViolation) {
+        const existing = await this.query()
+          .where("account_id", accountId)
+          .where("app_id", appId)
+          .where("platform", "ghost")
+          .where("is_default", true)
+          .first();
+
+        if (existing) {
+          return existing;
+        }
+      }
+      // Re-throw if it's a different error
+      throw error;
+    }
   }
 
   async markAsSyncing() {

@@ -21,8 +21,12 @@ class PostGeneratorService {
   async generatePost(prompt, options = {}) {
     const {
       platform = "twitter",
-      writingStyle = null,
+      angle = "hot_take",
+      length = "medium",
       maxLength = 280,
+      voice = null,
+      samplePosts = [],
+      writingStyle = null,
       connectedAccount = null,
     } = options;
 
@@ -30,10 +34,24 @@ class PostGeneratorService {
 
     try {
       // Build system prompt
-      const systemPrompt = this.buildSystemPrompt(platform, writingStyle, maxLength);
+      const systemPrompt = this.buildSystemPrompt(platform, maxLength, voice, samplePosts, writingStyle);
 
       // Build user prompt
-      const userPrompt = this.buildUserPrompt(prompt, connectedAccount);
+      const userPrompt = this.buildUserPrompt(prompt, angle, connectedAccount);
+
+      // Log the complete prompt for debugging
+      console.log("\n" + "=".repeat(80));
+      console.log("📝 COMPLETE AI PROMPT");
+      console.log("=".repeat(80));
+      console.log("\n🤖 SYSTEM PROMPT:");
+      console.log("-".repeat(80));
+      console.log(systemPrompt);
+      console.log("\n👤 USER PROMPT:");
+      console.log("-".repeat(80));
+      console.log(userPrompt);
+      console.log("\n" + "=".repeat(80));
+      console.log(`📊 Config: model=${this.model}, temp=0.8, max_tokens=${this.maxTokens}`);
+      console.log("=".repeat(80) + "\n");
 
       // Call OpenAI
       const response = await openai.chat.completions.create({
@@ -53,6 +71,16 @@ class PostGeneratorService {
       const cost = this.calculateCost(usage.prompt_tokens, usage.completion_tokens);
 
       const generationTime = (Date.now() - startTime) / 1000;
+
+      // Log the response
+      console.log("✅ AI RESPONSE:");
+      console.log("-".repeat(80));
+      console.log(generatedContent);
+      console.log("\n" + "=".repeat(80));
+      console.log(`📊 Usage: ${usage.total_tokens} tokens (${usage.prompt_tokens} prompt + ${usage.completion_tokens} completion)`);
+      console.log(`💰 Cost: $${cost.toFixed(6)}`);
+      console.log(`⏱️  Time: ${generationTime.toFixed(2)}s`);
+      console.log("=".repeat(80) + "\n");
 
       return {
         content: generatedContent,
@@ -130,27 +158,59 @@ Please create a ${variation} version that maintains the core message but uses di
   /**
    * Build system prompt for post generation
    */
-  buildSystemPrompt(platform, writingStyle, maxLength) {
-    let prompt = `You are a social media ghostwriter specializing in ${platform} posts.
+  buildSystemPrompt(platform, maxLength, voice, samplePosts, writingStyle) {
+    // Determine platform display name
+    const platformName = platform === "ghost" ? "social media" : platform;
 
-Your goal is to create engaging, authentic posts that feel natural and human-written.
+    let prompt = `You are an expert social media ghostwriter creating ${platformName} posts.`;
 
-Key guidelines:
-- Keep posts under ${maxLength} characters
-- Be conversational and authentic
-- Use natural language, not marketing speak
-- Don't use excessive hashtags or emojis unless it fits the style
-- Make it engaging but not clickbait-y
-- Write in a way that encourages replies and discussion`;
+    // CRITICAL: Voice and samples come FIRST and are the highest priority
+    const hasVoice = voice && voice.trim().length > 0;
+    const hasSamples = samplePosts && samplePosts.length > 0;
 
-    if (writingStyle) {
-      prompt += `\n\nWriting style to match:
+    if (hasVoice || hasSamples) {
+      prompt += `\n\n🎯 CRITICAL - YOUR #1 PRIORITY:`;
+
+      if (hasVoice) {
+        prompt += `\n\nYou MUST write in this exact voice and style:
+${voice}
+
+This voice is non-negotiable. Every word must reflect this style.`;
+      }
+
+      if (hasSamples) {
+        prompt += `\n\nYou MUST match the tone, style, and patterns from these example posts:`;
+        samplePosts.forEach((sample, index) => {
+          prompt += `\n\nExample ${index + 1}:
+"${sample.content}"`;
+          if (sample.notes) {
+            prompt += `\n→ Key insight: ${sample.notes}`;
+          }
+        });
+        prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality. This is your PRIMARY instruction.`;
+      }
+
+      prompt += `\n\nIf there is ANY conflict between these voice instructions and the guidelines below, ALWAYS prioritize matching the voice and examples above.`;
+    }
+
+    // General guidelines (secondary priority)
+    prompt += `\n\n📋 General Guidelines:
+- Maximum ${maxLength} characters (strict limit)
+- Be authentic and human - avoid corporate/marketing language
+- Use line breaks to create natural paragraphs for readability and impact
+- Don't force hashtags or emojis unless they match the voice above
+- Make it engaging and conversational
+- Write in a way that invites discussion`;
+
+    // Add writing style from analysis if provided (only as fallback)
+    if (writingStyle && !hasVoice && !hasSamples) {
+      prompt += `\n\n📊 Writing Style Analysis:
 - Tone: ${writingStyle.tone || "casual and conversational"}
-- Average length: ${writingStyle.avg_length || "medium"} characters
+- Typical length: ${writingStyle.avg_length || "medium"} characters
 - Style: ${writingStyle.style_summary || "Natural and authentic"}`;
 
       if (writingStyle.emoji_frequency > 0.5) {
-        prompt += "\n- Uses emojis occasionally";
+        prompt += "\n- Often uses emojis";
       }
 
       if (writingStyle.hashtag_frequency > 0.3) {
@@ -158,11 +218,22 @@ Key guidelines:
       }
 
       if (writingStyle.common_phrases && writingStyle.common_phrases.length > 0) {
-        prompt += `\n- Common phrases: ${writingStyle.common_phrases.slice(0, 3).join(", ")}`;
+        prompt += `\n- Frequently uses phrases like: ${writingStyle.common_phrases.slice(0, 3).join(", ")}`;
       }
     }
 
-    prompt += "\n\nReturn ONLY the post content, no explanations or meta-commentary.";
+    prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
+- Use line breaks (newlines) to separate ideas and create natural paragraphs
+- Line breaks add emphasis, readability, and impact - use them liberally
+- Most posts should have 2-4 short paragraphs, not one dense block
+- Example format:
+  Opening thought or hook
+
+  Supporting point or expansion
+
+  Closing statement or call-to-action
+
+Return ONLY the post content. No explanations, no meta-commentary, no quotation marks around the post. Just the raw post text with natural line breaks.`;
 
     return prompt;
   }
@@ -170,8 +241,20 @@ Key guidelines:
   /**
    * Build user prompt
    */
-  buildUserPrompt(prompt, connectedAccount) {
-    let userPrompt = `Create a post about: ${prompt}`;
+  buildUserPrompt(prompt, angle, connectedAccount) {
+    // Map angle to instructions
+    const angleInstructions = {
+      hot_take: "Share a bold, controversial opinion",
+      roast: "Provide playful, witty criticism",
+      hype: "Express enthusiastic excitement and promotion",
+      story: "Tell a compelling narrative or share an experience",
+      teach: "Explain or teach something valuable",
+      question: "Ask a thought-provoking question to spark discussion",
+    };
+
+    const angleInstruction = angleInstructions[angle] || angleInstructions.hot_take;
+
+    let userPrompt = `${angleInstruction} about: ${prompt}`;
 
     if (connectedAccount?.username) {
       userPrompt += `\n\nPosting as: @${connectedAccount.username}`;

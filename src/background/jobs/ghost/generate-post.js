@@ -14,10 +14,10 @@ export default async function generatePost(job) {
   console.log(`[Generate Post] Starting generation for artifact: ${artifactId}`);
 
   try {
-    // Get artifact with input and connected account
+    // Get artifact with input, connected account, and sample posts
     const artifact = await Artifact.query()
       .findById(artifactId)
-      .withGraphFetched("[input, connected_account.writing_style]");
+      .withGraphFetched("[input, connected_account.[writing_style, sample_posts]]");
 
     if (!artifact) {
       throw new Error(`Artifact ${artifactId} not found`);
@@ -34,6 +34,27 @@ export default async function generatePost(job) {
       throw new Error(`No prompt found in input`);
     }
 
+    // Extract angle and length from metadata
+    const angle = input.metadata?.angle || artifact.metadata?.angle;
+    const length = input.metadata?.length || artifact.metadata?.length;
+    const platform = connected_account?.platform || "ghost";
+
+    // Calculate character limit based on platform and length
+    const getCharacterLimit = (platform, length) => {
+      const limits = {
+        twitter: { short: 100, medium: 280, long: 5000 },
+        linkedin: { short: 150, medium: 600, long: 2000 },
+        threads: { short: 100, medium: 300, long: 500 },
+        facebook: { short: 80, medium: 400, long: 2000 },
+        ghost: { short: 100, medium: 300, long: 2000 }, // Default fallback
+      };
+
+      const platformLimits = limits[platform] || limits.ghost;
+      return platformLimits[length] || platformLimits.medium;
+    };
+
+    const maxLength = getCharacterLimit(platform, length);
+
     // Mark as generating
     await artifact.$query().patch({
       status: "generating",
@@ -41,17 +62,34 @@ export default async function generatePost(job) {
 
     job.updateProgress(20);
 
-    // Get writing style
+    // Get writing style, voice, and sample posts
     const writingStyle = connected_account?.writing_style;
+    const voice = connected_account?.voice;
+    const samplePosts = connected_account?.sample_posts || [];
 
     console.log(`[Generate Post] Generating from prompt: "${prompt.substring(0, 50)}..."`);
+    console.log(`[Generate Post] Angle: ${angle}, Length: ${length}, Max chars: ${maxLength}`);
+    if (voice) {
+      console.log(`[Generate Post] Using custom voice`);
+    }
+    if (samplePosts.length > 0) {
+      console.log(`[Generate Post] Using ${samplePosts.length} sample posts`);
+    }
     if (writingStyle) {
       console.log(`[Generate Post] Using writing style: ${writingStyle.tone}`);
     }
 
     // Generate post
     const result = await postGenerator.generatePost(prompt, {
-      platform: connected_account?.platform || "twitter",
+      platform: platform,
+      angle: angle,
+      length: length,
+      maxLength: maxLength,
+      voice: voice,
+      samplePosts: samplePosts.map(sp => ({
+        content: sp.content,
+        notes: sp.notes,
+      })),
       writingStyle: writingStyle ? {
         tone: writingStyle.tone,
         avg_length: writingStyle.avg_length,
@@ -60,7 +98,6 @@ export default async function generatePost(job) {
         common_phrases: writingStyle.common_phrases,
         style_summary: writingStyle.style_summary,
       } : null,
-      maxLength: 280,
       connectedAccount: connected_account ? {
         username: connected_account.username,
         platform: connected_account.platform,

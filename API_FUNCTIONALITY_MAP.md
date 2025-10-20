@@ -265,7 +265,7 @@ Body: {
 
 **Endpoint**: `POST /posts/generate`
 
-**Implementation**: `src/routes/public/posts.js:15`
+**Implementation**: `src/routes/public/posts.js:98`
 
 **How it works**:
 ```
@@ -275,20 +275,41 @@ Headers:
   X-App-Slug: ghost
 Body: {
   "prompt": "Write a tweet about AI safety",
+  "angle": "hot_take",
+  "length": "medium",
   "connected_account_id": "uuid"
 }
 
-→ Creates Input record
+→ Creates Input record with angle/length metadata
 → Creates Artifact record (status: "pending")
 → Queues background job (generate-post)
-→ AI generates tweet using writing style
+→ AI generates post using voice, sample posts, and writing style
+→ Platform-specific character limits applied automatically
 → Returns 202 Accepted immediately
 ```
 
 **Request validation**:
 - `prompt`: 1-500 characters, required
-- `connected_account_id`: UUID, **optional** (can be omitted for standalone posts)
+- `angle`: enum, required - How to approach the topic
+  - `"hot_take"` - Bold, controversial opinion
+  - `"roast"` - Playful, witty criticism
+  - `"hype"` - Enthusiastic excitement and promotion
+  - `"story"` - Compelling narrative or experience
+  - `"teach"` - Explain or teach something valuable
+  - `"question"` - Thought-provoking question
+- `length`: enum, required - Post length target
+  - `"short"` - Quick hits, memes, CTAs (high engagement)
+  - `"medium"` - Insights, questions (peak engagement)
+  - `"long"` - Deep dives, thought leadership
+- `connected_account_id`: UUID, **optional** (uses ghost account if omitted)
 - If provided, connection must have `sync_status = "ready"`
+
+**Platform-Specific Character Limits**:
+- **Twitter**: short=100, medium=280, long=5000 (Premium)
+- **LinkedIn**: short=150, medium=600, long=2000
+- **Threads**: short=100, medium=300, long=500
+- **Facebook**: short=80, medium=400, long=2000
+- **Ghost** (default): short=100, medium=300, long=2000
 
 **Response** (202 Accepted):
 ```json
@@ -346,6 +367,21 @@ GET /posts/{artifact_id}
 }
 ```
 
+**Generation Customization with Voice & Sample Posts**:
+
+The AI generation uses the following data to personalize content:
+1. **Voice** (optional): Custom writing voice description from the connected account
+2. **Sample Posts** (optional): Example posts that demonstrate the user's tone and style
+3. **Writing Style** (optional): Auto-analyzed style from synced posts (tone, emoji frequency, etc.)
+
+When a `connected_account_id` is provided, the AI will:
+- Use the account's custom `voice` field in the system prompt if set
+- Include `sample_posts` as examples to match tone and style
+- Apply auto-detected `writing_style` preferences
+- Apply platform-specific character limits based on the account's platform
+
+See "Customize Writing Voice & Sample Posts" section below for managing these settings.
+
 **Additional post endpoints**:
 - `GET /posts` - List all generated posts (paginated)
 - `GET /posts?type=draft|generated|all` - Filter posts by type
@@ -354,6 +390,231 @@ GET /posts/{artifact_id}
 - `POST /posts/:id/improve` - Get AI improvement suggestions (preview-only)
 - `POST /posts/:id/copy` - Mark post as copied to clipboard
 - `DELETE /posts/:id` - Delete post
+
+---
+
+## ✅ 8. Customize Writing Voice & Sample Posts
+
+**Status**: ✅ IMPLEMENTED
+
+**Overview**: Users can customize how the AI generates content by setting a custom writing voice and providing sample posts. These are stored per connected account.
+
+### Update Writing Voice
+
+**Endpoint**: `PATCH /connections/:id`
+
+**Implementation**: `src/routes/public/connections.js:181`
+
+**How it works**:
+```
+PATCH /connections/{connection_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "voice": "Write like a tech entrepreneur. Be concise, inspiring, and forward-thinking. Use metaphors from startups and innovation."
+}
+
+→ Updates the voice field on the connected account
+→ AI will use this voice description in future generations
+→ Maximum 2000 characters
+```
+
+**Request validation**:
+- `voice`: String, 1-2000 characters, optional
+- Connection must belong to authenticated user
+- Connection must belong to current app
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "id": "uuid",
+    "platform": "twitter",
+    "username": "yourusername",
+    "voice": "Write like a tech entrepreneur. Be concise, inspiring, and forward-thinking. Use metaphors from startups and innovation.",
+    "updated_at": "2025-10-19T10:00:00Z"
+  }
+}
+```
+
+**Clear voice**: Send `{"voice": null}` or `{"voice": ""}` to clear the custom voice
+
+---
+
+### Create Sample Post
+
+**Endpoint**: `POST /connections/:id/samples`
+
+**Implementation**: `src/routes/public/connections.js:227`
+
+**How it works**:
+```
+POST /connections/{connection_id}/samples
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "content": "Just shipped a new feature! 🚀 Our users are going to love this.",
+  "notes": "Excited tone with emoji, short and punchy"
+}
+
+→ Creates a sample post for this connected account
+→ AI will use these examples to match your tone and style
+→ Maximum 10 sample posts per connection
+```
+
+**Request validation**:
+- `content`: String, 1-5000 characters, required
+- `notes`: String, 1-500 characters, optional (notes about why this is a good example)
+- Connection must belong to authenticated user
+- Connection must belong to current app
+- Maximum 10 sample posts per connection
+
+**Response** (201 Created):
+```json
+{
+  "code": 201,
+  "status": "Success",
+  "data": {
+    "id": "uuid",
+    "connected_account_id": "connection_uuid",
+    "content": "Just shipped a new feature! 🚀 Our users are going to love this.",
+    "notes": "Excited tone with emoji, short and punchy",
+    "sort_order": 0,
+    "created_at": "2025-10-19T10:00:00Z"
+  }
+}
+```
+
+---
+
+### List Sample Posts
+
+**Endpoint**: `GET /connections/:id/samples`
+
+**Implementation**: `src/routes/public/connections.js:279`
+
+**How it works**:
+```
+GET /connections/{connection_id}/samples
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns all sample posts for this connection
+→ Ordered by sort_order ASC
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "connected_account_id": "connection_uuid",
+      "content": "Just shipped a new feature! 🚀 Our users are going to love this.",
+      "notes": "Excited tone with emoji, short and punchy",
+      "sort_order": 0,
+      "created_at": "2025-10-19T10:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "content": "Hot take: Most productivity advice is just procrastination in disguise.",
+      "notes": "Controversial opinion, no emoji, thought-provoking",
+      "sort_order": 1,
+      "created_at": "2025-10-19T10:05:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### Update Sample Post
+
+**Endpoint**: `PATCH /connections/:id/samples/:sampleId`
+
+**Implementation**: `src/routes/public/connections.js:321`
+
+**How it works**:
+```
+PATCH /connections/{connection_id}/samples/{sample_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "content": "Just shipped a new feature! Our users are loving it! 🔥",
+  "notes": "Updated to use fire emoji instead",
+  "sort_order": 2
+}
+
+→ Updates the sample post
+→ All fields are optional
+→ Can reorder by changing sort_order
+```
+
+**Request validation**:
+- `content`: String, 1-5000 characters, optional
+- `notes`: String, 1-500 characters, optional
+- `sort_order`: Integer, optional
+- Sample post must belong to the connection
+- Connection must belong to authenticated user
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "id": "uuid",
+    "connected_account_id": "connection_uuid",
+    "content": "Just shipped a new feature! Our users are loving it! 🔥",
+    "notes": "Updated to use fire emoji instead",
+    "sort_order": 2,
+    "updated_at": "2025-10-19T10:15:00Z"
+  }
+}
+```
+
+---
+
+### Delete Sample Post
+
+**Endpoint**: `DELETE /connections/:id/samples/:sampleId`
+
+**Implementation**: `src/routes/public/connections.js:395`
+
+**How it works**:
+```
+DELETE /connections/{connection_id}/samples/{sample_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Permanently deletes the sample post
+→ Cannot be undone
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Sample post deleted successfully"
+  }
+}
+```
+
+**Security**:
+- Sample post must belong to the specified connection
+- Connection must belong to authenticated user
+- Connection must belong to current app
 
 ---
 
@@ -550,12 +811,17 @@ Headers:
 | Add network | ✅ | `POST /oauth/:platform/connect` | Direct token connection for React Native |
 | Remove network | ✅ | `DELETE /connections/:id` | Soft delete |
 | Fetch suggestions | ✅ | `GET /suggestions` | Includes filters |
-| Generate tweet from prompt | ✅ | `POST /posts/generate` | Async with polling |
+| Generate tweet from prompt | ✅ | `POST /posts/generate` | Async with angle, length, voice, samples |
 | Create drafts | ✅ | `POST /posts/drafts` | User-written content |
 | AI improve drafts | ✅ | `POST /posts/:id/improve` | Preview-only, doesn't save |
 | Filter posts by type | ✅ | `GET /posts?type=draft\|generated` | Draft/generated filtering |
 | Generate response to tweet | ✅ | `POST /suggestions/:id/generate-response` | AI reply with optional instructions |
 | Delete account | ✅ | `DELETE /accounts/me` | Soft delete with subscription notice |
+| Update writing voice | ✅ | `PATCH /connections/:id` | Custom voice description (max 2000 chars) |
+| Create sample post | ✅ | `POST /connections/:id/samples` | Add example posts (max 10 per connection) |
+| List sample posts | ✅ | `GET /connections/:id/samples` | View all sample posts |
+| Update sample post | ✅ | `PATCH /connections/:id/samples/:sampleId` | Edit content, notes, or sort order |
+| Delete sample post | ✅ | `DELETE /connections/:id/samples/:sampleId` | Remove sample post |
 
 ---
 

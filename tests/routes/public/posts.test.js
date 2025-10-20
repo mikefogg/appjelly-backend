@@ -33,6 +33,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "Share thoughts on AI in 2025",
+          angle: "hot_take",
+          length: "medium",
           connected_account_id: context.connectedAccount.id,
         });
 
@@ -66,6 +68,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "", // Empty prompt
+          angle: "hot_take",
+          length: "medium",
           connected_account_id: context.connectedAccount.id,
         });
 
@@ -76,6 +80,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "a".repeat(501), // Too long
+          angle: "hot_take",
+          length: "medium",
           connected_account_id: context.connectedAccount.id,
         });
 
@@ -86,6 +92,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "Test prompt without connection",
+          angle: "story",
+          length: "short",
         });
 
       const data = expectSuccessResponse(response, 202);
@@ -112,6 +120,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "Test prompt",
+          angle: "teach",
+          length: "long",
           connected_account_id: fakeId,
         });
 
@@ -125,6 +135,8 @@ describe("Posts Routes", () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
           prompt: "Test prompt",
+          angle: "hype",
+          length: "medium",
           connected_account_id: context.connectedAccount.id,
         });
 

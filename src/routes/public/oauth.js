@@ -221,21 +221,15 @@ router.get(
         });
       }
 
-      // Trigger background sync jobs
-      await ghostQueue.add(JOB_SYNC_NETWORK, {
-        connectedAccountId: connection.id,
-      });
-
-      // Trigger style analysis after sync (delayed)
-      await ghostQueue.add(
-        JOB_ANALYZE_STYLE,
-        {
+      // Trigger background sync jobs in parallel
+      await Promise.all([
+        ghostQueue.add(JOB_SYNC_NETWORK, {
           connectedAccountId: connection.id,
-        },
-        {
-          delay: 30000, // 30 seconds after sync starts
-        }
-      );
+        }),
+        ghostQueue.add(JOB_ANALYZE_STYLE, {
+          connectedAccountId: connection.id,
+        }),
+      ]);
 
       // Return success response
       // In a real app, redirect to a success page
@@ -353,21 +347,15 @@ router.post(
         });
       }
 
-      // Trigger background sync jobs
-      await ghostQueue.add(JOB_SYNC_NETWORK, {
-        connectedAccountId: connection.id,
-      });
-
-      // Trigger style analysis after sync (delayed)
-      await ghostQueue.add(
-        JOB_ANALYZE_STYLE,
-        {
+      // Trigger background sync jobs in parallel
+      await Promise.all([
+        ghostQueue.add(JOB_SYNC_NETWORK, {
           connectedAccountId: connection.id,
-        },
-        {
-          delay: 30000, // 30 seconds after sync starts
-        }
-      );
+        }),
+        ghostQueue.add(JOB_ANALYZE_STYLE, {
+          connectedAccountId: connection.id,
+        }),
+      ]);
 
       // Return success response
       return res.status(201).json(successResponse({

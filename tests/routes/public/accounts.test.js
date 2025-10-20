@@ -174,7 +174,7 @@ describe("Accounts Routes", () => {
         .set(headers);
 
       const data = expectSuccessResponse(response);
-      expect(data.disconnected_platforms).toBe(2);
+      expect(data.disconnected_platforms).toBe(3); // 2 real connections + 1 ghost account
 
       // Verify connections are deactivated
       const updatedConnection1 = await ConnectedAccount.query().findById(connection1.id);
@@ -192,7 +192,7 @@ describe("Accounts Routes", () => {
         .set(headers);
 
       const data = expectSuccessResponse(response);
-      expect(data.disconnected_platforms).toBe(0);
+      expect(data.disconnected_platforms).toBe(1); // Ghost account is auto-created
       expect(data.message).toContain("deleted");
     });
 

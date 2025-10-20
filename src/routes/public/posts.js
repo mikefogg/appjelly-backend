@@ -105,6 +105,14 @@ router.post(
       .trim()
       .isLength({ min: 1, max: 500 })
       .withMessage("Prompt must be between 1 and 500 characters"),
+    body("angle")
+      .isString()
+      .isIn(["hot_take", "roast", "hype", "story", "teach", "question"])
+      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question"),
+    body("length")
+      .isString()
+      .isIn(["short", "medium", "long"])
+      .withMessage("Length must be one of: short, medium, long"),
     body("connected_account_id")
       .optional()
       .isUUID()
@@ -113,7 +121,7 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { prompt, connected_account_id } = req.body;
+      const { prompt, angle, length, connected_account_id } = req.body;
 
       let connection = null;
       let platform = null;
@@ -153,6 +161,8 @@ router.post(
         metadata: {
           platform,
           mode: platform === "ghost" ? "standalone" : "connected",
+          angle,
+          length,
         },
       });
 
@@ -167,6 +177,8 @@ router.post(
         metadata: {
           platform,
           prompt,
+          angle,
+          length,
           mode: platform === "ghost" ? "standalone" : "connected",
         },
       });

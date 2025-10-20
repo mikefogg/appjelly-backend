@@ -34,11 +34,17 @@ describe("Connections Routes", () => {
 
       const data = expectSuccessResponse(response);
       expect(Array.isArray(data)).toBe(true);
-      expect(data).toHaveLength(1);
-      expect(data[0]).toHaveProperty("id");
-      expect(data[0]).toHaveProperty("platform", "twitter");
-      expect(data[0]).toHaveProperty("username", "testuser");
-      expect(data[0]).toHaveProperty("sync_status", "ready");
+      expect(data).toHaveLength(2); // Twitter + ghost account
+
+      // Find the twitter connection
+      const twitterConnection = data.find(c => c.platform === "twitter");
+      expect(twitterConnection).toBeTruthy();
+      expect(twitterConnection).toHaveProperty("username", "testuser");
+      expect(twitterConnection).toHaveProperty("sync_status", "ready");
+
+      // Ghost account should also be present
+      const ghostConnection = data.find(c => c.platform === "ghost");
+      expect(ghostConnection).toBeTruthy();
     });
 
     it("requires authentication", async () => {
@@ -46,7 +52,7 @@ describe("Connections Routes", () => {
       expectUnauthenticatedError(response);
     });
 
-    it("returns empty array when no connections", async () => {
+    it("returns only ghost account when no real connections", async () => {
       // Create new context without connected account
       const { app: newApp, account } = await createTestContext({
         userId: "user_different123",
@@ -59,7 +65,8 @@ describe("Connections Routes", () => {
 
       const data = expectSuccessResponse(response);
       expect(Array.isArray(data)).toBe(true);
-      expect(data).toHaveLength(0);
+      expect(data).toHaveLength(1); // Just the ghost account
+      expect(data[0].platform).toBe("ghost");
     });
   });
 
@@ -81,6 +88,23 @@ describe("Connections Routes", () => {
       expect(data.writing_style).toHaveProperty("tone");
       expect(data.writing_style).toHaveProperty("avg_length");
       expect(data.writing_style).toHaveProperty("confidence_score");
+      expect(data).toHaveProperty("voice");
+    });
+
+    it("returns voice field when set", async () => {
+      // Set voice on connection
+      await context.connectedAccount.$query().patch({
+        voice: "Write like a tech entrepreneur with bold opinions"
+      });
+
+      const response = await authenticatedRequest(
+        app,
+        "get",
+        `/connections/${context.connectedAccount.id}`
+      );
+
+      const data = expectSuccessResponse(response);
+      expect(data.voice).toBe("Write like a tech entrepreneur with bold opinions");
     });
 
     it("returns 404 for non-existent connection", async () => {
@@ -169,7 +193,7 @@ describe("Connections Routes", () => {
       expect(data.message).toContain("Sync initiated");
       expect(data.sync_status).toBe("syncing");
 
-      // Verify jobs were queued
+      // Verify both jobs were queued in parallel
       expect(ghostQueue.add).toHaveBeenCalledWith(
         "sync-network",
         expect.objectContaining({
@@ -181,9 +205,6 @@ describe("Connections Routes", () => {
         "analyze-style",
         expect.objectContaining({
           connectedAccountId: context.connectedAccount.id,
-        }),
-        expect.objectContaining({
-          delay: 30000,
         })
       );
     });
@@ -242,6 +263,109 @@ describe("Connections Routes", () => {
         `/connections/${context.connectedAccount.id}`
       );
       expectUnauthenticatedError(response);
+    });
+  });
+
+  describe("Ghost Account Management", () => {
+    it("prevents duplicate ghost accounts for the same user", async () => {
+      const { ConnectedAccount } = await import("#src/models/index.js");
+
+      // First call - creates or finds ghost account
+      const ghost1 = await ConnectedAccount.findOrCreateGhostAccount(
+        context.account.id,
+        context.app.id
+      );
+
+      expect(ghost1).toBeTruthy();
+      expect(ghost1.platform).toBe("ghost");
+      expect(ghost1.is_default).toBe(true);
+
+      // Second call - should return the same account
+      const ghost2 = await ConnectedAccount.findOrCreateGhostAccount(
+        context.account.id,
+        context.app.id
+      );
+
+      // Third call - should still return the same account
+      const ghost3 = await ConnectedAccount.findOrCreateGhostAccount(
+        context.account.id,
+        context.app.id
+      );
+
+      // All should return the same account
+      expect(ghost1.id).toBe(ghost2.id);
+      expect(ghost2.id).toBe(ghost3.id);
+
+      // Verify only one ghost account exists
+      const allGhosts = await ConnectedAccount.query()
+        .where("account_id", context.account.id)
+        .where("app_id", context.app.id)
+        .where("platform", "ghost")
+        .where("is_default", true);
+
+      expect(allGhosts).toHaveLength(1);
+    });
+
+    it("handles concurrent ghost account creation attempts", async () => {
+      const { ConnectedAccount } = await import("#src/models/index.js");
+
+      // Create a new user to test concurrent creation
+      const newContext = await createTestContext({ userId: "user_concurrent123" });
+
+      // Delete any existing ghost account for this user
+      await ConnectedAccount.query()
+        .where("account_id", newContext.account.id)
+        .where("app_id", newContext.app.id)
+        .where("platform", "ghost")
+        .delete();
+
+      // Simulate 5 concurrent calls (race condition)
+      const promises = Array(5).fill(null).map(() =>
+        ConnectedAccount.findOrCreateGhostAccount(
+          newContext.account.id,
+          newContext.app.id
+        )
+      );
+
+      const results = await Promise.all(promises);
+
+      // All should return the same ghost account ID
+      const uniqueIds = new Set(results.map(r => r.id));
+      expect(uniqueIds.size).toBe(1);
+
+      // Verify only one ghost account exists in the database
+      const allGhosts = await ConnectedAccount.query()
+        .where("account_id", newContext.account.id)
+        .where("app_id", newContext.app.id)
+        .where("platform", "ghost")
+        .where("is_default", true);
+
+      expect(allGhosts).toHaveLength(1);
+    });
+
+    it("prevents ghost account deletion", async () => {
+      // Find the ghost account
+      const response = await authenticatedRequest(app, "get", "/connections");
+      const data = expectSuccessResponse(response);
+
+      const ghostConnection = data.find(c => c.platform === "ghost");
+      expect(ghostConnection).toBeTruthy();
+      expect(ghostConnection.is_deletable).toBe(false);
+
+      // Try to delete it
+      const deleteResponse = await authenticatedRequest(
+        app,
+        "delete",
+        `/connections/${ghostConnection.id}`
+      );
+
+      expectErrorResponse(deleteResponse, 403, "cannot be deleted");
+
+      // Verify it still exists
+      const verifyResponse = await authenticatedRequest(app, "get", "/connections");
+      const verifyData = expectSuccessResponse(verifyResponse);
+      const stillExists = verifyData.find(c => c.id === ghostConnection.id);
+      expect(stillExists).toBeTruthy();
     });
   });
 });

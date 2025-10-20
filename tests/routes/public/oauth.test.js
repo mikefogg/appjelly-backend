@@ -168,12 +168,13 @@ describe("OAuth Routes", () => {
   });
 
   describe("GET /oauth/connections", () => {
-    it("returns empty array when no connections exist", async () => {
+    it("returns only ghost account when no OAuth connections exist", async () => {
       const response = await authenticatedRequest(app, "get", "/oauth/connections");
 
       const data = expectSuccessResponse(response);
       expect(Array.isArray(data)).toBe(true);
-      expect(data.length).toBe(0);
+      expect(data.length).toBe(1); // Ghost account is auto-created
+      expect(data[0].platform).toBe("ghost");
     });
 
     it("returns all active connections for user", async () => {
@@ -210,11 +211,15 @@ describe("OAuth Routes", () => {
 
       const data = expectSuccessResponse(response);
       expect(Array.isArray(data)).toBe(true);
-      expect(data.length).toBe(2);
-      expect(data[0]).toHaveProperty("platform");
-      expect(data[0]).toHaveProperty("username");
-      expect(data[0]).toHaveProperty("sync_status");
-      expect(data[0]).not.toHaveProperty("access_token"); // Should not expose tokens
+      expect(data.length).toBe(3); // 2 OAuth connections + 1 ghost account
+
+      // Verify all connections have expected properties
+      data.forEach(conn => {
+        expect(conn).toHaveProperty("platform");
+        expect(conn).toHaveProperty("username");
+        expect(conn).toHaveProperty("sync_status");
+        expect(conn).not.toHaveProperty("access_token"); // Should not expose tokens
+      });
     });
 
     it("filters out inactive connections", async () => {
@@ -245,8 +250,15 @@ describe("OAuth Routes", () => {
       const response = await authenticatedRequest(app, "get", "/oauth/connections");
 
       const data = expectSuccessResponse(response);
-      expect(data.length).toBe(1);
-      expect(data[0].username).toBe("activeuser");
+      expect(data.length).toBe(2); // 1 active OAuth connection + 1 ghost account
+
+      // Verify active user is present
+      const activeUser = data.find(c => c.username === "activeuser");
+      expect(activeUser).toBeTruthy();
+
+      // Verify inactive user is not present
+      const inactiveUser = data.find(c => c.username === "inactiveuser");
+      expect(inactiveUser).toBeUndefined();
     });
 
     it("requires authentication", async () => {
