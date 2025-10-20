@@ -25,10 +25,12 @@ class PostSuggestion extends BaseModel {
         source_data: { type: "object" },
         status: {
           type: "string",
-          enum: ["pending", "used", "dismissed", "expired"],
+          enum: ["pending", "used", "dismissed"],
           default: "pending"
         },
-        topics: { type: ["array", "null"], items: { type: "string" } },
+        topics: { type: ["array", "null"] },
+        angle: { type: ["string", "null"], enum: [null, "hot_take", "roast", "hype", "story", "teach", "question"] },
+        length: { type: ["string", "null"], enum: [null, "short", "medium", "long"] },
         character_count: { type: ["integer", "null"], minimum: 0 },
         metadata: { type: "object" },
         expires_at: { type: ["string", "null"], format: "date-time" },
@@ -36,22 +38,6 @@ class PostSuggestion extends BaseModel {
     };
   }
 
-  // Handle PostgreSQL array conversion
-  $parseDatabaseJson(json) {
-    json = super.$parseDatabaseJson(json);
-    if (json.topics && typeof json.topics === 'string') {
-      json.topics = json.topics.replace(/[{}]/g, '').split(',').filter(t => t);
-    }
-    return json;
-  }
-
-  $formatDatabaseJson(json) {
-    json = super.$formatDatabaseJson(json);
-    if (Array.isArray(json.topics)) {
-      json.topics = `{${json.topics.join(',')}}`;
-    }
-    return json;
-  }
 
   static get relationMappings() {
     return {
@@ -90,23 +76,6 @@ class PostSuggestion extends BaseModel {
     };
   }
 
-  static async findActive(connectedAccountId) {
-    return this.query()
-      .where("connected_account_id", connectedAccountId)
-      .where("status", "pending")
-      .where("expires_at", ">", new Date().toISOString())
-      .orderBy("created_at", "desc");
-  }
-
-  static async findByType(connectedAccountId, suggestionType) {
-    return this.query()
-      .where("connected_account_id", connectedAccountId)
-      .where("suggestion_type", suggestionType)
-      .where("status", "pending")
-      .where("expires_at", ">", new Date().toISOString())
-      .orderBy("created_at", "desc");
-  }
-
   async markAsUsed() {
     return this.$query().patchAndFetch({
       status: "used",
@@ -127,20 +96,8 @@ class PostSuggestion extends BaseModel {
     });
   }
 
-  static async expireOld() {
-    return this.query()
-      .where("status", "pending")
-      .where("expires_at", "<=", new Date().toISOString())
-      .patch({ status: "expired" });
-  }
-
   static get modifiers() {
     return {
-      active(builder) {
-        builder
-          .where("status", "pending")
-          .where("expires_at", ">", new Date().toISOString());
-      },
       byType(builder, suggestionType) {
         builder.where("suggestion_type", suggestionType);
       },

@@ -20,7 +20,8 @@
     "cleanup-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/cleanup.js",
     "ghost-worker": "node src/background/managers/ghost.js",
     "ghost-worker-dev": "dotenvx run -f .env.development.local -f .env.development -f .env -- nodemon src/background/managers/ghost.js",
-    "backfill:ghost-accounts": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/backfill-ghost-accounts.js"
+    "backfill:ghost-accounts": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/backfill-ghost-accounts.js",
+    "generate-suggestions": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-suggestions-for-account.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.842.0",

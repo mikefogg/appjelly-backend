@@ -1,7 +1,7 @@
 import express from "express";
 import { param, query, body } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { PostSuggestion, ConnectedAccount, Input, Artifact } from "#src/models/index.js";
+import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_POST } from "#src/background/queues/index.js";
@@ -37,11 +37,10 @@ router.get(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Get active suggestions
+      // Get all suggestions (sorted by most recent first)
       const suggestions = await PostSuggestion.query()
         .where("connected_account_id", connected_account_id)
         .where("status", "pending")
-        .where("expires_at", ">", new Date().toISOString())
         .withGraphFetched("[source_post.network_profile]")
         .orderBy("created_at", "desc");
 
@@ -52,6 +51,8 @@ router.get(
         reasoning: suggestion.reasoning,
         character_count: suggestion.character_count,
         topics: suggestion.topics,
+        angle: suggestion.angle,
+        length: suggestion.length,
         source_post: suggestion.source_post ? {
           id: suggestion.source_post.id,
           content: suggestion.source_post.content,
@@ -100,6 +101,8 @@ router.get(
         reasoning: suggestion.reasoning,
         character_count: suggestion.character_count,
         topics: suggestion.topics,
+        angle: suggestion.angle,
+        length: suggestion.length,
         status: suggestion.status,
         source_post: suggestion.source_post ? {
           id: suggestion.source_post.id,
@@ -206,6 +209,16 @@ router.post(
   requireAuth,
   [
     ...suggestionParamValidators,
+    body("angle")
+      .optional()
+      .isString()
+      .isIn(["hot_take", "roast", "hype", "story", "teach", "question"])
+      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question"),
+    body("length")
+      .optional()
+      .isString()
+      .isIn(["short", "medium", "long"])
+      .withMessage("Length must be one of: short, medium, long"),
     body("additional_instructions")
       .optional()
       .isString()
@@ -216,7 +229,7 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { additional_instructions } = req.body;
+      const { angle, length, additional_instructions } = req.body;
 
       // Fetch suggestion with source post
       const suggestion = await PostSuggestion.query()
@@ -255,6 +268,8 @@ router.post(
         prompt,
         metadata: {
           platform: suggestion.connected_account.platform,
+          angle: angle || "question",
+          length: length || "medium",
           reply_to: {
             post_id: suggestion.source_post.id,
             author: sourceAuthor,
@@ -274,6 +289,8 @@ router.post(
         metadata: {
           platform: suggestion.connected_account.platform,
           prompt,
+          angle: angle || "question",
+          length: length || "medium",
           is_reply: true,
           reply_to_post_id: suggestion.source_post.id,
         },
@@ -338,7 +355,73 @@ router.post(
   }
 );
 
-// POST /suggestions/generate - Manually trigger suggestion generation
+// GET /reply-opportunities - Get top engaging posts from network for potential replies
+router.get(
+  "/reply-opportunities",
+  requireAppContext,
+  requireAuth,
+  [
+    query("connected_account_id")
+      .isUUID()
+      .withMessage("connected_account_id is required"),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: 20 })
+      .withMessage("Limit must be between 1 and 20"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { connected_account_id, limit = 10 } = req.query;
+
+      // Verify connected account belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(connected_account_id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connected account not found", 404));
+      }
+
+      // Ghost platform doesn't have network posts
+      if (connection.platform === "ghost") {
+        return res.status(400).json(formatError("Reply opportunities are not available for ghost accounts", 400));
+      }
+
+      // Get top engaging posts from the last 48 hours
+      const replyOpportunities = await NetworkPost.query()
+        .where("connected_account_id", connection.id)
+        .where("posted_at", ">", new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString())
+        .whereNotNull("engagement_score")
+        .withGraphFetched("network_profile")
+        .orderBy("engagement_score", "desc")
+        .limit(parseInt(limit));
+
+      const data = replyOpportunities.map(post => ({
+        id: post.id,
+        content: post.content,
+        posted_at: post.posted_at,
+        engagement_score: post.engagement_score,
+        like_count: post.like_count,
+        retweet_count: post.retweet_count,
+        reply_count: post.reply_count,
+        author: {
+          username: post.network_profile?.username,
+          display_name: post.network_profile?.display_name,
+          profile_image_url: post.network_profile?.profile_image_url,
+        },
+      }));
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Get reply opportunities error:", error);
+      return res.status(500).json(formatError("Failed to retrieve reply opportunities"));
+    }
+  }
+);
+
+// POST /suggestions/generate - Manually trigger suggestion generation (rate-limited: once per 10 minutes)
 router.post(
   "/generate",
   requireAppContext,
@@ -363,11 +446,21 @@ router.post(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      if (connection.sync_status !== "ready") {
-        return res.status(400).json(formatError("Connected account must be synced before generating suggestions", 400));
+      // For ghost platform, check if topics_of_interest exists
+      if (connection.platform === "ghost") {
+        if (!connection.topics_of_interest || connection.topics_of_interest.trim().length === 0) {
+          return res.status(400).json(formatError("Please add topics of interest before generating suggestions", 400));
+        }
+      } else {
+        // For network platforms, check sync status
+        if (connection.sync_status !== "ready") {
+          return res.status(400).json(formatError("Connected account must be synced before generating suggestions", 400));
+        }
       }
 
       // Trigger background job
+      const generationStartedAt = new Date().toISOString();
+
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
         connectedAccountId: connection.id,
         suggestionCount: 3,
@@ -375,6 +468,13 @@ router.post(
 
       return res.status(202).json(successResponse({
         message: "Suggestion generation queued",
+        generation_started_at: generationStartedAt,
+        polling_instructions: {
+          poll_endpoint: `/suggestions?connected_account_id=${connection.id}`,
+          check_for_suggestions_created_after: generationStartedAt,
+          estimated_completion_seconds: 15,
+          recommended_poll_interval_ms: 2000,
+        },
       }));
     } catch (error) {
       console.error("Generate suggestions error:", error);

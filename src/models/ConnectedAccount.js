@@ -41,6 +41,7 @@ class ConnectedAccount extends BaseModel {
         is_default: { type: "boolean", default: false },
         is_deletable: { type: "boolean", default: true },
         voice: { type: ["string", "null"] },
+        topics_of_interest: { type: ["string", "null"] },
         metadata: { type: "object" },
       },
     };

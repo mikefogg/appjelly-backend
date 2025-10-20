@@ -12,6 +12,74 @@ const openai = new OpenAI({
 class SuggestionGeneratorService {
   constructor() {
     this.model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+    this.angles = ["hot_take", "roast", "hype", "story", "teach", "question"];
+    this.lengths = ["short", "medium", "long"];
+  }
+
+  /**
+   * Randomly pick an angle for a suggestion
+   */
+  randomAngle() {
+    return this.angles[Math.floor(Math.random() * this.angles.length)];
+  }
+
+  /**
+   * Randomly pick a length for a suggestion
+   */
+  randomLength() {
+    return this.lengths[Math.floor(Math.random() * this.lengths.length)];
+  }
+
+  /**
+   * Generate post suggestions based on topics of interest (for ghost platform)
+   */
+  async generateInterestBasedSuggestions(options = {}) {
+    const {
+      topics = "",
+      voice = null,
+      samplePosts = [],
+      platform = "ghost",
+      suggestionCount = 3,
+    } = options;
+
+    const startTime = Date.now();
+
+    try {
+      // Generate random angle and length for each suggestion
+      const suggestionsConfig = Array.from({ length: suggestionCount }, () => ({
+        angle: this.randomAngle(),
+        length: this.randomLength(),
+      }));
+
+      const systemPrompt = this.buildInterestBasedSystemPrompt(platform, voice, samplePosts);
+      const userPrompt = this.buildInterestBasedPrompt(topics, suggestionCount, suggestionsConfig);
+
+      const response = await openai.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 1500,
+        response_format: { type: "json_object" },
+      });
+
+      const result = JSON.parse(response.choices[0].message.content);
+      const usage = response.usage;
+
+      return {
+        suggestions: result.suggestions || [],
+        metadata: {
+          total_tokens: usage.total_tokens,
+          generation_time_seconds: (Date.now() - startTime) / 1000,
+          ai_model: this.model,
+        },
+      };
+    } catch (error) {
+      console.error("Interest-based suggestion generation error:", error);
+      throw new Error(`Failed to generate interest-based suggestions: ${error.message}`);
+    }
   }
 
   /**
@@ -29,8 +97,14 @@ class SuggestionGeneratorService {
     const startTime = Date.now();
 
     try {
+      // Generate random angle and length for each suggestion
+      const suggestionsConfig = Array.from({ length: suggestionCount }, () => ({
+        angle: this.randomAngle(),
+        length: this.randomLength(),
+      }));
+
       const systemPrompt = this.buildSystemPrompt(platform, writingStyle);
-      const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, suggestionCount);
+      const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
         model: this.model,
@@ -102,6 +176,95 @@ class SuggestionGeneratorService {
   }
 
   /**
+   * Build system prompt for interest-based suggestions
+   */
+  buildInterestBasedSystemPrompt(platform, voice, samplePosts) {
+    const platformName = platform === "ghost" ? "social media" : platform;
+    let prompt = `You are a social media ghostwriter that creates engaging ${platformName} post suggestions based on the user's interests.
+
+Your goal is to suggest posts that:
+1. Feel authentic and natural to the user's voice
+2. Relate to their stated topics of interest
+3. Are likely to get engagement (replies, likes, shares)
+4. Match their writing style`;
+
+    // CRITICAL: Voice and samples come FIRST
+    const hasVoice = voice && voice.trim().length > 0;
+    const hasSamples = samplePosts && samplePosts.length > 0;
+
+    if (hasVoice || hasSamples) {
+      prompt += `\n\n🎯 CRITICAL - YOUR #1 PRIORITY:`;
+
+      if (hasVoice) {
+        prompt += `\n\nYou MUST write in this exact voice and style:
+${voice}
+
+This voice is non-negotiable. Every word must reflect this style.`;
+      }
+
+      if (hasSamples) {
+        prompt += `\n\nYou MUST match the tone, style, and patterns from these example posts:`;
+        samplePosts.forEach((sample, index) => {
+          prompt += `\n\nExample ${index + 1}:
+"${sample.content}"`;
+          if (sample.notes) {
+            prompt += `\n→ Key insight: ${sample.notes}`;
+          }
+        });
+        prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality.`;
+      }
+    }
+
+    prompt += `\n\nReturn a JSON object with this structure:
+{
+  "suggestions": [
+    {
+      "content": "The suggested post text",
+      "reasoning": "Why this suggestion fits their interests",
+      "topics": ["topic1", "topic2"],
+      "angle": "the angle used",
+      "length": "the length used"
+    }
+  ]
+}`;
+
+    return prompt;
+  }
+
+  /**
+   * Build prompt for interest-based suggestions
+   */
+  buildInterestBasedPrompt(topics, count, suggestionsConfig) {
+    let prompt = `Generate ${count} post suggestions based on these topics the user likes to write about:
+
+${topics}
+
+Each suggestion should follow these specific angles and lengths:
+${suggestionsConfig.map((config, i) => `${i + 1}. Angle: "${config.angle}", Length: "${config.length}"`).join('\n')}
+
+Angle definitions:
+- hot_take: Bold, contrarian opinion that challenges conventional wisdom
+- roast: Playful criticism or calling out something (not mean-spirited)
+- hype: Enthusiastic, positive energy about something exciting
+- story: Personal narrative or anecdote with a lesson
+- teach: Educational content that explains a concept clearly
+- question: Thought-provoking question that sparks discussion
+
+Length targets:
+- short: ~100-150 characters (brief and punchy)
+- medium: ~200-300 characters (standard post length)
+- long: ~400-500 characters (detailed, thoughtful)
+
+Create ${count} diverse post suggestions that:
+1. Match the specified angle and length for each
+2. Are likely to start conversations
+3. Feel authentic to the user's style
+4. Show expertise and unique perspective`;
+
+    return prompt;
+  }
+
+  /**
    * Build system prompt for suggestions
    */
   buildSystemPrompt(platform, writingStyle) {
@@ -132,7 +295,9 @@ Your goal is to suggest posts that:
       "type": "original_post" | "reply",
       "content": "The suggested post text",
       "reasoning": "Why this suggestion is relevant",
-      "topics": ["topic1", "topic2"]
+      "topics": ["topic1", "topic2"],
+      "angle": "the angle used",
+      "length": "the length used"
     }
   ]
 }`;
@@ -143,7 +308,7 @@ Your goal is to suggest posts that:
   /**
    * Build prompt for generating suggestions
    */
-  buildSuggestionPrompt(trendingPosts, trendingTopics, count) {
+  buildSuggestionPrompt(trendingPosts, trendingTopics, count, suggestionsConfig) {
     let prompt = `Based on what's happening in the user's network, suggest ${count} post ideas.\n\n`;
 
     if (trendingTopics.length > 0) {
@@ -162,11 +327,27 @@ Your goal is to suggest posts that:
       prompt += "\n";
     }
 
-    prompt += `Create ${count} diverse post suggestions that:
-1. Add unique perspective to these topics
-2. Are likely to start conversations
-3. Feel authentic to the user's style
-4. Mix different types (hot takes, questions, insights, stories)`;
+    prompt += `Each suggestion should follow these specific angles and lengths:
+${suggestionsConfig.map((config, i) => `${i + 1}. Angle: "${config.angle}", Length: "${config.length}"`).join('\n')}
+
+Angle definitions:
+- hot_take: Bold, contrarian opinion that challenges conventional wisdom
+- roast: Playful criticism or calling out something (not mean-spirited)
+- hype: Enthusiastic, positive energy about something exciting
+- story: Personal narrative or anecdote with a lesson
+- teach: Educational content that explains a concept clearly
+- question: Thought-provoking question that sparks discussion
+
+Length targets:
+- short: ~100-150 characters (brief and punchy)
+- medium: ~200-300 characters (standard post length)
+- long: ~400-500 characters (detailed, thoughtful)
+
+Create ${count} diverse post suggestions that:
+1. Match the specified angle and length for each
+2. Add unique perspective to the trending topics
+3. Are likely to start conversations
+4. Feel authentic to the user's style`;
 
     return prompt;
   }

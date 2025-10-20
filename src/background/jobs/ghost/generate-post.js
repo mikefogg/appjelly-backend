@@ -106,6 +106,41 @@ export default async function generatePost(job) {
 
     job.updateProgress(80);
 
+    // Extract topics from the generated content
+    let topics = [];
+    try {
+      console.log(`[Generate Post] Extracting topics from generated content...`);
+      const OpenAI = await import("openai");
+      const openai = new OpenAI.default({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const topicsResponse = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You extract 1-3 main topics or themes from social media posts. Return as JSON object with 'topics' array."
+          },
+          {
+            role: "user",
+            content: `Extract 1-3 main topics from this post:\n\n"${result.content}"\n\nReturn JSON like: {"topics": ["topic1", "topic2"]}`
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 100,
+        response_format: { type: "json_object" },
+      });
+
+      const topicsData = JSON.parse(topicsResponse.choices[0].message.content);
+      topics = topicsData.topics || [];
+      console.log(`[Generate Post] Extracted topics:`, topics);
+    } catch (error) {
+      console.warn(`[Generate Post] Failed to extract topics:`, error.message);
+    }
+
+    job.updateProgress(90);
+
     // Update artifact with generated content
     await artifact.$query().patch({
       status: "completed",
@@ -117,6 +152,10 @@ export default async function generatePost(job) {
       generation_time_seconds: result.metadata.generation_time_seconds,
       ai_model: result.metadata.ai_model,
       ai_provider: result.metadata.ai_provider,
+      metadata: {
+        ...artifact.metadata,
+        topics,
+      },
     });
 
     job.updateProgress(100);

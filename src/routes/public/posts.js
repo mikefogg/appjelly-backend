@@ -267,6 +267,9 @@ router.get(
         content: artifact.content,
         character_count: artifact.content?.length || 0,
         is_draft: artifact.isDraft(),
+        angle: artifact.input?.metadata?.angle || artifact.metadata?.angle || null,
+        length: artifact.input?.metadata?.length || artifact.metadata?.length || null,
+        topics: artifact.metadata?.topics || [],
         input: artifact.input ? {
           id: artifact.input.id,
           prompt: artifact.input.prompt,
@@ -317,6 +320,9 @@ router.get(
         status: artifact.status,
         content: artifact.content,
         character_count: artifact.content?.length || 0,
+        angle: artifact.input?.metadata?.angle || artifact.metadata?.angle || null,
+        length: artifact.input?.metadata?.length || artifact.metadata?.length || null,
+        topics: artifact.metadata?.topics || [],
         input: artifact.input ? {
           id: artifact.input.id,
           prompt: artifact.input.prompt,

@@ -164,6 +164,8 @@ Headers:
       "reasoning": "Why this suggestion was made",
       "character_count": 280,
       "topics": ["tech", "ai"],
+      "angle": "hot_take",
+      "length": "medium",
       "source_post": {
         "id": "uuid",
         "content": "Original tweet text",
@@ -181,18 +183,31 @@ Headers:
 }
 ```
 
+**New Response Fields**:
+- `angle`: The writing angle used (hot_take, roast, hype, story, teach, question)
+- `length`: The target length (short, medium, long)
+- `expires_at`: Timestamp when suggestion becomes "stale" (24 hours from creation)
+
 **Filters applied**:
 - `status = "pending"` (not used/dismissed)
-- `expires_at > NOW()` (not expired)
 - Connected account belongs to user
+- All suggestions returned regardless of age (client can filter by expires_at if desired)
 
 **Additional suggestion endpoints**:
 - `GET /suggestions/:id` - Get specific suggestion details
 - `POST /suggestions/:id/use` - Mark suggestion as used
 - `POST /suggestions/:id/dismiss` - Mark suggestion as dismissed
-- `POST /suggestions/:id/generate-response` - Generate AI reply to source post ✅
-- `POST /suggestions/generate` - Manually trigger generation (202 queued response)
+- `POST /suggestions/:id/generate-response` - Generate AI reply (with angle/length) ✅
+- `POST /suggestions/generate` - Manually trigger generation (unlimited) ✅
+- `GET /suggestions/reply-opportunities` - Get top engaging posts to reply to ✅
 - `POST /suggestions/:id/regenerate` - ❌ Not implemented (501 status)
+
+**Automated Suggestion Generation**:
+- ✅ Hourly automatic generation for all eligible accounts
+- ✅ Two-path system: Network-based (Twitter/LinkedIn) vs Interest-based (Ghost)
+- ✅ Incremental data fetching (only new posts since last sync)
+- ✅ Each suggestion gets a randomly assigned `angle` and `length` for variety
+- ✅ Suggestions include extracted topics (1-3 main themes)
 
 ---
 
@@ -211,17 +226,23 @@ Headers:
   Authorization: Bearer <clerk_jwt>
   X-App-Slug: ghost
 Body: {
+  "angle": "question",
+  "length": "medium",
   "additional_instructions": "Make it funny and engaging" // optional
 }
 
 → Fetches the suggestion's source post
-→ Creates Input with reply prompt
+→ Creates Input with reply prompt + angle/length
 → Creates Artifact (status: "pending", is_reply: true)
 → Queues background job for AI generation
 → Returns 202 Accepted immediately
 ```
 
 **Request validation**:
+- `angle`: enum, optional (default: "question")
+  - `"hot_take"` | `"roast"` | `"hype"` | `"story"` | `"teach"` | `"question"`
+- `length`: enum, optional (default: "medium")
+  - `"short"` | `"medium"` | `"long"`
 - `additional_instructions`: 1-200 characters, optional
 - Suggestion must have a source post
 - Connected account must have `sync_status = "ready"`
@@ -252,10 +273,147 @@ Body: {
 
 **Key Features**:
 - ✅ Generates AI replies to suggested posts
+- ✅ Customizable angle (6 types) and length (3 sizes)
 - ✅ Optional custom instructions for tone/style
 - ✅ Includes context of original post
 - ✅ Async generation with polling
 - ✅ Respects user's writing style
+
+---
+
+## ✅ 6b. Get Reply Opportunities
+
+**Status**: ✅ IMPLEMENTED
+
+**Endpoint**: `GET /suggestions/reply-opportunities`
+
+**Implementation**: `src/routes/public/suggestions.js:355`
+
+**How it works**:
+```
+GET /suggestions/reply-opportunities?connected_account_id={uuid}&limit=10
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns top engaging posts from last 48 hours
+→ Sorted by engagement_score DESC
+→ Ideal for identifying high-value reply opportunities
+```
+
+**Query parameters**:
+- `connected_account_id`: UUID, required
+- `limit`: Integer, optional (default: 10, max: 20)
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "content": "What's your favorite AI tool?",
+      "posted_at": "2025-10-20T08:00:00Z",
+      "engagement_score": 450,
+      "like_count": 120,
+      "retweet_count": 45,
+      "reply_count": 85,
+      "author": {
+        "username": "techinfluencer",
+        "display_name": "Tech Influencer",
+        "profile_image_url": "https://..."
+      }
+    }
+  ]
+}
+```
+
+**Features**:
+- ✅ Only returns posts from network platforms (not ghost)
+- ✅ Identifies high-engagement conversations
+- ✅ Helps users engage strategically
+- ✅ Includes full author details
+
+---
+
+## ✅ 6c. Manual Suggestion Generation (Unlimited)
+
+**Status**: ✅ IMPLEMENTED
+
+**Endpoint**: `POST /suggestions/generate`
+
+**Implementation**: `src/routes/public/suggestions.js:421`
+
+**How it works**:
+```
+POST /suggestions/generate
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "connected_account_id": "uuid"
+}
+
+→ For ghost platform: Checks topics_of_interest exists
+→ For network platforms: Checks sync_status = "ready"
+→ Queues suggestion generation job (no rate limiting)
+→ Returns 202 Accepted with polling instructions
+→ Generates 3 new suggestions with random angle/length for each
+```
+
+**Response** (202 Accepted):
+```json
+{
+  "code": 202,
+  "status": "Success",
+  "data": {
+    "message": "Suggestion generation queued",
+    "generation_started_at": "2025-10-20T12:00:00.000Z",
+    "polling_instructions": {
+      "poll_endpoint": "/suggestions?connected_account_id=xxx",
+      "check_for_suggestions_created_after": "2025-10-20T12:00:00.000Z",
+      "estimated_completion_seconds": 15,
+      "recommended_poll_interval_ms": 2000
+    }
+  }
+}
+```
+
+**Frontend Polling Pattern**:
+```typescript
+// 1. Call generate endpoint
+const response = await fetch('/suggestions/generate', {
+  method: 'POST',
+  body: JSON.stringify({ connected_account_id: 'xxx' })
+});
+const { data } = await response.json();
+const startedAt = data.generation_started_at;
+
+// 2. Poll every 2 seconds
+const interval = setInterval(async () => {
+  const suggestions = await fetch('/suggestions?connected_account_id=xxx');
+  const newOnes = suggestions.filter(s => new Date(s.created_at) > new Date(startedAt));
+
+  if (newOnes.length > 0) {
+    clearInterval(interval);
+    // Update UI with new suggestions
+  }
+}, 2000);
+
+// 3. Timeout after 30 seconds
+setTimeout(() => clearInterval(interval), 30000);
+```
+
+**Ghost Platform Requirements**:
+- Must have either `topics_of_interest` OR `sample_posts`
+- If only sample posts exist, topics will be auto-inferred using AI
+- If neither exists, returns error asking user to add one or the other
+
+**Network Platform Requirements**:
+- Must have `sync_status = "ready"`
+- Connection must be fully synced
+- Returns error if not ready
 
 ---
 
@@ -346,6 +504,9 @@ GET /posts/{artifact_id}
     "status": "completed",
     "content": "AI safety is crucial because... #AI #safety",
     "character_count": 280,
+    "angle": "hot_take",
+    "length": "medium",
+    "topics": ["AI safety", "Technology"],
     "input": {
       "id": "uuid",
       "prompt": "Write a tweet about AI safety"
@@ -367,20 +528,27 @@ GET /posts/{artifact_id}
 }
 ```
 
+**New Response Fields**:
+- `angle`: The writing angle used (hot_take, roast, hype, story, teach, question)
+- `length`: The target length (short, medium, long)
+- `topics`: Array of 1-3 main topics extracted from the content by AI
+
 **Generation Customization with Voice & Sample Posts**:
 
-The AI generation uses the following data to personalize content:
-1. **Voice** (optional): Custom writing voice description from the connected account
-2. **Sample Posts** (optional): Example posts that demonstrate the user's tone and style
-3. **Writing Style** (optional): Auto-analyzed style from synced posts (tone, emoji frequency, etc.)
+The AI generation uses the following **optional** data to personalize content:
+1. **Voice**: Custom writing voice description from the connected account
+2. **Sample Posts**: Example posts that demonstrate the user's tone and style
+3. **Writing Style**: Auto-analyzed style from synced posts (tone, emoji frequency, etc.)
+
+All three are optional enhancements that improve personalization but are not required.
 
 When a `connected_account_id` is provided, the AI will:
 - Use the account's custom `voice` field in the system prompt if set
-- Include `sample_posts` as examples to match tone and style
-- Apply auto-detected `writing_style` preferences
+- Include `sample_posts` as examples to match tone and style if provided
+- Apply auto-detected `writing_style` preferences if available
 - Apply platform-specific character limits based on the account's platform
 
-See "Customize Writing Voice & Sample Posts" section below for managing these settings.
+See "Customize Writing Voice & Sample Posts" section below for managing these optional settings.
 
 **Additional post endpoints**:
 - `GET /posts` - List all generated posts (paginated)
@@ -397,13 +565,13 @@ See "Customize Writing Voice & Sample Posts" section below for managing these se
 
 **Status**: ✅ IMPLEMENTED
 
-**Overview**: Users can customize how the AI generates content by setting a custom writing voice and providing sample posts. These are stored per connected account.
+**Overview**: Users can customize how the AI generates content by setting a custom writing voice and providing sample posts. Both are optional enhancements - the AI will work without them, but they help personalize the output. These settings are stored per connected account.
 
 ### Update Writing Voice
 
 **Endpoint**: `PATCH /connections/:id`
 
-**Implementation**: `src/routes/public/connections.js:181`
+**Implementation**: `src/routes/public/connections.js:182`
 
 **How it works**:
 ```
@@ -412,16 +580,18 @@ Headers:
   Authorization: Bearer <clerk_jwt>
   X-App-Slug: ghost
 Body: {
-  "voice": "Write like a tech entrepreneur. Be concise, inspiring, and forward-thinking. Use metaphors from startups and innovation."
+  "voice": "Write like a tech entrepreneur. Be concise, inspiring, and forward-thinking. Use metaphors from startups and innovation.",
+  "topics_of_interest": "AI and technology, startup culture, product design"
 }
 
-→ Updates the voice field on the connected account
-→ AI will use this voice description in future generations
-→ Maximum 2000 characters
+→ Updates voice and/or topics_of_interest fields
+→ AI uses these in future content generation
+→ Maximum 2000 characters each
 ```
 
 **Request validation**:
 - `voice`: String, 1-2000 characters, optional
+- `topics_of_interest`: String, 1-2000 characters, optional (for ghost platform)
 - Connection must belong to authenticated user
 - Connection must belong to current app
 
@@ -432,15 +602,23 @@ Body: {
   "status": "Success",
   "data": {
     "id": "uuid",
-    "platform": "twitter",
-    "username": "yourusername",
+    "platform": "ghost",
+    "username": "My Drafts",
     "voice": "Write like a tech entrepreneur. Be concise, inspiring, and forward-thinking. Use metaphors from startups and innovation.",
+    "topics_of_interest": "AI and technology, startup culture, product design",
     "updated_at": "2025-10-19T10:00:00Z"
   }
 }
 ```
 
-**Clear voice**: Send `{"voice": null}` or `{"voice": ""}` to clear the custom voice
+**Topics of Interest (Ghost Platform)**:
+- Used for generating suggestions when there's no network to analyze
+- Can be set manually OR auto-inferred from sample posts via AI
+- If you have sample posts but no topics, AI will automatically infer and save topics during suggestion generation
+- Optional if you provide sample posts (topics will be generated automatically)
+- If neither topics nor sample posts exist, user must add one or the other before generating suggestions
+
+**Clear fields**: Send `{"voice": null}` or `{"voice": ""}` to clear
 
 ---
 
@@ -471,7 +649,8 @@ Body: {
 - `notes`: String, 1-500 characters, optional (notes about why this is a good example)
 - Connection must belong to authenticated user
 - Connection must belong to current app
-- Maximum 10 sample posts per connection
+
+**Note**: Sample posts are **optional** - they enhance AI personalization but are not required for the system to work
 
 **Response** (201 Created):
 ```json
@@ -815,9 +994,11 @@ Headers:
 | Create drafts | ✅ | `POST /posts/drafts` | User-written content |
 | AI improve drafts | ✅ | `POST /posts/:id/improve` | Preview-only, doesn't save |
 | Filter posts by type | ✅ | `GET /posts?type=draft\|generated` | Draft/generated filtering |
-| Generate response to tweet | ✅ | `POST /suggestions/:id/generate-response` | AI reply with optional instructions |
+| Generate response to tweet | ✅ | `POST /suggestions/:id/generate-response` | AI reply with angle/length + instructions |
+| Get reply opportunities | ✅ | `GET /suggestions/reply-opportunities` | Top engaging posts to reply to |
+| Manual suggestion trigger | ✅ | `POST /suggestions/generate` | Unlimited, includes polling instructions |
 | Delete account | ✅ | `DELETE /accounts/me` | Soft delete with subscription notice |
-| Update writing voice | ✅ | `PATCH /connections/:id` | Custom voice description (max 2000 chars) |
+| Update writing voice | ✅ | `PATCH /connections/:id` | Custom voice + topics (max 2000 chars each) |
 | Create sample post | ✅ | `POST /connections/:id/samples` | Add example posts (max 10 per connection) |
 | List sample posts | ✅ | `GET /connections/:id/samples` | View all sample posts |
 | Update sample post | ✅ | `PATCH /connections/:id/samples/:sampleId` | Edit content, notes, or sort order |
@@ -956,4 +1137,6 @@ Headers:
 - UUIDs are used for all IDs
 - Background jobs use BullMQ (ghostQueue)
 - Writing style analysis happens automatically after sync
-- Suggestions expire after 24 hours by default
+- Suggestions have an `expires_at` timestamp (24 hours from creation) to mark them as "stale"
+- All suggestions are returned regardless of age; client decides filtering based on `expires_at`
+- Suggestion status only reflects user actions: `pending`, `used`, or `dismissed`

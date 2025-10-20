@@ -1,5 +1,3 @@
-import pg from "pg";
-
 const isTest = process.env.NODE_ENV?.toLowerCase().includes("test");
 const useSsl = process.env.NODE_ENV === "production" || process.env.USE_DB_SSL === "true";
 

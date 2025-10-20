@@ -5,6 +5,7 @@ import {
   JOB_SYNC_NETWORK,
   JOB_ANALYZE_STYLE,
   JOB_GENERATE_SUGGESTIONS,
+  JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   JOB_GENERATE_POST,
 } from "#src/background/queues/index.js";
 
@@ -12,6 +13,7 @@ import {
 import syncNetwork from "#src/background/jobs/ghost/sync-network.js";
 import analyzeStyle from "#src/background/jobs/ghost/analyze-style.js";
 import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions.js";
+import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
 import generatePost from "#src/background/jobs/ghost/generate-post.js";
 
 console.log("👻 Starting Ghost worker manager...");
@@ -31,6 +33,9 @@ const worker = new WorkerPro(
 
         case JOB_GENERATE_SUGGESTIONS:
           return await generateSuggestions(job);
+
+        case JOB_GENERATE_SUGGESTIONS_AUTOMATED:
+          return await generateSuggestionsAutomated(job);
 
         case JOB_GENERATE_POST:
           return await generatePost(job);
@@ -66,6 +71,9 @@ worker.on("completed", (job, result) => {
     }
     if (result.suggestions_generated) {
       console.log(`   - Generated ${result.suggestions_generated} suggestions`);
+    }
+    if (result.jobs_queued) {
+      console.log(`   - Queued ${result.jobs_queued} jobs for ${result.accounts_found} accounts`);
     }
     if (result.content_length) {
       console.log(`   - Generated post (${result.content_length} chars)`);
@@ -104,6 +112,6 @@ process.on("SIGINT", shutdown);
 console.log("✅ Ghost worker manager started successfully");
 console.log(`   - Queue: ${QUEUE_GHOST}`);
 console.log(`   - Concurrency: ${worker.opts.concurrency}`);
-console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_POST}`);
+console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_SUGGESTIONS_AUTOMATED}, ${JOB_GENERATE_POST}`);
 
 export default worker;

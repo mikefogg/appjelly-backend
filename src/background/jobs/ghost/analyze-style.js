@@ -15,6 +15,146 @@ const openai = new OpenAI({
 
 export const JOB_ANALYZE_STYLE = "analyze-style";
 
+/**
+ * Analyze ghost account (no network posts, only manual samples)
+ */
+async function analyzeGhostAccount(job, connectedAccount) {
+  console.log(`[Analyze Style] Analyzing ghost account ${connectedAccount.id}`);
+
+  // Fetch manually created sample posts
+  const samplePosts = await SamplePost.query()
+    .where("connected_account_id", connectedAccount.id)
+    .orderBy("sort_order", "asc");
+
+  console.log(`[Analyze Style] Found ${samplePosts.length} manual sample posts`);
+
+  // Sample posts are optional - ghost accounts can work without them
+  if (samplePosts.length === 0) {
+    console.log(`[Analyze Style] No sample posts found - ghost account will use manual voice/topics only`);
+    await connectedAccount.$query().patch({
+      last_analyzed_at: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      message: "Ghost account analyzed - no sample posts to process",
+      sample_posts_found: 0,
+      voice_generated: false,
+      topics_generated: false,
+    };
+  }
+
+  job.updateProgress(30);
+
+  // Generate voice description using AI (only if we have sample posts)
+  console.log(`[Analyze Style] Generating voice description from samples...`);
+  let voiceDescription = null;
+
+  if (samplePosts.length >= 1) {
+    try {
+      const sampleContents = samplePosts.map(p => p.content);
+
+      const voicePrompt = `Analyze these ${samplePosts.length} social media post${samplePosts.length > 1 ? 's' : ''} and describe the author's writing voice in 2-3 concise sentences. Focus on tone, style, personality, and distinctive patterns.
+
+Post${samplePosts.length > 1 ? 's' : ''}:
+${sampleContents.map((content, i) => `${i + 1}. "${content}"`).join('\n')}
+
+Describe this person's voice in a way that helps an AI ghostwriter mimic their style. Be specific about tone, word choice, sentence structure, and personality. Keep it under 200 characters.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert at analyzing writing styles and creating concise voice descriptions for AI ghostwriting."
+          },
+          {
+            role: "user",
+            content: voicePrompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 200,
+      });
+
+      voiceDescription = response.choices[0].message.content.trim();
+      console.log(`[Analyze Style] Generated voice: "${voiceDescription}"`);
+
+    } catch (error) {
+      console.warn(`[Analyze Style] Failed to generate voice:`, error.message);
+    }
+  } else {
+    console.log(`[Analyze Style] Skipping voice generation - need at least 1 sample post`);
+  }
+
+  job.updateProgress(60);
+
+  // Generate topics_of_interest using AI (only if we have sample posts)
+  console.log(`[Analyze Style] Generating topics of interest from samples...`);
+  let topicsOfInterest = null;
+
+  if (samplePosts.length >= 1) {
+    try {
+      const sampleContents = samplePosts.map(p => p.content);
+
+      const topicsPrompt = `Based on these ${samplePosts.length} social media post${samplePosts.length > 1 ? 's' : ''}, identify 3-5 main topics or themes this person likes to write about. Be specific and concise.
+
+Post${samplePosts.length > 1 ? 's' : ''}:
+${sampleContents.map((content, i) => `${i + 1}. "${content}"`).join('\n')}
+
+List the topics as a comma-separated list (e.g., "AI and technology, startup culture, product design"). Keep it under 200 characters.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an expert at identifying topics and themes from social media content."
+          },
+          {
+            role: "user",
+            content: topicsPrompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 100,
+      });
+
+      topicsOfInterest = response.choices[0].message.content.trim();
+      console.log(`[Analyze Style] Generated topics: "${topicsOfInterest}"`);
+
+    } catch (error) {
+      console.warn(`[Analyze Style] Failed to generate topics:`, error.message);
+    }
+  } else {
+    console.log(`[Analyze Style] Skipping topics generation - need at least 1 sample post`);
+  }
+
+  job.updateProgress(90);
+
+  // Update connected account with voice, topics, and last_analyzed_at
+  await connectedAccount.$query().patch({
+    voice: voiceDescription,
+    topics_of_interest: topicsOfInterest,
+    last_analyzed_at: new Date().toISOString(),
+  });
+
+  job.updateProgress(100);
+
+  console.log(`[Analyze Style] Ghost account analysis completed`);
+  console.log(`  - Sample posts analyzed: ${samplePosts.length}`);
+  console.log(`  - Voice generated: ${voiceDescription ? 'Yes' : 'No'}`);
+  console.log(`  - Topics generated: ${topicsOfInterest ? 'Yes' : 'No'}`);
+
+  return {
+    success: true,
+    sample_posts_analyzed: samplePosts.length,
+    voice_generated: !!voiceDescription,
+    topics_generated: !!topicsOfInterest,
+    completed_at: new Date().toISOString(),
+  };
+}
+
 export default async function analyzeStyle(job) {
   const { connectedAccountId } = job.data;
 
@@ -26,6 +166,14 @@ export default async function analyzeStyle(job) {
 
     if (!connectedAccount) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
+    }
+
+    // Handle ghost platform differently - no network posts to analyze
+    const isGhostPlatform = connectedAccount.platform === "ghost";
+
+    if (isGhostPlatform) {
+      console.log(`[Analyze Style] Ghost platform - analyzing manual sample posts only`);
+      return await analyzeGhostAccount(job, connectedAccount);
     }
 
     if (!connectedAccount.access_token) {
@@ -125,7 +273,7 @@ export default async function analyzeStyle(job) {
 
     job.updateProgress(85);
 
-    // Step 5: Auto-create sample posts from top-performing content
+    // Step 5: Auto-create sample posts from top-performing content (optional enhancement)
     console.log(`[Analyze Style] Selecting top posts for samples...`);
     const topPosts = await UserPostHistory.query()
       .where("connected_account_id", connectedAccount.id)
@@ -133,14 +281,14 @@ export default async function analyzeStyle(job) {
       .limit(5);
 
     let samplesCreated = 0;
-    if (topPosts.length >= 3) {
+    if (topPosts.length >= 1) {
       // Delete existing auto-generated samples (keep manually created ones)
       await SamplePost.query()
         .where("connected_account_id", connectedAccount.id)
         .where("metadata:auto_generated", true)
         .delete();
 
-      // Create sample posts from top 3-5 posts
+      // Create sample posts from top posts (at least 1, up to 5)
       const samplesToCreate = topPosts.slice(0, Math.min(5, topPosts.length));
 
       for (let i = 0; i < samplesToCreate.length; i++) {
@@ -166,16 +314,16 @@ export default async function analyzeStyle(job) {
 
       console.log(`[Analyze Style] Created ${samplesCreated} sample posts`);
     } else {
-      console.log(`[Analyze Style] Not enough posts to create samples (need at least 3)`);
+      console.log(`[Analyze Style] No posts available to create samples - user can add manually if desired`);
     }
 
     job.updateProgress(90);
 
-    // Step 6: Generate voice description using AI
+    // Step 6: Generate voice description using AI (optional enhancement)
     console.log(`[Analyze Style] Generating voice description...`);
     let voiceDescription = null;
 
-    if (samplesCreated >= 3) {
+    if (samplesCreated >= 1) {
       try {
         const sampleContents = topPosts.slice(0, samplesCreated).map(p => p.content);
 
@@ -216,9 +364,51 @@ Describe this person's voice in a way that helps an AI ghostwriter mimic their s
       }
     }
 
-    // Update connected account with voice and last_analyzed_at
+    // Step 7: Generate topics_of_interest using AI (optional enhancement)
+    console.log(`[Analyze Style] Generating topics of interest...`);
+    let topicsOfInterest = null;
+
+    if (samplesCreated >= 1) {
+      try {
+        const sampleContents = topPosts.slice(0, samplesCreated).map(p => p.content);
+
+        const topicsPrompt = `Based on these ${samplesCreated} social media posts, identify 3-5 main topics or themes this person likes to write about. Be specific and concise.
+
+Posts:
+${sampleContents.map((content, i) => `${i + 1}. "${content}"`).join('\n')}
+
+Common topics from analysis: ${styleData.common_topics?.slice(0, 5).join(', ') || 'varied'}
+
+List the topics as a comma-separated list (e.g., "AI and technology, startup culture, product design"). Keep it under 200 characters.`;
+
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert at identifying topics and themes from social media content."
+            },
+            {
+              role: "user",
+              content: topicsPrompt
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 100,
+        });
+
+        topicsOfInterest = response.choices[0].message.content.trim();
+        console.log(`[Analyze Style] Generated topics: "${topicsOfInterest}"`);
+
+      } catch (error) {
+        console.warn(`[Analyze Style] Failed to generate topics:`, error.message);
+      }
+    }
+
+    // Update connected account with voice, topics, and last_analyzed_at
     await connectedAccount.$query().patch({
       voice: voiceDescription,
+      topics_of_interest: topicsOfInterest,
       last_analyzed_at: new Date().toISOString(),
     });
 
@@ -230,12 +420,14 @@ Describe this person's voice in a way that helps an AI ghostwriter mimic their s
     console.log(`  - Confidence: ${styleData.confidence_score}`);
     console.log(`  - Sample posts created: ${samplesCreated}`);
     console.log(`  - Voice generated: ${voiceDescription ? 'Yes' : 'No'}`);
+    console.log(`  - Topics generated: ${topicsOfInterest ? 'Yes' : 'No'}`);
 
     return {
       success: true,
       posts_analyzed: tweets.length,
       samples_created: samplesCreated,
       voice_generated: !!voiceDescription,
+      topics_generated: !!topicsOfInterest,
       style: {
         tone: styleData.tone,
         avg_length: styleData.avg_length,

@@ -90,6 +90,7 @@ export const JOB_CLEANUP_ORPHANED_DATA = "cleanup-orphaned-data";
 export const JOB_SYNC_NETWORK = "sync-network";
 export const JOB_ANALYZE_STYLE = "analyze-style";
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
+export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
 export const JOB_GENERATE_POST = "generate-post";
 
 // Organized job objects for backward compatibility
@@ -152,6 +153,7 @@ export const GHOST_JOBS = {
   SYNC_NETWORK: JOB_SYNC_NETWORK,
   ANALYZE_STYLE: JOB_ANALYZE_STYLE,
   GENERATE_SUGGESTIONS: JOB_GENERATE_SUGGESTIONS,
+  GENERATE_SUGGESTIONS_AUTOMATED: JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   GENERATE_POST: JOB_GENERATE_POST,
 };
 

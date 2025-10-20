@@ -38,6 +38,7 @@ router.get(
         is_default: conn.is_default,
         is_deletable: conn.is_deletable,
         voice: conn.voice,
+        topics_of_interest: conn.topics_of_interest,
         created_at: conn.created_at,
       }));
 
@@ -82,6 +83,7 @@ router.get(
         is_default: connection.is_default,
         is_deletable: connection.is_deletable,
         voice: connection.voice,
+        topics_of_interest: connection.topics_of_interest,
         writing_style: connection.writing_style ? {
           tone: connection.writing_style.tone,
           avg_length: connection.writing_style.avg_length,
@@ -177,7 +179,7 @@ router.patch(
   }
 );
 
-// PATCH /connections/:id - Update connection settings (voice)
+// PATCH /connections/:id - Update connection settings (voice, topics)
 router.patch(
   "/:id",
   requireAppContext,
@@ -190,11 +192,17 @@ router.patch(
       .trim()
       .isLength({ max: 2000 })
       .withMessage("Voice must be under 2000 characters"),
+    body("topics_of_interest")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 2000 })
+      .withMessage("Topics of interest must be under 2000 characters"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { voice } = req.body;
+      const { voice, topics_of_interest } = req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(req.params.id)
@@ -205,15 +213,17 @@ router.patch(
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
-      // Update voice
+      // Update voice and topics
       const updates = {};
       if (voice !== undefined) updates.voice = voice;
+      if (topics_of_interest !== undefined) updates.topics_of_interest = topics_of_interest;
 
       await connection.$query().patch(updates);
 
       return res.status(200).json(successResponse({
         id: connection.id,
-        voice: voice,
+        voice: voice !== undefined ? voice : connection.voice,
+        topics_of_interest: topics_of_interest !== undefined ? topics_of_interest : connection.topics_of_interest,
         message: "Connection updated successfully",
       }));
     } catch (error) {
