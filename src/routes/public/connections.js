@@ -1,7 +1,7 @@
 import express from "express";
-import { param, body } from "express-validator";
+import { param, body, query } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { ConnectedAccount, SamplePost } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
@@ -564,6 +564,288 @@ router.delete(
     } catch (error) {
       console.error("Delete sample post error:", error);
       return res.status(500).json(formatError("Failed to delete sample post"));
+    }
+  }
+);
+
+// GET /connections/:id/rules - List rules with optional filtering
+router.get(
+  "/:id/rules",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    query("type")
+      .optional()
+      .isIn(["general", "feedback", "all"])
+      .withMessage("Type must be one of: general, feedback, all"),
+    query("suggestion_id")
+      .optional()
+      .isUUID()
+      .withMessage("suggestion_id must be a valid UUID"),
+    query("active_only")
+      .optional()
+      .isBoolean()
+      .withMessage("active_only must be a boolean"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { type = "all", suggestion_id, active_only = "true" } = req.query;
+      const activeOnlyBool = active_only === "true" || active_only === true;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      let rules;
+
+      // Filter based on type
+      if (type === "general") {
+        // Only rules with no feedback_on_suggestion_id
+        rules = await Rule.getGeneralRules(connection.id, activeOnlyBool);
+      } else if (type === "feedback") {
+        // Only rules with feedback_on_suggestion_id
+        rules = await Rule.getFeedbackRules(connection.id, suggestion_id || null, activeOnlyBool);
+      } else {
+        // All rules
+        if (suggestion_id) {
+          // Filter by specific suggestion
+          const query = Rule.query()
+            .where("connected_account_id", connection.id)
+            .where("feedback_on_suggestion_id", suggestion_id);
+
+          if (activeOnlyBool) {
+            query.where("is_active", true);
+          }
+
+          rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
+        } else {
+          // Get all rules
+          const query = Rule.query()
+            .where("connected_account_id", connection.id);
+
+          if (activeOnlyBool) {
+            query.where("is_active", true);
+          }
+
+          rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
+        }
+      }
+
+      const data = rules.map(rule => ({
+        id: rule.id,
+        rule_type: rule.rule_type,
+        content: rule.content,
+        feedback_on_suggestion_id: rule.feedback_on_suggestion_id,
+        priority: rule.priority,
+        is_active: rule.is_active,
+        created_at: rule.created_at,
+        updated_at: rule.updated_at,
+      }));
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Get rules error:", error);
+      return res.status(500).json(formatError("Failed to retrieve rules"));
+    }
+  }
+);
+
+// POST /connections/:id/rules - Create a rule
+router.post(
+  "/:id/rules",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    body("rule_type")
+      .isString()
+      .isIn(["never", "always", "prefer", "tone"])
+      .withMessage("Rule type must be one of: never, always, prefer, tone"),
+    body("content")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 2000 })
+      .withMessage("Content must be between 1 and 2000 characters"),
+    body("feedback_on_suggestion_id")
+      .optional()
+      .isUUID()
+      .withMessage("feedback_on_suggestion_id must be a valid UUID"),
+    body("priority")
+      .optional()
+      .isInt({ min: 1, max: 10 })
+      .withMessage("Priority must be between 1 and 10"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { rule_type, content, feedback_on_suggestion_id, priority } = req.body;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Create rule
+      const rule = await Rule.query().insert({
+        connected_account_id: connection.id,
+        rule_type,
+        content,
+        feedback_on_suggestion_id: feedback_on_suggestion_id || null,
+        priority: priority !== undefined ? priority : 5,
+        is_active: true,
+      });
+
+      const data = {
+        id: rule.id,
+        rule_type: rule.rule_type,
+        content: rule.content,
+        feedback_on_suggestion_id: rule.feedback_on_suggestion_id,
+        priority: rule.priority,
+        is_active: rule.is_active,
+        created_at: rule.created_at,
+      };
+
+      return res.status(201).json(successResponse(data));
+    } catch (error) {
+      console.error("Create rule error:", error);
+      return res.status(500).json(formatError("Failed to create rule"));
+    }
+  }
+);
+
+// PATCH /connections/:id/rules/:ruleId - Update a rule
+router.patch(
+  "/:id/rules/:ruleId",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    param("ruleId").isUUID().withMessage("Invalid rule ID"),
+    body("rule_type")
+      .optional()
+      .isString()
+      .isIn(["never", "always", "prefer", "tone"])
+      .withMessage("Rule type must be one of: never, always, prefer, tone"),
+    body("content")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 2000 })
+      .withMessage("Content must be between 1 and 2000 characters"),
+    body("priority")
+      .optional()
+      .isInt({ min: 1, max: 10 })
+      .withMessage("Priority must be between 1 and 10"),
+    body("is_active")
+      .optional()
+      .isBoolean()
+      .withMessage("is_active must be a boolean"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { rule_type, content, priority, is_active } = req.body;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Find and verify rule belongs to this connection
+      const rule = await Rule.query()
+        .findById(req.params.ruleId)
+        .where("connected_account_id", connection.id);
+
+      if (!rule) {
+        return res.status(404).json(formatError("Rule not found", 404));
+      }
+
+      // Build update object
+      const updates = {};
+      if (rule_type !== undefined) updates.rule_type = rule_type;
+      if (content !== undefined) updates.content = content;
+      if (priority !== undefined) updates.priority = priority;
+      if (is_active !== undefined) updates.is_active = is_active;
+
+      // Update rule
+      const updated = await rule.$query().patchAndFetch(updates);
+
+      const data = {
+        id: updated.id,
+        rule_type: updated.rule_type,
+        content: updated.content,
+        feedback_on_suggestion_id: updated.feedback_on_suggestion_id,
+        priority: updated.priority,
+        is_active: updated.is_active,
+        updated_at: updated.updated_at,
+      };
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Update rule error:", error);
+      return res.status(500).json(formatError("Failed to update rule"));
+    }
+  }
+);
+
+// DELETE /connections/:id/rules/:ruleId - Delete a rule
+router.delete(
+  "/:id/rules/:ruleId",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    param("ruleId").isUUID().withMessage("Invalid rule ID"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Find and verify rule belongs to this connection
+      const rule = await Rule.query()
+        .findById(req.params.ruleId)
+        .where("connected_account_id", connection.id);
+
+      if (!rule) {
+        return res.status(404).json(formatError("Rule not found", 404));
+      }
+
+      // Delete rule
+      await rule.$query().delete();
+
+      return res.status(200).json(successResponse({
+        message: "Rule deleted successfully",
+      }));
+    } catch (error) {
+      console.error("Delete rule error:", error);
+      return res.status(500).json(formatError("Failed to delete rule"));
     }
   }
 );

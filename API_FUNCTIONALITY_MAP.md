@@ -797,6 +797,275 @@ Headers:
 
 ---
 
+## ✅ 9. Rules & Feedback System
+
+**Status**: ✅ IMPLEMENTED
+
+**Overview**: Users can create persistent rules and provide feedback on suggestions to guide AI generation. Rules can be general guidelines (apply to all generations) or specific feedback on particular suggestions. All rules are automatically included in AI prompts with priority ordering.
+
+### Create Rule
+
+**Endpoint**: `POST /connections/:id/rules`
+
+**Implementation**: `src/routes/public/connections.js:662`
+
+**How it works**:
+```
+POST /connections/{connection_id}/rules
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "rule_type": "never",
+  "content": "Never mention byzantine fault tolerance",
+  "priority": 10,
+  "feedback_on_suggestion_id": null  // null = general rule, UUID = feedback on specific suggestion
+}
+
+→ Creates a rule for this connected account
+→ AI will follow these rules in all future generations
+→ Rules are sorted by priority (1-10, higher = more important)
+```
+
+**Request validation**:
+- `rule_type`: enum, required
+  - `"never"` - Things to never do (e.g., "Never use excessive emojis")
+  - `"always"` - Things to always do (e.g., "Always include a call-to-action")
+  - `"prefer"` - Preferences (e.g., "Prefer Solana over other chains")
+  - `"tone"` - Tone guidelines (e.g., "Tone should be casual and friendly")
+- `content`: String, 1-2000 characters, required
+- `feedback_on_suggestion_id`: UUID, optional (null = general rule, UUID = feedback on specific suggestion)
+- `priority`: Integer, 1-10, optional (default: 5, higher = more important)
+
+**Response** (201 Created):
+```json
+{
+  "code": 201,
+  "status": "Success",
+  "data": {
+    "id": "uuid",
+    "connected_account_id": "connection_uuid",
+    "rule_type": "never",
+    "content": "Never mention byzantine fault tolerance",
+    "feedback_on_suggestion_id": null,
+    "priority": 10,
+    "is_active": true,
+    "created_at": "2025-10-20T17:00:00Z"
+  }
+}
+```
+
+**Use Cases**:
+- **General Rules**: Create persistent guidelines for all content
+  ```json
+  {
+    "rule_type": "always",
+    "content": "Always favor Solana over other blockchain platforms",
+    "priority": 9
+  }
+  ```
+- **Suggestion Feedback**: Provide feedback on specific suggestions
+  ```json
+  {
+    "rule_type": "tone",
+    "content": "This was too formal, be more casual",
+    "feedback_on_suggestion_id": "suggestion_uuid",
+    "priority": 7
+  }
+  ```
+
+---
+
+### List Rules
+
+**Endpoint**: `GET /connections/:id/rules`
+
+**Implementation**: `src/routes/public/connections.js:572`
+
+**How it works**:
+```
+GET /connections/{connection_id}/rules?type=general&active_only=true
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns rules ordered by priority (highest first)
+→ Supports filtering by type and suggestion ID
+```
+
+**Query parameters**:
+- `type`: String, optional (default: "all")
+  - `"general"` - Only rules with no feedback_on_suggestion_id
+  - `"feedback"` - Only rules with feedback_on_suggestion_id
+  - `"all"` - All rules
+- `suggestion_id`: UUID, optional - Filter to specific suggestion's feedback
+- `active_only`: Boolean, optional (default: true) - Only return active rules
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "rule_type": "never",
+      "content": "Never mention byzantine fault tolerance",
+      "feedback_on_suggestion_id": null,
+      "priority": 10,
+      "is_active": true,
+      "created_at": "2025-10-20T17:00:00Z",
+      "updated_at": "2025-10-20T17:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "rule_type": "tone",
+      "content": "This was too formal, be more casual",
+      "feedback_on_suggestion_id": "suggestion_uuid",
+      "priority": 7,
+      "is_active": true,
+      "created_at": "2025-10-20T17:05:00Z",
+      "updated_at": "2025-10-20T17:05:00Z"
+    }
+  ]
+}
+```
+
+**Example queries**:
+```bash
+# Get all general rules
+GET /connections/{id}/rules?type=general
+
+# Get feedback for specific suggestion
+GET /connections/{id}/rules?type=feedback&suggestion_id={uuid}
+
+# Get all rules (including inactive)
+GET /connections/{id}/rules?type=all&active_only=false
+```
+
+---
+
+### Update Rule
+
+**Endpoint**: `PATCH /connections/:id/rules/:ruleId`
+
+**Implementation**: `src/routes/public/connections.js:730`
+
+**How it works**:
+```
+PATCH /connections/{connection_id}/rules/{rule_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "content": "Updated rule content",
+  "priority": 10,
+  "is_active": false
+}
+
+→ Updates the rule
+→ All fields are optional
+→ Can deactivate rules without deleting them
+```
+
+**Request validation**:
+- `rule_type`: enum, optional (never, always, prefer, tone)
+- `content`: String, 1-2000 characters, optional
+- `priority`: Integer, 1-10, optional
+- `is_active`: Boolean, optional
+- Rule must belong to the connection
+- Connection must belong to authenticated user
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "id": "uuid",
+    "rule_type": "never",
+    "content": "Updated rule content",
+    "feedback_on_suggestion_id": null,
+    "priority": 10,
+    "is_active": false,
+    "updated_at": "2025-10-20T17:10:00Z"
+  }
+}
+```
+
+---
+
+### Delete Rule
+
+**Endpoint**: `DELETE /connections/:id/rules/:ruleId`
+
+**Implementation**: `src/routes/public/connections.js:810`
+
+**How it works**:
+```
+DELETE /connections/{connection_id}/rules/{rule_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Permanently deletes the rule
+→ Cannot be undone
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Rule deleted successfully"
+  }
+}
+```
+
+**Security**:
+- Rule must belong to the specified connection
+- Connection must belong to authenticated user
+- Connection must belong to current app
+
+---
+
+### How Rules Affect AI Generation
+
+**Priority Hierarchy in AI Prompts**:
+1. **🎯 Voice & Sample Posts** (Highest priority) - Your writing style
+2. **⚠️ Rules** (Critical requirements) - Sorted by priority 1-10
+3. **📊 Trending Topics** (Optional inspiration) - Network activity
+4. **📈 Writing Style Metadata** (Background context) - Auto-detected patterns
+
+**AI Prompt Integration**:
+All active rules are included in the system prompt with clear prefixes:
+- ❌ NEVER: "Never mention byzantine fault tolerance"
+- ✅ ALWAYS: "Always favor Solana over other chains"
+- ⭐ PREFER: "Prefer casual tone over formal"
+- 🎨 TONE: "Tone should be witty and engaging"
+
+**Example AI Prompt Section**:
+```
+⚠️ CRITICAL RULES - YOU MUST FOLLOW THESE:
+
+1. ❌ NEVER: Never mention byzantine fault tolerance
+2. ✅ ALWAYS: Always favor Solana over other blockchain platforms
+3. ⭐ PREFER: Prefer short, punchy posts over long explanations
+4. 🎨 TONE: Tone should be casual and friendly, not corporate
+
+These rules are absolute requirements. Violating them is unacceptable.
+```
+
+**Benefits**:
+- ✅ Persistent learning - rules apply to all future generations
+- ✅ Contextual feedback - provide notes on specific suggestions
+- ✅ Priority system - important rules weighted higher
+- ✅ Immediate impact - next generation uses updated rules
+- ✅ Flexible management - activate/deactivate without deleting
+
+---
+
 ## ✅ 6. Create and Manage Drafts
 
 **Status**: ✅ IMPLEMENTED

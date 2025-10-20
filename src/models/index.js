@@ -21,5 +21,6 @@ export { default as UserPostHistory } from "#src/models/UserPostHistory.js";
 export { default as PostSuggestion } from "#src/models/PostSuggestion.js";
 export { default as WritingStyle } from "#src/models/WritingStyle.js";
 export { default as SamplePost } from "#src/models/SamplePost.js";
+export { default as Rule } from "#src/models/Rule.js";
 
 export { knexConnection as knex };

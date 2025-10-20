@@ -25,9 +25,10 @@ class PostSuggestion extends BaseModel {
         source_data: { type: "object" },
         status: {
           type: "string",
-          enum: ["pending", "used", "dismissed"],
+          enum: ["pending", "used"],
           default: "pending"
         },
+        dismissed_at: { type: ["string", "null"], format: "date-time" },
         topics: { type: ["array", "null"] },
         angle: { type: ["string", "null"], enum: [null, "hot_take", "roast", "hype", "story", "teach", "question"] },
         length: { type: ["string", "null"], enum: [null, "short", "medium", "long"] },
@@ -88,11 +89,7 @@ class PostSuggestion extends BaseModel {
 
   async markAsDismissed() {
     return this.$query().patchAndFetch({
-      status: "dismissed",
-      metadata: {
-        ...this.metadata,
-        dismissed_at: new Date().toISOString(),
-      },
+      dismissed_at: new Date().toISOString(),
     });
   }
 

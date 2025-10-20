@@ -5,7 +5,7 @@
  * - Topics of interest (for Ghost platform)
  */
 
-import { ConnectedAccount, NetworkPost, PostSuggestion, WritingStyle, SamplePost } from "#src/models/index.js";
+import { ConnectedAccount, NetworkPost, PostSuggestion, WritingStyle, SamplePost, Rule } from "#src/models/index.js";
 import suggestionGenerator from "#src/services/ai/suggestion-generator.js";
 import OpenAI from "openai";
 
@@ -113,7 +113,11 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
   console.log(`[Generate Suggestions] Topics: ${topics_of_interest}`);
   job.updateProgress(40);
 
-  // Generate suggestions using topics + voice + samples
+  // Get active rules for this connected account
+  const rules = await Rule.getActiveRules(connectedAccount.id);
+  console.log(`[Generate Suggestions] Found ${rules.length} active rules`);
+
+  // Generate suggestions using topics + voice + samples + rules
   console.log(`[Generate Suggestions] Generating ${suggestionCount} interest-based suggestions...`);
   const result = await suggestionGenerator.generateInterestBasedSuggestions({
     topics: topics_of_interest,
@@ -122,6 +126,11 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
       content: sp.content,
       notes: sp.notes,
     })) || [],
+    rules: rules.map(r => ({
+      rule_type: r.rule_type,
+      content: r.content,
+      priority: r.priority,
+    })),
     platform: connectedAccount.platform,
     suggestionCount,
   });
@@ -212,6 +221,10 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
   console.log(`[Generate Suggestions] Found ${trendingPosts.length} trending posts`);
   job.updateProgress(45);
 
+  // Get active rules for this connected account
+  const rules = await Rule.getActiveRules(connectedAccount.id);
+  console.log(`[Generate Suggestions] Found ${rules.length} active rules`);
+
   // Step 4: Generate new suggestions with AI
   console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
   const result = await suggestionGenerator.generateSuggestions({
@@ -239,6 +252,11 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
       content: sp.content,
       notes: sp.notes,
     })) || [],
+    rules: rules.map(r => ({
+      rule_type: r.rule_type,
+      content: r.content,
+      priority: r.priority,
+    })),
     platform: connectedAccount.platform,
     suggestionCount,
   });

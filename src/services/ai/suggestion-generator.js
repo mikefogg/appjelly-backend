@@ -38,6 +38,7 @@ class SuggestionGeneratorService {
       topics = "",
       voice = null,
       samplePosts = [],
+      rules = [],
       platform = "ghost",
       suggestionCount = 3,
     } = options;
@@ -51,7 +52,7 @@ class SuggestionGeneratorService {
         length: this.randomLength(),
       }));
 
-      const systemPrompt = this.buildInterestBasedSystemPrompt(platform, voice, samplePosts);
+      const systemPrompt = this.buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules);
       const userPrompt = this.buildInterestBasedPrompt(topics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
@@ -92,6 +93,7 @@ class SuggestionGeneratorService {
       writingStyle = null,
       voice = null,
       samplePosts = [],
+      rules = [],
       platform = "twitter",
       suggestionCount = 3,
     } = options;
@@ -105,7 +107,7 @@ class SuggestionGeneratorService {
         length: this.randomLength(),
       }));
 
-      const systemPrompt = this.buildSystemPrompt(platform, writingStyle, voice, samplePosts);
+      const systemPrompt = this.buildSystemPrompt(platform, writingStyle, voice, samplePosts, rules);
       const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
@@ -180,7 +182,7 @@ class SuggestionGeneratorService {
   /**
    * Build system prompt for interest-based suggestions
    */
-  buildInterestBasedSystemPrompt(platform, voice, samplePosts) {
+  buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules) {
     const platformName = platform === "ghost" ? "social media" : platform;
     let prompt = `You are a social media ghostwriter that creates engaging ${platformName} post suggestions based on the user's interests.
 
@@ -215,6 +217,27 @@ This voice is non-negotiable. Every word must reflect this style.`;
         });
         prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality.`;
       }
+    }
+
+    // RULES - User's explicit guidelines
+    if (rules && rules.length > 0) {
+      prompt += `\n\n⚠️ CRITICAL RULES - YOU MUST FOLLOW THESE:`;
+
+      // Sort by priority (highest first)
+      const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
+
+      sortedRules.forEach((rule, index) => {
+        const rulePrefix = {
+          never: "❌ NEVER",
+          always: "✅ ALWAYS",
+          prefer: "⭐ PREFER",
+          tone: "🎨 TONE"
+        }[rule.rule_type] || "📋";
+
+        prompt += `\n${index + 1}. ${rulePrefix}: ${rule.content}`;
+      });
+
+      prompt += `\n\nThese rules are absolute requirements. Violating them is unacceptable.`;
     }
 
     prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
@@ -280,7 +303,7 @@ Create ${count} diverse post suggestions that:
   /**
    * Build system prompt for suggestions
    */
-  buildSystemPrompt(platform, writingStyle, voice, samplePosts) {
+  buildSystemPrompt(platform, writingStyle, voice, samplePosts, rules) {
     let prompt = `You are a social media ghostwriter that creates engaging ${platform} post suggestions.
 
 Your goal is to suggest posts that:
@@ -316,7 +339,28 @@ This voice is non-negotiable. Every word must reflect this style.`;
       }
     }
 
-    // Writing style is secondary to voice/samples
+    // RULES - User's explicit guidelines
+    if (rules && rules.length > 0) {
+      prompt += `\n\n⚠️ CRITICAL RULES - YOU MUST FOLLOW THESE:`;
+
+      // Sort by priority (highest first)
+      const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
+
+      sortedRules.forEach((rule, index) => {
+        const rulePrefix = {
+          never: "❌ NEVER",
+          always: "✅ ALWAYS",
+          prefer: "⭐ PREFER",
+          tone: "🎨 TONE"
+        }[rule.rule_type] || "📋";
+
+        prompt += `\n${index + 1}. ${rulePrefix}: ${rule.content}`;
+      });
+
+      prompt += `\n\nThese rules are absolute requirements. Violating them is unacceptable.`;
+    }
+
+    // Writing style is secondary to voice/samples/rules
     if (writingStyle) {
       prompt += `\n\nAdditional style metadata:
 - Tone: ${writingStyle.tone || "casual"}

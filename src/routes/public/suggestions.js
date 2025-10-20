@@ -37,10 +37,12 @@ router.get(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Get all suggestions (sorted by most recent first)
-      // Return ALL suggestions regardless of status - used ones will have status: "used"
+      // Get all suggestions except dismissed ones
+      // Show both pending and used suggestions (used = already copied, still useful to see)
+      // Hide dismissed suggestions (dismissed_at is set, no value in showing)
       const suggestions = await PostSuggestion.query()
         .where("connected_account_id", connected_account_id)
+        .whereNull("dismissed_at")
         .withGraphFetched("[source_post.network_profile]")
         .orderBy("created_at", "desc");
 
@@ -186,15 +188,15 @@ router.post(
         return res.status(404).json(formatError("Suggestion not found", 404));
       }
 
-      if (suggestion.status !== "pending") {
-        return res.status(400).json(formatError("Suggestion has already been used or dismissed", 400));
+      // Allow dismissing multiple times - make it idempotent
+      // If already dismissed (dismissed_at is set), just return success
+      if (!suggestion.dismissed_at) {
+        await suggestion.markAsDismissed();
       }
-
-      await suggestion.markAsDismissed();
 
       return res.status(200).json(successResponse({
         message: "Suggestion dismissed",
-        status: "dismissed",
+        dismissed_at: suggestion.dismissed_at || new Date().toISOString(),
       }));
     } catch (error) {
       console.error("Dismiss suggestion error:", error);
