@@ -215,11 +215,22 @@ This voice is non-negotiable. Every word must reflect this style.`;
       }
     }
 
+    prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
+- Use line breaks (newlines) to separate ideas and create natural paragraphs
+- Line breaks add emphasis, readability, and impact - use them liberally
+- Most posts should have 2-4 short paragraphs, not one dense block
+- Example format:
+  Opening thought or hook
+
+  Supporting point or expansion
+
+  Closing statement or call-to-action`;
+
     prompt += `\n\nReturn a JSON object with this structure:
 {
   "suggestions": [
     {
-      "content": "The suggested post text",
+      "content": "The suggested post text with natural line breaks",
       "reasoning": "Why this suggestion fits their interests",
       "topics": ["topic1", "topic2"],
       "angle": "the angle used",
@@ -288,12 +299,23 @@ Your goal is to suggest posts that:
       }
     }
 
+    prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
+- Use line breaks (newlines) to separate ideas and create natural paragraphs
+- Line breaks add emphasis, readability, and impact - use them liberally
+- Most posts should have 2-4 short paragraphs, not one dense block
+- Example format:
+  Opening thought or hook
+
+  Supporting point or expansion
+
+  Closing statement or call-to-action`;
+
     prompt += `\n\nReturn a JSON object with this structure:
 {
   "suggestions": [
     {
       "type": "original_post" | "reply",
-      "content": "The suggested post text",
+      "content": "The suggested post text with natural line breaks",
       "reasoning": "Why this suggestion is relevant",
       "topics": ["topic1", "topic2"],
       "angle": "the angle used",

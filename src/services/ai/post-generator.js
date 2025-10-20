@@ -242,19 +242,19 @@ Return ONLY the post content. No explanations, no meta-commentary, no quotation 
    * Build user prompt
    */
   buildUserPrompt(prompt, angle, connectedAccount) {
-    // Map angle to instructions
+    // Map angle to instructions - emphasizing transformation of the topic
     const angleInstructions = {
-      hot_take: "Share a bold, controversial opinion",
-      roast: "Provide playful, witty criticism",
-      hype: "Express enthusiastic excitement and promotion",
-      story: "Tell a compelling narrative or share an experience",
-      teach: "Explain or teach something valuable",
-      question: "Ask a thought-provoking question to spark discussion",
+      hot_take: "Take this topic and write a bold, controversial opinion post",
+      roast: "Take this topic and write a playful, witty criticism post",
+      hype: "Take this topic and write an enthusiastic, promotional post expressing excitement",
+      story: "Take this topic and write a compelling narrative or personal experience post",
+      teach: "Take this topic and write an educational post that explains something valuable",
+      question: "Take this topic and write a thought-provoking question post to spark discussion",
     };
 
     const angleInstruction = angleInstructions[angle] || angleInstructions.hot_take;
 
-    let userPrompt = `${angleInstruction} about: ${prompt}`;
+    let userPrompt = `${angleInstruction}:\n\n${prompt}`;
 
     if (connectedAccount?.username) {
       userPrompt += `\n\nPosting as: @${connectedAccount.username}`;
