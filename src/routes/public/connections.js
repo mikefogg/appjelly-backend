@@ -35,6 +35,8 @@ router.get(
         last_synced_at: conn.last_synced_at,
         last_analyzed_at: conn.last_analyzed_at,
         is_active: conn.is_active,
+        is_default: conn.is_default,
+        is_deletable: conn.is_deletable,
         created_at: conn.created_at,
       }));
 
@@ -76,6 +78,8 @@ router.get(
         last_synced_at: connection.last_synced_at,
         last_analyzed_at: connection.last_analyzed_at,
         is_active: connection.is_active,
+        is_default: connection.is_default,
+        is_deletable: connection.is_deletable,
         writing_style: connection.writing_style ? {
           tone: connection.writing_style.tone,
           avg_length: connection.writing_style.avg_length,
@@ -189,6 +193,11 @@ router.delete(
 
       if (!connection) {
         return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Prevent deletion of default ghost account
+      if (!connection.is_deletable) {
+        return res.status(403).json(formatError("This account cannot be deleted", 403));
       }
 
       // Soft delete by marking as inactive

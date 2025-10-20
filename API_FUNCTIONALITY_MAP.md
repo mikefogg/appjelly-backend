@@ -287,8 +287,8 @@ Body: {
 
 **Request validation**:
 - `prompt`: 1-500 characters, required
-- `connected_account_id`: UUID, required
-- Connection must have `sync_status = "ready"`
+- `connected_account_id`: UUID, **optional** (can be omitted for standalone posts)
+- If provided, connection must have `sync_status = "ready"`
 
 **Response** (202 Accepted):
 ```json
@@ -386,7 +386,7 @@ Body: {
 
 **Request validation**:
 - `content`: 1-5000 characters, required
-- `connected_account_id`: UUID, required
+- `connected_account_id`: UUID, **optional** (can be omitted for standalone drafts)
 
 **Response** (201 Created):
 ```json
@@ -485,7 +485,12 @@ Headers:
 
 **Query parameters**:
 - `type`: "draft" | "generated" | "all" (default: "all")
-- `connected_account_id`: UUID, optional filter
+- `connected_account_id`: UUID or "none", optional filter
+  - **If UUID**: Returns posts for that specific connected account
+  - **If "none"**: Returns only standalone posts (no connected account)
+  - **If omitted**: Returns all posts for the user
+- `sort`: "created_at" | "updated_at" (default: "created_at")
+- `order`: "asc" | "desc" (default: "desc")
 - `page`: Page number (default: 1)
 - `per_page`: Results per page (default: 20, max: 50)
 
@@ -527,6 +532,13 @@ Headers:
 - **Generated**: `input_id` exists, created from AI prompt
 - Both can be edited with `PATCH /posts/:id`
 - Both can be improved with `POST /posts/:id/improve`
+
+**Standalone vs Connected Posts**:
+- **Standalone**: `connected_account_id` is null - created before connecting any social accounts
+- **Connected**: `connected_account_id` links to a specific platform account
+- Both types support drafts AND generated posts
+- Use `GET /posts?connected_account_id=none` to fetch only standalone posts
+- Useful for onboarding flow where users start writing before connecting accounts
 
 ---
 

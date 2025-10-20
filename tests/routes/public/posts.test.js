@@ -6,7 +6,7 @@ import {
   authenticatedRequest,
   unauthenticatedRequest,
 } from "../../helpers/ghost-helpers.js";
-import { Input, Artifact } from "#src/models/index.js";
+import { Input, Artifact, ConnectedAccount } from "#src/models/index.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 
 // Mock the queue
@@ -82,13 +82,29 @@ describe("Posts Routes", () => {
       expectValidationError(response, "prompt");
     });
 
-    it("requires connected_account_id", async () => {
+    it("allows standalone generation without connected_account_id", async () => {
       const response = await authenticatedRequest(app, "post", "/posts/generate")
         .send({
-          prompt: "Test prompt",
+          prompt: "Test prompt without connection",
         });
 
-      expectValidationError(response, "connected_account_id");
+      const data = expectSuccessResponse(response, 202);
+      expect(data.status).toBe("pending");
+      expect(data).toHaveProperty("id");
+      expect(data.connected_account).toBeTruthy();
+      expect(data.connected_account.platform).toBe("ghost");
+      expect(data.connected_account.username).toBe("My Drafts");
+
+      // Verify artifact was created in standalone mode with ghost account
+      const artifact = await Artifact.query().findById(data.id);
+      expect(artifact).toBeTruthy();
+      expect(artifact.connected_account_id).toBeTruthy();
+      expect(artifact.metadata.mode).toBe("standalone");
+
+      // Verify it's using the ghost account
+      const ghostAccount = await ConnectedAccount.query().findById(artifact.connected_account_id);
+      expect(ghostAccount.platform).toBe("ghost");
+      expect(ghostAccount.is_default).toBe(true);
     });
 
     it("returns 404 for non-existent connected account", async () => {
@@ -205,6 +221,38 @@ describe("Posts Routes", () => {
       });
     });
 
+    it("filters to standalone posts by ghost account ID", async () => {
+      // Get the ghost account
+      const ghostAccount = await ConnectedAccount.findOrCreateGhostAccount(
+        context.account.id,
+        context.app.id
+      );
+
+      // Create standalone posts using ghost account
+      await Artifact.query().insert({
+        account_id: context.account.id,
+        app_id: context.app.id,
+        connected_account_id: ghostAccount.id,
+        artifact_type: "social_post",
+        status: "draft",
+        content: "Standalone draft",
+        metadata: { mode: "standalone" },
+      });
+
+      const response = await authenticatedRequest(app, "get", "/posts")
+        .query({ connected_account_id: ghostAccount.id });
+
+      const data = expectPaginatedResponse(response);
+      expect(data.length).toBeGreaterThanOrEqual(1);
+
+      // All posts should be for the ghost account
+      data.forEach(post => {
+        expect(post.connected_account).toBeTruthy();
+        expect(post.connected_account.platform).toBe("ghost");
+        expect(post.connected_account.id).toBe(ghostAccount.id);
+      });
+    });
+
     it("supports pagination", async () => {
       const response = await authenticatedRequest(app, "get", "/posts")
         .query({ page: 1, per_page: 1 });
@@ -213,6 +261,71 @@ describe("Posts Routes", () => {
       expect(data.length).toBe(1);
       expect(response.body.meta.pagination.per_page).toBe(1);
       expect(response.body.meta.pagination.has_more).toBe(true);
+    });
+
+    it("sorts by created_at by default (desc)", async () => {
+      const response = await authenticatedRequest(app, "get", "/posts");
+
+      const data = expectPaginatedResponse(response);
+      expect(data.length).toBeGreaterThan(0);
+
+      // Verify descending order by created_at
+      for (let i = 0; i < data.length - 1; i++) {
+        const current = new Date(data[i].created_at).getTime();
+        const next = new Date(data[i + 1].created_at).getTime();
+        expect(current).toBeGreaterThanOrEqual(next);
+      }
+    });
+
+    it("sorts by updated_at when specified", async () => {
+      // Update one of the posts to change updated_at
+      await artifacts[0].$query().patch({ content: "Updated content" });
+
+      const response = await authenticatedRequest(app, "get", "/posts")
+        .query({ sort: "updated_at", order: "desc" });
+
+      const data = expectPaginatedResponse(response);
+      expect(data.length).toBeGreaterThan(0);
+
+      // The recently updated post should be first
+      expect(data[0].id).toBe(artifacts[0].id);
+
+      // Verify descending order by updated_at
+      for (let i = 0; i < data.length - 1; i++) {
+        const current = new Date(data[i].updated_at).getTime();
+        const next = new Date(data[i + 1].updated_at).getTime();
+        expect(current).toBeGreaterThanOrEqual(next);
+      }
+    });
+
+    it("supports ascending order", async () => {
+      const response = await authenticatedRequest(app, "get", "/posts")
+        .query({ sort: "created_at", order: "asc" });
+
+      const data = expectPaginatedResponse(response);
+      expect(data.length).toBeGreaterThan(0);
+
+      // Verify ascending order by created_at
+      for (let i = 0; i < data.length - 1; i++) {
+        const current = new Date(data[i].created_at).getTime();
+        const next = new Date(data[i + 1].created_at).getTime();
+        expect(current).toBeLessThanOrEqual(next);
+      }
+    });
+
+    it("falls back to created_at desc for invalid sort params", async () => {
+      const response = await authenticatedRequest(app, "get", "/posts")
+        .query({ sort: "invalid_field", order: "invalid_order" });
+
+      const data = expectPaginatedResponse(response);
+      expect(data.length).toBeGreaterThan(0);
+
+      // Should fall back to created_at desc
+      for (let i = 0; i < data.length - 1; i++) {
+        const current = new Date(data[i].created_at).getTime();
+        const next = new Date(data[i + 1].created_at).getTime();
+        expect(current).toBeGreaterThanOrEqual(next);
+      }
     });
 
     it("requires authentication", async () => {
@@ -476,13 +589,29 @@ describe("Posts Routes", () => {
       expectValidationError(response, "content");
     });
 
-    it("requires connected_account_id", async () => {
+    it("allows standalone drafts without connected_account_id", async () => {
       const response = await authenticatedRequest(app, "post", "/posts/drafts")
         .send({
-          content: "Draft content",
+          content: "Draft content without connection",
         });
 
-      expectValidationError(response, "connected_account_id");
+      const data = expectSuccessResponse(response, 201);
+      expect(data.status).toBe("draft");
+      expect(data.content).toBe("Draft content without connection");
+      expect(data.connected_account).toBeTruthy();
+      expect(data.connected_account.platform).toBe("ghost");
+      expect(data.connected_account.username).toBe("My Drafts");
+
+      // Verify draft was created in standalone mode with ghost account
+      const draft = await Artifact.query().findById(data.id);
+      expect(draft).toBeTruthy();
+      expect(draft.connected_account_id).toBeTruthy();
+      expect(draft.metadata.mode).toBe("standalone");
+
+      // Verify it's using the ghost account
+      const ghostAccount = await ConnectedAccount.query().findById(draft.connected_account_id);
+      expect(ghostAccount.platform).toBe("ghost");
+      expect(ghostAccount.is_default).toBe(true);
     });
 
     it("returns 404 for non-existent connected account", async () => {

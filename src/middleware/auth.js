@@ -1,5 +1,5 @@
 import { requireAuth as clerkRequireAuth } from "@clerk/express";
-import { Account, App } from "#src/models/index.js";
+import { Account, App, ConnectedAccount } from "#src/models/index.js";
 import formatError from "#src/helpers/format-error.js";
 
 export const requireAuth = async (req, res, next) => {
@@ -80,6 +80,14 @@ export const requireAuth = async (req, res, next) => {
 
         // Reload with subscription data
         account = await Account.findWithSubscriptionData(userId, app.id);
+
+        // Create default ghost account for new user
+        try {
+          await ConnectedAccount.findOrCreateGhostAccount(account.id, app.id);
+        } catch (ghostError) {
+          console.warn("Failed to create ghost account:", ghostError);
+          // Don't fail the whole request if ghost account creation fails
+        }
       } catch (creationError) {
         console.error("Failed to auto-create account:", creationError);
         return res.status(500).json(formatError("Failed to create account"));
@@ -91,6 +99,14 @@ export const requireAuth = async (req, res, next) => {
       return res
         .status(404)
         .json(formatError("Account not found for this app", 404));
+    }
+
+    // Ensure ghost account exists (for existing users who signed up before this feature)
+    try {
+      await ConnectedAccount.findOrCreateGhostAccount(account.id, app.id);
+    } catch (ghostError) {
+      console.warn("Failed to ensure ghost account:", ghostError);
+      // Don't fail the request if ghost account creation fails
     }
 
     // Set the account on res.locals for use in routes

@@ -16,16 +16,16 @@ class ConnectedAccount extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["account_id", "app_id", "platform", "platform_user_id", "username", "access_token"],
+      required: ["account_id", "app_id", "platform", "username"],
       properties: {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
-        platform: { type: "string", enum: ["twitter", "facebook", "linkedin"] },
-        platform_user_id: { type: "string", minLength: 1 },
+        platform: { type: "string", enum: ["twitter", "facebook", "linkedin", "ghost"] },
+        platform_user_id: { type: ["string", "null"], minLength: 1 },
         username: { type: "string", minLength: 1 },
         display_name: { type: ["string", "null"] },
-        access_token: { type: "string", minLength: 1 },
+        access_token: { type: ["string", "null"], minLength: 1 },
         refresh_token: { type: ["string", "null"] },
         token_expires_at: { type: ["string", "null"], format: "date-time" },
         profile_data: { type: "object" },
@@ -37,6 +37,8 @@ class ConnectedAccount extends BaseModel {
           default: "pending"
         },
         is_active: { type: "boolean", default: true },
+        is_default: { type: "boolean", default: false },
+        is_deletable: { type: "boolean", default: true },
         metadata: { type: "object" },
       },
     };
@@ -118,6 +120,43 @@ class ConnectedAccount extends BaseModel {
       .where("platform", platform)
       .where("is_active", true)
       .orderBy("created_at", "desc");
+  }
+
+  /**
+   * Find or create the default ghost account for a user
+   * Ghost account is used for standalone posts (not tied to social platforms)
+   */
+  static async findOrCreateGhostAccount(accountId, appId) {
+    // Try to find existing ghost account
+    const existing = await this.query()
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("platform", "ghost")
+      .where("is_default", true)
+      .first();
+
+    if (existing) {
+      return existing;
+    }
+
+    // Create new ghost account
+    return this.query().insert({
+      account_id: accountId,
+      app_id: appId,
+      platform: "ghost",
+      platform_user_id: null,
+      username: "My Drafts",
+      display_name: "My Drafts",
+      access_token: null,
+      sync_status: "ready", // Ghost accounts are always ready
+      is_default: true,
+      is_deletable: false,
+      is_active: true,
+      metadata: {
+        created_reason: "default_ghost_account",
+        created_at: new Date().toISOString(),
+      },
+    });
   }
 
   async markAsSyncing() {

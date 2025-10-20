@@ -25,22 +25,37 @@ router.post(
       .isLength({ min: 1, max: 5000 })
       .withMessage("Content must be between 1 and 5000 characters"),
     body("connected_account_id")
+      .optional()
       .isUUID()
-      .withMessage("connected_account_id is required"),
+      .withMessage("connected_account_id must be a valid UUID"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { content, connected_account_id } = req.body;
 
-      // Verify connected account belongs to user
-      const connection = await ConnectedAccount.query()
-        .findById(connected_account_id)
-        .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+      let connection = null;
+      let platform = null;
 
-      if (!connection) {
-        return res.status(404).json(formatError("Connected account not found", 404));
+      // If connected_account_id provided, verify it belongs to user
+      // Otherwise, use the default ghost account
+      if (connected_account_id) {
+        connection = await ConnectedAccount.query()
+          .findById(connected_account_id)
+          .where("account_id", res.locals.account.id)
+          .where("app_id", res.locals.app.id);
+
+        if (!connection) {
+          return res.status(404).json(formatError("Connected account not found", 404));
+        }
+        platform = connection.platform;
+      } else {
+        // Use ghost account for standalone posts
+        connection = await ConnectedAccount.findOrCreateGhostAccount(
+          res.locals.account.id,
+          res.locals.app.id
+        );
+        platform = "ghost";
       }
 
       // Create draft artifact (no input_id)
@@ -52,8 +67,9 @@ router.post(
         status: "draft",
         content,
         metadata: {
-          platform: connection.platform,
+          platform,
           source: "user",
+          mode: platform === "ghost" ? "standalone" : "connected",
         },
       });
 
@@ -90,26 +106,42 @@ router.post(
       .isLength({ min: 1, max: 500 })
       .withMessage("Prompt must be between 1 and 500 characters"),
     body("connected_account_id")
+      .optional()
       .isUUID()
-      .withMessage("connected_account_id is required"),
+      .withMessage("connected_account_id must be a valid UUID"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { prompt, connected_account_id } = req.body;
 
-      // Verify connected account belongs to user
-      const connection = await ConnectedAccount.query()
-        .findById(connected_account_id)
-        .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+      let connection = null;
+      let platform = null;
 
-      if (!connection) {
-        return res.status(404).json(formatError("Connected account not found", 404));
-      }
+      // If connected_account_id provided, verify it belongs to user
+      // Otherwise, use the default ghost account
+      if (connected_account_id) {
+        connection = await ConnectedAccount.query()
+          .findById(connected_account_id)
+          .where("account_id", res.locals.account.id)
+          .where("app_id", res.locals.app.id);
 
-      if (connection.sync_status !== "ready") {
-        return res.status(400).json(formatError("Connected account is not ready. Please wait for initial sync to complete.", 400));
+        if (!connection) {
+          return res.status(404).json(formatError("Connected account not found", 404));
+        }
+
+        if (connection.sync_status !== "ready") {
+          return res.status(400).json(formatError("Connected account is not ready. Please wait for initial sync to complete.", 400));
+        }
+
+        platform = connection.platform;
+      } else {
+        // Use ghost account for standalone posts
+        connection = await ConnectedAccount.findOrCreateGhostAccount(
+          res.locals.account.id,
+          res.locals.app.id
+        );
+        platform = "ghost";
       }
 
       // Create input
@@ -119,7 +151,8 @@ router.post(
         connected_account_id: connection.id,
         prompt,
         metadata: {
-          platform: connection.platform,
+          platform,
+          mode: platform === "ghost" ? "standalone" : "connected",
         },
       });
 
@@ -132,8 +165,9 @@ router.post(
         artifact_type: "social_post",
         status: "pending",
         metadata: {
-          platform: connection.platform,
+          platform,
           prompt,
+          mode: platform === "ghost" ? "standalone" : "connected",
         },
       });
 
@@ -150,6 +184,11 @@ router.post(
         input: {
           id: input.id,
           prompt: input.prompt,
+        },
+        connected_account: {
+          id: connection.id,
+          platform: connection.platform,
+          username: connection.username,
         },
       };
 
@@ -175,17 +214,30 @@ router.get(
 
       const connectedAccountId = req.query.connected_account_id;
       const type = req.query.type; // "draft", "generated", or "all" (default)
+      const sort = req.query.sort || "created_at"; // "created_at" or "updated_at"
+      const order = req.query.order || "desc"; // "asc" or "desc"
+
+      // Validate sort parameter
+      const allowedSortFields = ["created_at", "updated_at"];
+      const sortField = allowedSortFields.includes(sort) ? sort : "created_at";
+      const sortOrder = ["asc", "desc"].includes(order) ? order : "desc";
 
       let query = Artifact.query()
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
         .where("artifact_type", "social_post")
         .withGraphFetched("[input, connected_account]")
-        .orderBy("created_at", "desc");
+        .orderBy(sortField, sortOrder);
 
-      if (connectedAccountId) {
+      // Filter by connection
+      if (connectedAccountId === "none") {
+        // Fetch only standalone posts (posts without any connected account)
+        query = query.whereNull("connected_account_id");
+      } else if (connectedAccountId && connectedAccountId !== "undefined") {
+        // Fetch posts for a specific connection (skip if undefined/null/empty)
         query = query.where("connected_account_id", connectedAccountId);
       }
+      // No filter or invalid value: return all posts for the user
 
       // Filter by type
       if (type === "draft") {
@@ -253,15 +305,15 @@ router.get(
         status: artifact.status,
         content: artifact.content,
         character_count: artifact.content?.length || 0,
-        input: {
+        input: artifact.input ? {
           id: artifact.input.id,
           prompt: artifact.input.prompt,
-        },
-        connected_account: {
+        } : null,
+        connected_account: artifact.connected_account ? {
           id: artifact.connected_account.id,
           platform: artifact.connected_account.platform,
           username: artifact.connected_account.username,
-        },
+        } : null,
         generation_info: {
           total_tokens: artifact.total_tokens,
           cost_usd: artifact.cost_usd,
