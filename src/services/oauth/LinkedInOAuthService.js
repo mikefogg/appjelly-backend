@@ -15,9 +15,10 @@ class LinkedInOAuthService extends BaseOAuthService {
       authorizationUrl: "https://www.linkedin.com/oauth/v2/authorization",
       tokenUrl: "https://www.linkedin.com/oauth/v2/accessToken",
       scopes: [
-        "r_liteprofile",
-        "r_emailaddress",
-        "w_member_social", // Post on behalf of user
+        "openid",
+        "profile",
+        "email",
+        // "w_member_social", // Post on behalf of user
       ],
     });
 
@@ -29,16 +30,15 @@ class LinkedInOAuthService extends BaseOAuthService {
   }
 
   /**
-   * Get user profile from LinkedIn API
+   * Get user profile from LinkedIn API using OIDC
    * @param {string} accessToken
    * @returns {Object} User profile data
    */
   async getUserProfile(accessToken) {
-    // Fetch profile
-    const profileResponse = await fetch(`${this.apiUrl}/me`, {
+    // Fetch profile using OIDC userinfo endpoint
+    const profileResponse = await fetch("https://api.linkedin.com/v2/userinfo", {
       headers: {
         "Authorization": `Bearer ${accessToken}`,
-        "Connection": "Keep-Alive",
       },
     });
 
@@ -51,41 +51,28 @@ class LinkedInOAuthService extends BaseOAuthService {
 
     const profile = await profileResponse.json();
 
-    // Fetch email separately (LinkedIn requires separate endpoint)
-    let email = null;
-    try {
-      const emailResponse = await fetch(
-        `${this.apiUrl}/emailAddress?q=members&projection=(elements*(handle~))`,
-        {
-          headers: {
-            "Authorization": `Bearer ${accessToken}`,
-            "Connection": "Keep-Alive",
-          },
-        }
-      );
+    // OIDC userinfo response structure:
+    // {
+    //   "sub": "user-id",
+    //   "name": "Full Name",
+    //   "given_name": "First",
+    //   "family_name": "Last",
+    //   "picture": "https://...",
+    //   "email": "user@example.com",
+    //   "email_verified": true
+    // }
 
-      if (emailResponse.ok) {
-        const emailData = await emailResponse.json();
-        email = emailData.elements?.[0]?.["handle~"]?.emailAddress;
-      }
-    } catch (error) {
-      console.warn("Failed to fetch LinkedIn email:", error);
-    }
-
-    // Extract name from localized data
-    const firstName = profile.localizedFirstName || "";
-    const lastName = profile.localizedLastName || "";
-    const displayName = `${firstName} ${lastName}`.trim();
+    const displayName = profile.name || `${profile.given_name || ""} ${profile.family_name || ""}`.trim();
+    const username = displayName.toLowerCase().replace(/\s+/g, "_") || profile.sub;
 
     return {
-      platform_user_id: profile.id,
-      username: displayName.toLowerCase().replace(/\s+/g, "_"),
+      platform_user_id: profile.sub,
+      username,
       display_name: displayName,
       profile_data: {
         ...profile,
-        email,
-        firstName,
-        lastName,
+        firstName: profile.given_name,
+        lastName: profile.family_name,
       },
     };
   }
@@ -119,6 +106,124 @@ class LinkedInOAuthService extends BaseOAuthService {
     throw new Error(
       "LinkedIn does not support refresh tokens. User must re-authorize."
     );
+  }
+
+  /**
+   * Get full member profile (requires additional permissions)
+   * @param {string} accessToken
+   * @returns {Object} Full profile data
+   */
+  async getFullProfile(accessToken) {
+    const response = await fetch(`${this.apiUrl}/me`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "LinkedIn-Version": "202405",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(
+        `Failed to fetch LinkedIn full profile: ${error.message || response.statusText}`
+      );
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Get user's posts (UGC - User Generated Content)
+   * Note: This requires special LinkedIn API access and may not be available for all apps
+   *
+   * @param {string} accessToken
+   * @param {string} authorUrn - Author URN (e.g., "urn:li:person:ABC123")
+   * @param {number} count - Number of posts to fetch (default 20, max 50)
+   * @returns {Array} User's posts
+   */
+  async getUserPosts(accessToken, authorUrn, count = 20) {
+    // LinkedIn's UGC Posts API
+    // Requires: Marketing Developer Platform access or Community Management product
+    const params = new URLSearchParams({
+      q: "author",
+      author: authorUrn,
+      count: Math.min(count, 50).toString(),
+    });
+
+    const response = await fetch(`${this.apiUrl}/ugcPosts?${params.toString()}`, {
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "LinkedIn-Version": "202405",
+        "X-Restli-Protocol-Version": "2.0.0",
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+
+      // If 403, likely means the app doesn't have permission
+      if (response.status === 403) {
+        console.warn("LinkedIn API: Insufficient permissions to read posts. App may need Marketing Developer Platform access.");
+        return []; // Return empty array instead of throwing
+      }
+
+      throw new Error(
+        `Failed to fetch LinkedIn posts: ${error.message || response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    return data.elements || [];
+  }
+
+  /**
+   * Parse LinkedIn posts into a consistent format
+   * @param {Array} posts - Raw LinkedIn UGC posts
+   * @returns {Array} Normalized posts
+   */
+  parseLinkedInPosts(posts) {
+    return posts.map(post => {
+      // Extract text content
+      const text = post.specificContent?.["com.linkedin.ugc.ShareContent"]?.shareCommentary?.text || "";
+
+      // Extract media
+      const media = post.specificContent?.["com.linkedin.ugc.ShareContent"]?.media || [];
+
+      // Extract metrics
+      const stats = post.statistics || {};
+
+      return {
+        id: post.id,
+        content: text,
+        created_at: new Date(post.created?.time || Date.now()).toISOString(),
+        author: post.author,
+        media: media.map(m => ({
+          type: m.media?.type || "unknown",
+          url: m.media?.url || null,
+        })),
+        metrics: {
+          likes: stats.numLikes || 0,
+          comments: stats.numComments || 0,
+          shares: stats.numShares || 0,
+          impressions: stats.numViews || 0,
+        },
+        raw: post, // Keep raw data for reference
+      };
+    });
+  }
+
+  /**
+   * Helper to convert profile sub to URN format
+   * @param {string} sub - OIDC subject ID
+   * @returns {string} LinkedIn URN
+   */
+  getAuthorUrn(sub) {
+    // If sub is already a URN, return it
+    if (sub.startsWith("urn:")) {
+      return sub;
+    }
+
+    // Otherwise, convert to person URN
+    return `urn:li:person:${sub}`;
   }
 }
 

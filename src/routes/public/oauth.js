@@ -28,6 +28,10 @@ const oauthServices = {
 // In production, use Redis or database
 const stateStore = new Map();
 
+// In-memory mobile OAuth session storage
+// Maps session_token -> { accountId, appId, platform, createdAt }
+const mobileOAuthSessions = new Map();
+
 /**
  * Generate and store CSRF state token
  */
@@ -71,6 +75,58 @@ function validateState(state) {
   stateStore.delete(state);
   return data;
 }
+
+/**
+ * POST /oauth/:platform/mobile-session
+ * Creates a session token for mobile OAuth flows
+ * Mobile app calls this first, then uses the session_token in the OAuth state parameter
+ */
+router.post(
+  "/:platform/mobile-session",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { platform } = req.params;
+
+      // Validate platform
+      const oauthService = oauthServices[platform];
+      if (!oauthService) {
+        return res.status(400).json(
+          formatError(`Unsupported platform: ${platform}`, 400)
+        );
+      }
+
+      // Generate session token
+      const sessionToken = crypto.randomBytes(32).toString("hex");
+
+      // Store session data
+      mobileOAuthSessions.set(sessionToken, {
+        accountId: res.locals.account.id,
+        appId: res.locals.app.id,
+        platform,
+        createdAt: Date.now(),
+      });
+
+      // Clean up old sessions (older than 15 minutes)
+      setTimeout(() => {
+        for (const [key, value] of mobileOAuthSessions.entries()) {
+          if (Date.now() - value.createdAt > 15 * 60 * 1000) {
+            mobileOAuthSessions.delete(key);
+          }
+        }
+      }, 15 * 60 * 1000);
+
+      return res.status(200).json(successResponse({
+        session_token: sessionToken,
+        expires_in: 900, // 15 minutes
+      }));
+    } catch (error) {
+      console.error("Mobile OAuth session error:", error);
+      return res.status(500).json(formatError(`Failed to create mobile OAuth session: ${error.message}`));
+    }
+  }
+);
 
 /**
  * GET /oauth/:platform/authorize
@@ -128,15 +184,15 @@ router.get(
       // Check for OAuth errors
       if (error) {
         console.error("OAuth callback error:", error, error_description);
+
+        // For LinkedIn mobile flow, redirect to app with error
+        if (platform === "linkedin" && !state) {
+          const errorMessage = encodeURIComponent(error_description || error);
+          return res.redirect(`ghostapp://oauth?error=${errorMessage}&platform=linkedin`);
+        }
+
         return res.status(400).json(
           formatError(`OAuth authorization failed: ${error_description || error}`, 400)
-        );
-      }
-
-      // Validate required parameters
-      if (!code || !state) {
-        return res.status(400).json(
-          formatError("Missing required OAuth parameters", 400)
         );
       }
 
@@ -145,6 +201,104 @@ router.get(
       if (!oauthService) {
         return res.status(400).json(
           formatError(`Unsupported platform: ${platform}`, 400)
+        );
+      }
+
+      // Check if this is a mobile OAuth session
+      const mobileSession = state ? mobileOAuthSessions.get(state) : null;
+      const isMobileOAuthFlow = platform === "linkedin" && mobileSession;
+
+      if (isMobileOAuthFlow) {
+        // Validate session hasn't expired
+        if (Date.now() - mobileSession.createdAt > 15 * 60 * 1000) {
+          mobileOAuthSessions.delete(state);
+          return res.redirect(`ghostapp://oauth?error=${encodeURIComponent("OAuth session expired")}&platform=linkedin`);
+        }
+
+        // Validate code parameter
+        if (!code) {
+          const errorMessage = encodeURIComponent("Missing authorization code");
+          return res.redirect(`ghostapp://oauth?error=${errorMessage}&platform=linkedin`);
+        }
+
+        try {
+          // Exchange code for tokens (backend handles this with client_secret)
+          const tokenData = await oauthService.exchangeCodeForToken(code);
+
+          // Get user profile
+          const profile = await oauthService.getUserProfile(tokenData.access_token);
+
+          // Check for existing connection
+          const existing = await ConnectedAccount.query()
+            .where("account_id", mobileSession.accountId)
+            .where("app_id", mobileSession.appId)
+            .where("platform", platform)
+            .where("platform_user_id", profile.platform_user_id)
+            .first();
+
+          let connection;
+
+          if (existing) {
+            // Update existing connection
+            connection = await existing.$query().patchAndFetch({
+              access_token: encrypt(tokenData.access_token),
+              refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
+              token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
+              username: profile.username,
+              display_name: profile.display_name,
+              profile_data: profile.profile_data,
+              sync_status: "pending",
+              is_active: true,
+              metadata: {
+                ...existing.metadata,
+                reconnected_at: new Date().toISOString(),
+              },
+            });
+          } else {
+            // Create new connection
+            connection = await ConnectedAccount.query().insert({
+              account_id: mobileSession.accountId,
+              app_id: mobileSession.appId,
+              platform,
+              platform_user_id: profile.platform_user_id,
+              username: profile.username,
+              display_name: profile.display_name,
+              profile_data: profile.profile_data,
+              access_token: encrypt(tokenData.access_token),
+              refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
+              token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
+              sync_status: "pending",
+              is_active: true,
+            });
+          }
+
+          // Trigger background sync jobs (don't await - let them run async)
+          ghostQueue.add(JOB_SYNC_NETWORK, {
+            connectedAccountId: connection.id,
+          }).catch(err => console.error("Failed to queue sync job:", err));
+
+          ghostQueue.add(JOB_ANALYZE_STYLE, {
+            connectedAccountId: connection.id,
+          }).catch(err => console.error("Failed to queue analyze job:", err));
+
+          // Clean up session
+          mobileOAuthSessions.delete(state);
+
+          // Redirect to mobile app with success
+          return res.redirect(`ghostapp://oauth?success=true&platform=linkedin&connection_id=${connection.id}`);
+        } catch (error) {
+          console.error("LinkedIn mobile OAuth error:", error);
+          mobileOAuthSessions.delete(state);
+          const errorMessage = encodeURIComponent(error.message || "OAuth failed");
+          return res.redirect(`ghostapp://oauth?error=${errorMessage}&platform=linkedin`);
+        }
+      }
+
+      // Web OAuth flow (with state validation) for all other cases
+      // Validate required parameters
+      if (!code || !state) {
+        return res.status(400).json(
+          formatError("Missing required OAuth parameters", 400)
         );
       }
 
