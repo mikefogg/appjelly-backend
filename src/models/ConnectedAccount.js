@@ -291,6 +291,97 @@ class ConnectedAccount extends BaseModel {
     if (!this.token_expires_at) return false;
     return new Date() >= new Date(this.token_expires_at);
   }
+
+  /**
+   * Get a valid access token, refreshing if necessary
+   * @returns {Promise<string|null>} Valid access token
+   */
+  async getValidAccessToken() {
+    // Check if token exists
+    const currentToken = this.getDecryptedAccessToken();
+    if (!currentToken) {
+      console.warn(`[ConnectedAccount] No access token for account ${this.id}`);
+      return null;
+    }
+
+    // Check if token is expired
+    if (!this.isTokenExpired()) {
+      // Token is still valid
+      return currentToken;
+    }
+
+    console.log(`[ConnectedAccount] Access token expired for account ${this.id}, attempting refresh...`);
+
+    // Check if we have a refresh token
+    const refreshToken = this.getDecryptedRefreshToken();
+    if (!refreshToken) {
+      console.warn(`[ConnectedAccount] No refresh token available for account ${this.id}`);
+      // Mark account as needing re-authentication
+      await this.$query().patch({
+        sync_status: "error",
+        metadata: {
+          ...this.metadata,
+          error: "Token expired and no refresh token available",
+          error_at: new Date().toISOString(),
+        },
+      });
+      return null;
+    }
+
+    try {
+      // Import OAuth services dynamically to avoid circular dependencies
+      const { default: twitterOAuth } = await import("#src/services/oauth/TwitterOAuthService.js");
+      const { default: facebookOAuth } = await import("#src/services/oauth/FacebookOAuthService.js");
+      const { default: linkedinOAuth } = await import("#src/services/oauth/LinkedInOAuthService.js");
+
+      const oauthServices = {
+        twitter: twitterOAuth,
+        facebook: facebookOAuth,
+        linkedin: linkedinOAuth,
+      };
+
+      const oauthService = oauthServices[this.platform];
+      if (!oauthService) {
+        console.warn(`[ConnectedAccount] No OAuth service for platform ${this.platform}`);
+        return null;
+      }
+
+      // Refresh the token
+      const tokenData = await oauthService.refreshAccessToken(refreshToken);
+
+      // Import encrypt function
+      const { encrypt } = await import("#src/helpers/encryption.js");
+
+      // Update the token in the database
+      await this.$query().patch({
+        access_token: encrypt(tokenData.access_token),
+        refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : this.refresh_token,
+        token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
+        metadata: {
+          ...this.metadata,
+          last_token_refresh: new Date().toISOString(),
+        },
+      });
+
+      console.log(`[ConnectedAccount] Token refreshed successfully for account ${this.id}`);
+
+      return tokenData.access_token;
+    } catch (error) {
+      console.error(`[ConnectedAccount] Failed to refresh token for account ${this.id}:`, error.message);
+
+      // Mark account as needing re-authentication
+      await this.$query().patch({
+        sync_status: "error",
+        metadata: {
+          ...this.metadata,
+          error: `Token refresh failed: ${error.message}`,
+          error_at: new Date().toISOString(),
+        },
+      });
+
+      return null;
+    }
+  }
 }
 
 export default ConnectedAccount;

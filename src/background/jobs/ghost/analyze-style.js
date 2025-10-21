@@ -23,6 +23,17 @@ export const JOB_ANALYZE_STYLE = "analyze-style";
 async function analyzeGhostAccount(job, connectedAccount) {
   console.log(`[Analyze Style] Analyzing ghost account ${connectedAccount.id}`);
 
+  // Skip if already analyzed (we only analyze once per account)
+  if (connectedAccount.last_analyzed_at) {
+    console.log(`[Analyze Style] Ghost account ${connectedAccount.id} already analyzed at ${connectedAccount.last_analyzed_at} - skipping`);
+    return {
+      success: true,
+      skipped: true,
+      reason: "Already analyzed",
+      analyzed_at: connectedAccount.last_analyzed_at,
+    };
+  }
+
   // Fetch manually created sample posts
   const samplePosts = await SamplePost.query()
     .where("connected_account_id", connectedAccount.id)
@@ -170,6 +181,17 @@ export default async function analyzeStyle(job) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
     }
 
+    // Skip if already analyzed (we only analyze once per account)
+    if (connectedAccount.last_analyzed_at) {
+      console.log(`[Analyze Style] Account ${connectedAccountId} already analyzed at ${connectedAccount.last_analyzed_at} - skipping`);
+      return {
+        success: true,
+        skipped: true,
+        reason: "Already analyzed",
+        analyzed_at: connectedAccount.last_analyzed_at,
+      };
+    }
+
     // Handle ghost platform differently - no network posts to analyze
     const isGhostPlatform = connectedAccount.platform === "ghost";
 
@@ -182,12 +204,12 @@ export default async function analyzeStyle(job) {
       throw new Error(`Connected account ${connectedAccountId} has no access token`);
     }
 
-    // Decrypt the access token
-    const access_token = connectedAccount.getDecryptedAccessToken();
+    // Get valid access token (will refresh if expired)
+    const access_token = await connectedAccount.getValidAccessToken();
     const { platform_user_id } = connectedAccount;
 
     if (!access_token) {
-      throw new Error(`Failed to decrypt access token for account ${connectedAccountId}`);
+      throw new Error(`Failed to get valid access token for account ${connectedAccountId}`);
     }
 
     // Check rate limit BEFORE making any API call

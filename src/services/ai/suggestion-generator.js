@@ -393,7 +393,8 @@ This voice is non-negotiable. Every word must reflect this style.`;
       "reasoning": "Why this suggestion is relevant",
       "topics": ["topic1", "topic2"],
       "angle": "the angle used",
-      "length": "the length used"
+      "length": "the length used",
+      "inspired_by_posts": [1, 3] // Optional: indices of posts from the trending list that inspired this suggestion (0-based)
     }
   ]
 }`;
@@ -417,11 +418,14 @@ This voice is non-negotiable. Every word must reflect this style.`;
     }
 
     if (trendingPosts.length > 0) {
-      prompt += `📊 OPTIONAL INSPIRATION - High-engagement posts from their network (you can reference these for ideas, but they're not required):\n`;
-      trendingPosts.slice(0, 5).forEach((post, idx) => {
-        prompt += `${idx + 1}. "${post.content.substring(0, 100)}${post.content.length > 100 ? "..." : ""}" (${post.engagement_score} engagement)\n`;
+      prompt += `📊 OPTIONAL INSPIRATION - High-engagement posts from their network:\n`;
+      prompt += `If you draw inspiration from any of these posts, include their index numbers in the "inspired_by_posts" array.\n\n`;
+      trendingPosts.slice(0, 10).forEach((post, idx) => {
+        prompt += `[${idx}] "${post.content.substring(0, 150)}${post.content.length > 150 ? "..." : ""}" (${post.engagement_score} engagement)\n`;
       });
       prompt += "\n";
+    } else {
+      prompt += `⚠️ NO NETWORK POSTS AVAILABLE - You must create original suggestions based only on the user's voice, style, and interests. Do NOT include "inspired_by_posts" in your response since there are no posts to cite.\n\n`;
     }
 
     prompt += `Each suggestion should follow these specific angles and lengths:

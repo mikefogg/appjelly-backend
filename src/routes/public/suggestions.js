@@ -97,6 +97,34 @@ router.get(
         return res.status(404).json(formatError("Suggestion not found", 404));
       }
 
+      // Fetch inspiring network posts if they exist in metadata
+      let inspiringPosts = [];
+      if (suggestion.metadata?.inspired_by_network_post_ids && Array.isArray(suggestion.metadata.inspired_by_network_post_ids)) {
+        const postIds = suggestion.metadata.inspired_by_network_post_ids;
+        if (postIds.length > 0) {
+          const networkPosts = await NetworkPost.query()
+            .whereIn("id", postIds)
+            .withGraphFetched("network_profile")
+            .orderBy("engagement_score", "desc");
+
+          inspiringPosts = networkPosts.map(post => ({
+            id: post.id,
+            content: post.content,
+            posted_at: post.posted_at,
+            engagement_score: post.engagement_score,
+            like_count: post.like_count,
+            retweet_count: post.retweet_count,
+            reply_count: post.reply_count,
+            topics: post.topics,
+            author: {
+              username: post.network_profile?.username,
+              display_name: post.network_profile?.display_name,
+              profile_image_url: post.network_profile?.profile_image_url,
+            },
+          }));
+        }
+      }
+
       const data = {
         id: suggestion.id,
         suggestion_type: suggestion.suggestion_type,
@@ -118,6 +146,12 @@ router.get(
             profile_image_url: suggestion.source_post.network_profile?.profile_image_url,
           },
         } : null,
+        inspiring_posts: inspiringPosts,
+        metadata: {
+          generation_type: suggestion.metadata?.generation_type,
+          trending_topics_count: suggestion.metadata?.trending_topics_count,
+          trending_posts_count: suggestion.metadata?.trending_posts_count,
+        },
         connected_account: {
           id: suggestion.connected_account.id,
           platform: suggestion.connected_account.platform,
@@ -247,10 +281,6 @@ router.post(
 
       if (!suggestion.source_post) {
         return res.status(400).json(formatError("This suggestion has no source post to reply to", 400));
-      }
-
-      if (suggestion.connected_account.sync_status !== "ready") {
-        return res.status(400).json(formatError("Connected account is not ready. Please wait for initial sync to complete.", 400));
       }
 
       // Build prompt for generating response
@@ -449,17 +479,12 @@ router.post(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // For ghost platform, check if topics_of_interest exists
-      if (connection.platform === "ghost") {
-        if (!connection.topics_of_interest || connection.topics_of_interest.trim().length === 0) {
-          return res.status(400).json(formatError("Please add topics of interest before generating suggestions", 400));
-        }
-      } else {
-        // For network platforms, check sync status
-        if (connection.sync_status !== "ready") {
-          return res.status(400).json(formatError("Connected account must be synced before generating suggestions", 400));
-        }
-      }
+      // No strict requirements - users can generate suggestions with any combination of:
+      // - Topics of interest
+      // - Sample posts
+      // - Voice/rules
+      // - Network data (if synced for Twitter)
+      // The AI will work with whatever data is available
 
       // Trigger background job
       const generationStartedAt = new Date().toISOString();

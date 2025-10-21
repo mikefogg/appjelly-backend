@@ -77,12 +77,12 @@ export default async function syncNetwork(job) {
     // Mark as syncing
     await connectedAccount.markAsSyncing();
 
-    // Decrypt the access token
-    const access_token = connectedAccount.getDecryptedAccessToken();
+    // Get valid access token (will refresh if expired)
+    const access_token = await connectedAccount.getValidAccessToken();
     const { platform_user_id } = connectedAccount;
 
     if (!access_token) {
-      throw new Error(`Failed to decrypt access token for account ${connectedAccountId}`);
+      throw new Error(`Failed to get valid access token for account ${connectedAccountId}`);
     }
 
     // Check rate limit BEFORE making any API call

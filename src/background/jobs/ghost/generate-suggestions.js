@@ -147,6 +147,15 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
+      // Build metadata for interest-based suggestions
+      const metadata = {
+        generation_type: "interest_based",
+        topics_of_interest: topics_of_interest,
+        had_voice: !!(voice && voice.trim().length > 0),
+        had_samples: !!(sample_posts && sample_posts.length > 0),
+        sample_count: sample_posts?.length || 0,
+      };
+
       await PostSuggestion.query().insert({
         account_id: connectedAccount.account_id,
         connected_account_id: connectedAccount.id,
@@ -161,6 +170,7 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
         character_count: suggestion.content.length,
         expires_at: expiresAt.toISOString(),
         status: "pending",
+        metadata,
       });
 
       savedCount++;
@@ -209,11 +219,12 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
   console.log(`[Generate Suggestions] Found ${trendingTopics.length} trending topics`);
   job.updateProgress(20);
 
-  // Step 3: Get high-engagement posts from network (incremental)
+  // Step 3: Get high-engagement posts from network (same time window as trending topics)
   console.log(`[Generate Suggestions] Getting high-engagement posts...`);
+  const postsStartTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
   const trendingPosts = await NetworkPost.query()
     .where("connected_account_id", connectedAccount.id)
-    .where("posted_at", ">", sinceTimestamp.toISOString())
+    .where("posted_at", ">", postsStartTime.toISOString())
     .whereNotNull("engagement_score")
     .orderBy("engagement_score", "desc")
     .limit(20);
@@ -227,6 +238,24 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
 
   // Step 4: Generate new suggestions with AI
   console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
+
+  // Log input data for debugging
+  console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
+  console.log(`[Generate Suggestions] Trending Topics (${trendingTopics.length}):`);
+  trendingTopics.forEach((t, idx) => {
+    console.log(`  [${idx}] "${t.topic}" (${t.mention_count} mentions, ${t.total_engagement} engagement)`);
+  });
+
+  console.log(`[Generate Suggestions] Trending Posts (${trendingPosts.length}):`);
+  trendingPosts.forEach((p, idx) => {
+    console.log(`  [${idx}] "${p.content.substring(0, 100)}..." (${p.engagement_score} engagement)`);
+  });
+
+  console.log(`[Generate Suggestions] Voice: ${connectedAccount.voice ? connectedAccount.voice.substring(0, 100) + '...' : 'none'}`);
+  console.log(`[Generate Suggestions] Sample Posts: ${connectedAccount.sample_posts?.length || 0}`);
+  console.log(`[Generate Suggestions] Rules: ${rules.length}`);
+  console.log(`[Generate Suggestions] ========================`);
+
   const result = await suggestionGenerator.generateSuggestions({
     trendingPosts: trendingPosts.map(p => ({
       content: p.content,
@@ -261,6 +290,16 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
     suggestionCount,
   });
 
+  console.log(`[Generate Suggestions] === GENERATION OUTPUT ===`);
+  console.log(`[Generate Suggestions] AI returned ${result.suggestions.length} suggestions:`);
+  result.suggestions.forEach((s, idx) => {
+    console.log(`  [${idx}] Angle: ${s.angle}, Length: ${s.length}`);
+    console.log(`       Content: "${s.content.substring(0, 80)}..."`);
+    console.log(`       Topics: [${s.topics?.join(', ')}]`);
+    console.log(`       Inspired by posts: [${s.inspired_by_posts?.join(', ') || 'none'}]`);
+  });
+  console.log(`[Generate Suggestions] =========================`);
+
   console.log(`[Generate Suggestions] Generated ${result.suggestions.length} suggestions`);
   job.updateProgress(70);
 
@@ -287,6 +326,24 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
         }
       }
 
+      // Map inspired_by_posts indices to actual network post IDs
+      const inspiredByPostIds = [];
+      if (suggestion.inspired_by_posts && Array.isArray(suggestion.inspired_by_posts)) {
+        for (const index of suggestion.inspired_by_posts) {
+          if (index >= 0 && index < trendingPosts.length) {
+            inspiredByPostIds.push(trendingPosts[index].id);
+          }
+        }
+      }
+
+      // Build metadata with source attribution
+      const metadata = {
+        generation_type: "network_based",
+        inspired_by_network_post_ids: inspiredByPostIds,
+        trending_topics_count: trendingTopics.length,
+        trending_posts_count: trendingPosts.length,
+      };
+
       await PostSuggestion.query().insert({
         account_id: connectedAccount.account_id,
         connected_account_id: connectedAccount.id,
@@ -301,6 +358,7 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
         character_count: suggestion.content.length,
         expires_at: expiresAt.toISOString(),
         status: "pending",
+        metadata,
       });
 
       savedCount++;
