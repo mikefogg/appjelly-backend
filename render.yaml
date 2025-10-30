@@ -2,7 +2,7 @@ databases:
   # PostgreSQL Database
   - name: ghost-postgres
     databaseName: ghost
-    plan: standard
+    plan: basic-1gb
 
 services:
   # Start Our Main API Endpoint
@@ -71,6 +71,6 @@ services:
   # Redis Cache
   - type: redis
     name: ghost-redis
-    plan: standard
+    plan: basic-1gb
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
