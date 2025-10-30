@@ -10,7 +10,7 @@ services:
     numInstances: 1
     plan: standard
     domains:
-      - 'api.appjelly.io'
+      - 'data.appjelly.io'
 
   # Our Ghost Worker Class - Main AI & Content Generation Worker
   - type: worker
