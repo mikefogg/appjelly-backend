@@ -71,6 +71,6 @@ services:
   # Redis Cache
   - type: redis
     name: ghost-redis
-    plan: basic-1gb
+    plan: standard
     maxmemoryPolicy: allkeys-lru
     ipAllowList: []
