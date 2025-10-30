@@ -1,0 +1,33 @@
+services:
+  # Start Our Main API Endpoint
+  - type: web
+    name: ghost-api
+    runtime: node
+    branch: ghost
+    buildCommand: npm install
+    preDeployCommand: npx knex migrate:latest
+    startCommand: npm start
+    numInstances: 1
+    plan: standard
+    domains:
+      - 'api.appjelly.io'
+
+  # Our Ghost Worker Class - Main AI & Content Generation Worker
+  - type: worker
+    name: ghost-worker
+    runtime: node
+    branch: ghost
+    buildCommand: npm install
+    startCommand: node src/background/managers/ghost.js
+    numInstances: 2
+    plan: standard
+
+  # Our Cleanup Worker Class - Handles expired media and cleanup tasks
+  - type: worker
+    name: ghost-cleanup-worker
+    runtime: node
+    branch: ghost
+    buildCommand: npm install
+    startCommand: node src/background/managers/cleanup.js
+    numInstances: 1
+    plan: starter
