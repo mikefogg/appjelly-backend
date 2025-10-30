@@ -11,6 +11,16 @@ services:
     plan: standard
     domains:
       - 'data.appjelly.io'
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ghost-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ghost-redis
+          property: connectionString
 
   # Our Ghost Worker Class - Main AI & Content Generation Worker
   - type: worker
@@ -21,6 +31,16 @@ services:
     startCommand: node src/background/managers/ghost.js
     numInstances: 2
     plan: standard
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ghost-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ghost-redis
+          property: connectionString
 
   # Our Cleanup Worker Class - Handles expired media and cleanup tasks
   - type: worker
@@ -31,3 +51,34 @@ services:
     startCommand: node src/background/managers/cleanup.js
     numInstances: 1
     plan: starter
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ghost-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ghost-redis
+          property: connectionString
+
+  # PostgreSQL Database
+  - type: pserv
+    name: ghost-postgres
+    plan: standard
+    env: docker
+    repo: https://github.com/render-examples/postgresql
+    envVars:
+      - key: POSTGRES_DB
+        value: ghost
+      - key: POSTGRES_USER
+        generateValue: true
+      - key: POSTGRES_PASSWORD
+        generateValue: true
+
+  # Redis Cache
+  - type: redis
+    name: ghost-redis
+    plan: standard
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
