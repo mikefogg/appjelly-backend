@@ -1,3 +1,9 @@
+databases:
+  # PostgreSQL Database
+  - name: ghost-postgres
+    databaseName: ghost
+    plan: standard
+
 services:
   # Start Our Main API Endpoint
   - type: web
@@ -61,20 +67,6 @@ services:
           type: redis
           name: ghost-redis
           property: connectionString
-
-  # PostgreSQL Database
-  - type: pserv
-    name: ghost-postgres
-    plan: standard
-    env: docker
-    repo: https://github.com/render-examples/postgresql
-    envVars:
-      - key: POSTGRES_DB
-        value: ghost
-      - key: POSTGRES_USER
-        generateValue: true
-      - key: POSTGRES_PASSWORD
-        generateValue: true
 
   # Redis Cache
   - type: redis
