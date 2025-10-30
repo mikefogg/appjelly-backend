@@ -4,6 +4,7 @@
  */
 
 import OpenAI from "openai";
+import promptBuilder from "#src/services/ai/prompt-builder.js";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -52,7 +53,7 @@ class SuggestionGeneratorService {
         length: this.randomLength(),
       }));
 
-      const systemPrompt = this.buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules);
+      const systemPrompt = promptBuilder.buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules);
       const userPrompt = this.buildInterestBasedPrompt(topics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
@@ -90,6 +91,7 @@ class SuggestionGeneratorService {
     const {
       trendingPosts = [],
       trendingTopics = [],
+      topics = null, // User's topics_of_interest text field
       writingStyle = null,
       voice = null,
       samplePosts = [],
@@ -107,8 +109,8 @@ class SuggestionGeneratorService {
         length: this.randomLength(),
       }));
 
-      const systemPrompt = this.buildSystemPrompt(platform, writingStyle, voice, samplePosts, rules);
-      const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, suggestionCount, suggestionsConfig);
+      const systemPrompt = promptBuilder.buildSuggestionSystemPrompt(platform, voice, samplePosts, rules, writingStyle);
+      const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, topics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
         model: this.model,
@@ -179,93 +181,6 @@ class SuggestionGeneratorService {
     }
   }
 
-  /**
-   * Build system prompt for interest-based suggestions
-   */
-  buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules) {
-    const platformName = platform === "ghost" ? "social media" : platform;
-    let prompt = `You are a social media ghostwriter that creates engaging ${platformName} post suggestions based on the user's interests.
-
-Your goal is to suggest posts that:
-1. Feel authentic and natural to the user's voice
-2. Relate to their stated topics of interest
-3. Are likely to get engagement (replies, likes, shares)
-4. Match their writing style`;
-
-    // CRITICAL: Voice and samples come FIRST
-    const hasVoice = voice && voice.trim().length > 0;
-    const hasSamples = samplePosts && samplePosts.length > 0;
-
-    if (hasVoice || hasSamples) {
-      prompt += `\n\n🎯 CRITICAL - YOUR #1 PRIORITY:`;
-
-      if (hasVoice) {
-        prompt += `\n\nYou MUST write in this exact voice and style:
-${voice}
-
-This voice is non-negotiable. Every word must reflect this style.`;
-      }
-
-      if (hasSamples) {
-        prompt += `\n\nYou MUST match the tone, style, and patterns from these example posts:`;
-        samplePosts.forEach((sample, index) => {
-          prompt += `\n\nExample ${index + 1}:
-"${sample.content}"`;
-          if (sample.notes) {
-            prompt += `\n→ Key insight: ${sample.notes}`;
-          }
-        });
-        prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality.`;
-      }
-    }
-
-    // RULES - User's explicit guidelines
-    if (rules && rules.length > 0) {
-      prompt += `\n\n⚠️ CRITICAL RULES - YOU MUST FOLLOW THESE:`;
-
-      // Sort by priority (highest first)
-      const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
-
-      sortedRules.forEach((rule, index) => {
-        const rulePrefix = {
-          never: "❌ NEVER",
-          always: "✅ ALWAYS",
-          prefer: "⭐ PREFER",
-          tone: "🎨 TONE"
-        }[rule.rule_type] || "📋";
-
-        prompt += `\n${index + 1}. ${rulePrefix}: ${rule.content}`;
-      });
-
-      prompt += `\n\nThese rules are absolute requirements. Violating them is unacceptable.`;
-    }
-
-    prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
-- Use line breaks (newlines) to separate ideas and create natural paragraphs
-- Line breaks add emphasis, readability, and impact - use them liberally
-- Most posts should have 2-4 short paragraphs, not one dense block
-- Example format:
-  Opening thought or hook
-
-  Supporting point or expansion
-
-  Closing statement or call-to-action`;
-
-    prompt += `\n\nReturn a JSON object with this structure:
-{
-  "suggestions": [
-    {
-      "content": "The suggested post text with natural line breaks",
-      "reasoning": "Why this suggestion fits their interests",
-      "topics": ["topic1", "topic2"],
-      "angle": "the angle used",
-      "length": "the length used"
-    }
-  ]
-}`;
-
-    return prompt;
-  }
 
   /**
    * Build prompt for interest-based suggestions
@@ -300,117 +215,21 @@ Create ${count} diverse post suggestions that:
     return prompt;
   }
 
-  /**
-   * Build system prompt for suggestions
-   */
-  buildSystemPrompt(platform, writingStyle, voice, samplePosts, rules) {
-    let prompt = `You are a social media ghostwriter that creates engaging ${platform} post suggestions.
-
-Your goal is to suggest posts that:
-1. Feel authentic and natural to the user's voice
-2. Can optionally draw inspiration from what's trending in their network
-3. Are likely to get engagement (replies, likes, shares)
-4. Match the user's writing style`;
-
-    // CRITICAL: Voice and samples come FIRST - highest priority
-    const hasVoice = voice && voice.trim().length > 0;
-    const hasSamples = samplePosts && samplePosts.length > 0;
-
-    if (hasVoice || hasSamples) {
-      prompt += `\n\n🎯 CRITICAL - YOUR #1 PRIORITY:`;
-
-      if (hasVoice) {
-        prompt += `\n\nYou MUST write in this exact voice and style:
-${voice}
-
-This voice is non-negotiable. Every word must reflect this style.`;
-      }
-
-      if (hasSamples) {
-        prompt += `\n\nYou MUST match the tone, style, and patterns from these example posts:`;
-        samplePosts.forEach((sample, index) => {
-          prompt += `\n\nExample ${index + 1}:
-"${sample.content}"`;
-          if (sample.notes) {
-            prompt += `\n→ Key insight: ${sample.notes}`;
-          }
-        });
-        prompt += `\n\nStudy these examples carefully. Copy the voice, rhythm, word choice, and personality.`;
-      }
-    }
-
-    // RULES - User's explicit guidelines
-    if (rules && rules.length > 0) {
-      prompt += `\n\n⚠️ CRITICAL RULES - YOU MUST FOLLOW THESE:`;
-
-      // Sort by priority (highest first)
-      const sortedRules = [...rules].sort((a, b) => b.priority - a.priority);
-
-      sortedRules.forEach((rule, index) => {
-        const rulePrefix = {
-          never: "❌ NEVER",
-          always: "✅ ALWAYS",
-          prefer: "⭐ PREFER",
-          tone: "🎨 TONE"
-        }[rule.rule_type] || "📋";
-
-        prompt += `\n${index + 1}. ${rulePrefix}: ${rule.content}`;
-      });
-
-      prompt += `\n\nThese rules are absolute requirements. Violating them is unacceptable.`;
-    }
-
-    // Writing style is secondary to voice/samples/rules
-    if (writingStyle) {
-      prompt += `\n\nAdditional style metadata:
-- Tone: ${writingStyle.tone || "casual"}
-- Average length: ${writingStyle.avg_length || 150} characters
-- Emoji usage: ${writingStyle.emoji_frequency > 0.5 ? "frequent" : "occasional"}
-- Hashtag usage: ${writingStyle.hashtag_frequency > 0.3 ? "uses hashtags" : "minimal hashtags"}`;
-
-      if (writingStyle.common_topics && writingStyle.common_topics.length > 0) {
-        prompt += `\n- Common topics: ${writingStyle.common_topics.slice(0, 5).join(", ")}`;
-      }
-    }
-
-    prompt += `\n\n⚠️ FORMATTING REQUIREMENTS:
-- Use line breaks (newlines) to separate ideas and create natural paragraphs
-- Line breaks add emphasis, readability, and impact - use them liberally
-- Most posts should have 2-4 short paragraphs, not one dense block
-- Example format:
-  Opening thought or hook
-
-  Supporting point or expansion
-
-  Closing statement or call-to-action`;
-
-    prompt += `\n\nReturn a JSON object with this structure:
-{
-  "suggestions": [
-    {
-      "type": "original_post" | "reply",
-      "content": "The suggested post text with natural line breaks",
-      "reasoning": "Why this suggestion is relevant",
-      "topics": ["topic1", "topic2"],
-      "angle": "the angle used",
-      "length": "the length used",
-      "inspired_by_posts": [1, 3] // Optional: indices of posts from the trending list that inspired this suggestion (0-based)
-    }
-  ]
-}`;
-
-    return prompt;
-  }
 
   /**
    * Build prompt for generating suggestions
    */
-  buildSuggestionPrompt(trendingPosts, trendingTopics, count, suggestionsConfig) {
+  buildSuggestionPrompt(trendingPosts, trendingTopics, topics, count, suggestionsConfig) {
     let prompt = `Generate ${count} post suggestions that match the user's voice and interests.\n\n`;
 
-    // Trending topics are OPTIONAL context, not requirements
+    // User's topics of interest (text field) - PRIMARY content source
+    if (topics && topics.trim().length > 0) {
+      prompt += `🎯 USER'S TOPICS OF INTEREST - These are the main topics the user wants to write about:\n${topics}\n\n`;
+    }
+
+    // Trending topics are OPTIONAL additional context, not requirements
     if (trendingTopics.length > 0) {
-      prompt += `📊 OPTIONAL INSPIRATION - Trending topics in their network (you can use these for ideas, but they're not required):\n`;
+      prompt += `📊 OPTIONAL INSPIRATION - Trending topics in their network (you can use these for additional ideas):\n`;
       trendingTopics.forEach(topic => {
         prompt += `- ${topic.topic} (${topic.mention_count} mentions, ${topic.total_engagement} total engagement)\n`;
       });

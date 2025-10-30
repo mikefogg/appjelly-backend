@@ -7,6 +7,9 @@ import {
   JOB_GENERATE_SUGGESTIONS,
   JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   JOB_GENERATE_POST,
+  JOB_DISPATCH_CURATED_TOPICS,
+  JOB_SYNC_CURATED_TOPIC,
+  JOB_DIGEST_RECENT_TOPICS,
 } from "#src/background/queues/index.js";
 
 // Import job processors
@@ -15,6 +18,9 @@ import analyzeStyle from "#src/background/jobs/ghost/analyze-style.js";
 import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions.js";
 import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
 import generatePost from "#src/background/jobs/ghost/generate-post.js";
+import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-topics.js";
+import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
+import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
 
 console.log("👻 Starting Ghost worker manager...");
 
@@ -39,6 +45,15 @@ const worker = new WorkerPro(
 
         case JOB_GENERATE_POST:
           return await generatePost(job);
+
+        case JOB_DISPATCH_CURATED_TOPICS:
+          return await dispatchCuratedTopics(job);
+
+        case JOB_SYNC_CURATED_TOPIC:
+          return await syncCuratedTopic(job);
+
+        case JOB_DIGEST_RECENT_TOPICS:
+          return await digestRecentTopics(job);
 
         default:
           throw new Error(`Unknown Ghost job type: ${job.name}`);
@@ -78,6 +93,15 @@ worker.on("completed", (job, result) => {
     if (result.content_length) {
       console.log(`   - Generated post (${result.content_length} chars)`);
     }
+    if (result.dispatched) {
+      console.log(`   - Dispatched ${result.dispatched} sync jobs`);
+    }
+    if (result.new_posts) {
+      console.log(`   - ${result.new_posts} new, ${result.updated_posts} updated`);
+    }
+    if (result.trending_topics_stored) {
+      console.log(`   - Stored ${result.trending_topics_stored} trending topics`);
+    }
   }
 });
 
@@ -112,6 +136,6 @@ process.on("SIGINT", shutdown);
 console.log("✅ Ghost worker manager started successfully");
 console.log(`   - Queue: ${QUEUE_GHOST}`);
 console.log(`   - Concurrency: ${worker.opts.concurrency}`);
-console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_SUGGESTIONS_AUTOMATED}, ${JOB_GENERATE_POST}`);
+console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_SUGGESTIONS_AUTOMATED}, ${JOB_GENERATE_POST}, ${JOB_DISPATCH_CURATED_TOPICS}, ${JOB_SYNC_CURATED_TOPIC}, ${JOB_DIGEST_RECENT_TOPICS}`);
 
 export default worker;

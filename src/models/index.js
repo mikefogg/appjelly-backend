@@ -22,5 +22,8 @@ export { default as PostSuggestion } from "#src/models/PostSuggestion.js";
 export { default as WritingStyle } from "#src/models/WritingStyle.js";
 export { default as SamplePost } from "#src/models/SamplePost.js";
 export { default as Rule } from "#src/models/Rule.js";
+export { default as CuratedTopic } from "#src/models/CuratedTopic.js";
+export { default as UserTopicPreference } from "#src/models/UserTopicPreference.js";
+export { default as TrendingTopic } from "#src/models/TrendingTopic.js";
 
 export { knexConnection as knex };

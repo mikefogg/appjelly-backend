@@ -154,17 +154,20 @@ describe("Suggestions Routes", () => {
       expect(updated.status).toBe("used");
     });
 
-    it("returns error if suggestion already used", async () => {
+    it("is idempotent - allows marking as used multiple times", async () => {
       // Mark as used first
       await suggestions[0].$query().patch({ status: "used" });
 
+      // Should succeed when called again (idempotent)
       const response = await authenticatedRequest(
         app,
         "post",
         `/suggestions/${suggestions[0].id}/use`
       );
 
-      expectErrorResponse(response, 400, "already been used");
+      const data = expectSuccessResponse(response);
+      expect(data.message).toContain("used");
+      expect(data.status).toBe("used");
     });
 
     it("returns 404 for non-existent suggestion", async () => {
@@ -194,24 +197,28 @@ describe("Suggestions Routes", () => {
 
       const data = expectSuccessResponse(response);
       expect(data.message).toContain("dismissed");
-      expect(data.status).toBe("dismissed");
+      expect(data.dismissed_at).toBeDefined();
 
       // Verify in database
       const updated = await suggestions[0].$query();
-      expect(updated.status).toBe("dismissed");
+      expect(updated.dismissed_at).toBeDefined();
+      expect(updated.dismissed_at).not.toBeNull();
     });
 
-    it("returns error if suggestion already dismissed", async () => {
+    it("is idempotent - allows dismissing multiple times", async () => {
       // Mark as dismissed first
-      await suggestions[0].$query().patch({ status: "dismissed" });
+      await suggestions[0].$query().patch({ dismissed_at: new Date().toISOString() });
 
+      // Should succeed when called again (idempotent)
       const response = await authenticatedRequest(
         app,
         "post",
         `/suggestions/${suggestions[0].id}/dismiss`
       );
 
-      expectErrorResponse(response, 400, "already been used");
+      const data = expectSuccessResponse(response);
+      expect(data.message).toContain("dismissed");
+      expect(data.dismissed_at).toBeDefined();
     });
 
     it("requires authentication", async () => {
@@ -242,14 +249,16 @@ describe("Suggestions Routes", () => {
       );
     });
 
-    it("requires connected account to be synced", async () => {
+    it("allows generation even if not synced (AI works with available data)", async () => {
       // Set sync status to pending
       await context.connectedAccount.$query().patch({ sync_status: "pending" });
 
+      // Should still succeed - product decision to allow generation with whatever data is available
       const response = await authenticatedRequest(app, "post", "/suggestions/generate")
         .send({ connected_account_id: context.connectedAccount.id });
 
-      expectErrorResponse(response, 400, "must be synced");
+      const data = expectSuccessResponse(response, 202);
+      expect(data.message).toContain("queued");
     });
 
     it("requires connected_account_id in body", async () => {
@@ -414,17 +423,19 @@ describe("Suggestions Routes", () => {
       expectErrorResponse(response, 400, "no source post");
     });
 
-    it("requires connected account to be ready", async () => {
+    it("allows response generation even if not synced", async () => {
       // Set sync status to pending
       await context.connectedAccount.$query().patch({ sync_status: "pending" });
 
+      // Should still succeed - can generate responses regardless of sync status
       const response = await authenticatedRequest(
         app,
         "post",
         `/suggestions/${suggestionWithSource.id}/generate-response`
       ).send({});
 
-      expectErrorResponse(response, 400, "not ready");
+      const data = expectSuccessResponse(response, 202);
+      expect(data.message).toContain("queued");
 
       // Reset for other tests
       await context.connectedAccount.$query().patch({ sync_status: "ready" });

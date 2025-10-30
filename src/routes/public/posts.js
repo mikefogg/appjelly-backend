@@ -138,6 +138,11 @@ router.post(
           return res.status(404).json(formatError("Connected account not found", 404));
         }
 
+        // Check if connection is ready (only for non-ghost accounts)
+        if (connection.platform !== "ghost" && connection.sync_status !== "ready") {
+          return res.status(400).json(formatError("Connected account is not ready. Please wait for sync to complete.", 400));
+        }
+
         platform = connection.platform;
       } else {
         // Use ghost account for standalone posts

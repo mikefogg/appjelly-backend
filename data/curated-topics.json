@@ -1,0 +1,122 @@
+[
+  {
+    "slug": "ai",
+    "name": "Artificial Intelligence",
+    "description": "Latest in AI/ML research, products, and developments",
+    "twitter_list_id": "1981074350477279304"
+  },
+  {
+    "slug": "crypto",
+    "name": "Crypto & Web3",
+    "description": "Cryptocurrency, blockchain, DeFi, and web3 developments",
+    "twitter_list_id": "1981074499098575013"
+  },
+  {
+    "slug": "startups",
+    "name": "Startups & Entrepreneurship",
+    "description": "Startup news, fundraising, founder stories, and business building",
+    "twitter_list_id": "1981074605629665468"
+  },
+  {
+    "slug": "dev",
+    "name": "Software Development",
+    "description": "Programming, software engineering, dev tools, and technical content",
+    "twitter_list_id": "1981074707605565798"
+  },
+  {
+    "slug": "design",
+    "name": "Design & UX",
+    "description": "Product design, UI/UX, visual design, and design thinking",
+    "twitter_list_id": "1981092777619255600"
+  },
+  {
+    "slug": "marketing",
+    "name": "Marketing & Growth",
+    "description": "Digital marketing, growth strategies, content marketing, and SEO",
+    "twitter_list_id": "1981074860227854562"
+  },
+  {
+    "slug": "productivity",
+    "name": "Productivity & Tools",
+    "description": "Productivity tips, tools, workflows, and personal optimization",
+    "twitter_list_id": "1981074958949192114"
+  },
+  {
+    "slug": "finance",
+    "name": "Finance & Investing",
+    "description": "Markets, investing, personal finance, and economic news",
+    "twitter_list_id": "1981075058220019834"
+  },
+  {
+    "slug": "tech",
+    "name": "Tech News",
+    "description": "General technology news, big tech companies, and industry trends",
+    "twitter_list_id": "1981075173273980945"
+  },
+  {
+    "slug": "saas",
+    "name": "SaaS & B2B",
+    "description": "SaaS products, B2B software, and enterprise technology",
+    "twitter_list_id": "1981075245407588834"
+  },
+  {
+    "slug": "product",
+    "name": "Product Management",
+    "description": "Product strategy, management, development, and best practices",
+    "twitter_list_id": "1981075328354427161"
+  },
+  {
+    "slug": "sales",
+    "name": "Sales & Business Development",
+    "description": "Sales strategies, BD, customer acquisition, and revenue growth",
+    "twitter_list_id": "1981075396113084673"
+  },
+  {
+    "slug": "leadership",
+    "name": "Leadership & Management",
+    "description": "Team management, leadership skills, and organizational culture",
+    "twitter_list_id": "1981075747381911794"
+  },
+  {
+    "slug": "creator",
+    "name": "Creator Economy",
+    "description": "Content creation, monetization, influencer economy, and personal brands",
+    "twitter_list_id": "1981075807054238106"
+  },
+  {
+    "slug": "gaming",
+    "name": "Gaming & Esports",
+    "description": "Video games, game development, esports, and gaming culture",
+    "twitter_list_id": "1981075863551549709"
+  },
+  {
+    "slug": "health",
+    "name": "Health & Fitness",
+    "description": "Health, fitness, wellness, nutrition, and biohacking",
+    "twitter_list_id": "1981075939770716538"
+  },
+  {
+    "slug": "climate",
+    "name": "Climate & Sustainability",
+    "description": "Climate tech, sustainability, clean energy, and environmental news",
+    "twitter_list_id": "1981075993969279444"
+  },
+  {
+    "slug": "science",
+    "name": "Science & Research",
+    "description": "Scientific discoveries, research, and academic developments",
+    "twitter_list_id": "1981076077582963175"
+  },
+  {
+    "slug": "education",
+    "name": "Education & Learning",
+    "description": "EdTech, online learning, education reform, and knowledge sharing",
+    "twitter_list_id": "1981076130690949416"
+  },
+  {
+    "slug": "remote",
+    "name": "Remote Work",
+    "description": "Remote work culture, distributed teams, and future of work",
+    "twitter_list_id": "1981076189008605222"
+  }
+]

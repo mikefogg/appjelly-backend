@@ -7,6 +7,7 @@ import oauthRoutes from "#src/routes/public/oauth.js";
 import connectionsRoutes from "#src/routes/public/connections.js";
 import suggestionsRoutes from "#src/routes/public/suggestions.js";
 import postsRoutes from "#src/routes/public/posts.js";
+import topicsRoutes from "#src/routes/public/topics.js";
 
 const router = express.Router();
 
@@ -21,6 +22,7 @@ router.use("/oauth", oauthRoutes);
 router.use("/connections", connectionsRoutes);
 router.use("/suggestions", suggestionsRoutes);
 router.use("/posts", postsRoutes);
+router.use("/topics", topicsRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({

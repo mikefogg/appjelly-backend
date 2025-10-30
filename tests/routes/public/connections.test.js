@@ -198,6 +198,9 @@ describe("Connections Routes", () => {
         "sync-network",
         expect.objectContaining({
           connectedAccountId: context.connectedAccount.id,
+        }),
+        expect.objectContaining({
+          jobId: expect.stringContaining("sync-network-"),
         })
       );
 
@@ -205,6 +208,9 @@ describe("Connections Routes", () => {
         "analyze-style",
         expect.objectContaining({
           connectedAccountId: context.connectedAccount.id,
+        }),
+        expect.objectContaining({
+          jobId: expect.stringContaining("analyze-style-"),
         })
       );
     });

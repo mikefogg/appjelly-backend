@@ -88,6 +88,9 @@ export const JOB_ANALYZE_STYLE = "analyze-style";
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
 export const JOB_GENERATE_POST = "generate-post";
+export const JOB_DISPATCH_CURATED_TOPICS = "dispatch-curated-topics";
+export const JOB_SYNC_CURATED_TOPIC = "sync-curated-topic";
+export const JOB_DIGEST_RECENT_TOPICS = "digest-recent-topics";
 
 // Organized job objects for backward compatibility
 export const SUBSCRIPTION_JOBS = {
@@ -151,6 +154,9 @@ export const GHOST_JOBS = {
   GENERATE_SUGGESTIONS: JOB_GENERATE_SUGGESTIONS,
   GENERATE_SUGGESTIONS_AUTOMATED: JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   GENERATE_POST: JOB_GENERATE_POST,
+  DISPATCH_CURATED_TOPICS: JOB_DISPATCH_CURATED_TOPICS,
+  SYNC_CURATED_TOPIC: JOB_SYNC_CURATED_TOPIC,
+  DIGEST_RECENT_TOPICS: JOB_DIGEST_RECENT_TOPICS,
 };
 
 // Queue health check utility

@@ -1066,6 +1066,299 @@ These rules are absolute requirements. Violating them is unacceptable.
 
 ---
 
+## ✅ 10. Curated Topics & Interests
+
+**Status**: ✅ IMPLEMENTED
+
+**Overview**: Users can select from Ghost-curated topic categories to personalize their suggestion feed. Ghost maintains Twitter lists for each topic (AI, Crypto, Startups, etc.) and syncs high-quality posts from these lists. AI then analyzes the posts and extracts trending topics which are used to generate personalized suggestions.
+
+### List Available Topics
+
+**Endpoint**: `GET /topics`
+
+**Implementation**: `src/routes/public/topics.js:19`
+
+**How it works**:
+```
+GET /topics
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns all active curated topics
+→ User can select which topics interest them
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "slug": "ai",
+      "name": "Artificial Intelligence",
+      "description": "Latest in AI/ML research, products, and developments",
+      "is_active": true
+    },
+    {
+      "id": "uuid",
+      "slug": "crypto",
+      "name": "Crypto & Web3",
+      "description": "Cryptocurrency, blockchain, DeFi, and web3 developments",
+      "is_active": true
+    }
+  ]
+}
+```
+
+**Available Topics**:
+- AI & Technology
+- Crypto & Web3
+- Startups & Entrepreneurship
+- Software Development
+- Design & UX
+- Marketing & Growth
+- Productivity & Tools
+- Finance & Investing
+- SaaS & B2B
+- Product Management
+- Sales & Business Development
+- Leadership & Management
+- Creator Economy
+- Gaming & Esports
+- Health & Fitness
+- Climate & Sustainability
+- Science & Research
+- Education & Learning
+- Remote Work
+- Tech News
+
+---
+
+### Get User's Selected Topics
+
+**Endpoint**: `GET /connections/:id/topics`
+
+**Implementation**: `src/routes/public/connections.js:854`
+
+**How it works**:
+```
+GET /connections/{connection_id}/topics
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns topics the user has selected
+→ Used to personalize suggestion generation
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "slug": "ai",
+      "name": "Artificial Intelligence",
+      "description": "Latest in AI/ML research, products, and developments",
+      "selected_at": "2025-10-21T12:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "slug": "crypto",
+      "name": "Crypto & Web3",
+      "description": "Cryptocurrency, blockchain, DeFi, and web3 developments",
+      "selected_at": "2025-10-21T12:00:00Z"
+    }
+  ]
+}
+```
+
+**Security**:
+- Connection must belong to authenticated user
+- Connection must belong to current app
+
+---
+
+### Update User's Topic Preferences
+
+**Endpoint**: `PUT /connections/:id/topics`
+
+**Implementation**: `src/routes/public/connections.js:892`
+
+**How it works**:
+```
+PUT /connections/{connection_id}/topics
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "topic_ids": ["uuid1", "uuid2", "uuid3"]
+}
+
+→ Replaces user's topic preferences
+→ AI suggestions will be based on these topics
+→ Minimum 1 topic, recommended 3-5 topics
+```
+
+**Request validation**:
+- `topic_ids`: Array of UUIDs, required
+- Each topic ID must exist and be active
+- Connection must belong to authenticated user
+- Can pass empty array to clear all selections
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "id": "uuid",
+      "slug": "ai",
+      "name": "Artificial Intelligence",
+      "description": "Latest in AI/ML research, products, and developments",
+      "selected_at": "2025-10-21T13:00:00Z"
+    },
+    {
+      "id": "uuid",
+      "slug": "startups",
+      "name": "Startups & Entrepreneurship",
+      "description": "Startup news, fundraising, founder stories, and business building",
+      "selected_at": "2025-10-21T13:00:00Z"
+    }
+  ]
+}
+```
+
+**Features**:
+- ✅ Complete replacement (not additive)
+- ✅ Validates all topic IDs before saving
+- ✅ Returns updated preferences
+- ✅ Triggers re-generation of suggestions based on new topics
+
+**Important**:
+- Users **must** select at least one topic before receiving suggestions
+- If no topics are selected, `POST /suggestions/generate` will return an error
+- Suggestions are generated from trending topics within user's selected categories
+
+---
+
+### Get Trending Topics (Preview/Debug)
+
+**Endpoint**: `GET /topics/:topicId/trending`
+
+**Implementation**: `src/routes/public/topics.js:52`
+
+**How it works**:
+```
+GET /topics/{topic_id}/trending
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns recent trending topics for a curated topic
+→ Useful for previewing what's trending in a category
+→ Shows what AI has extracted from recent posts
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "curated_topic": {
+      "id": "uuid",
+      "slug": "ai",
+      "name": "Artificial Intelligence",
+      "last_synced_at": "2025-10-21T12:30:00Z",
+      "last_digested_at": "2025-10-21T12:45:00Z"
+    },
+    "trending_topics": [
+      {
+        "id": "uuid",
+        "topic_name": "GPT-5 announcement",
+        "context": "OpenAI hints at Q2 2025 release for GPT-5 with significant improvements",
+        "mention_count": 45,
+        "total_engagement": 12500,
+        "detected_at": "2025-10-21T12:00:00Z",
+        "expires_at": "2025-10-23T12:00:00Z"
+      },
+      {
+        "id": "uuid",
+        "topic_name": "AI safety concerns",
+        "context": "Researchers raise concerns about AI alignment and safety protocols",
+        "mention_count": 32,
+        "total_engagement": 8400,
+        "detected_at": "2025-10-21T11:30:00Z",
+        "expires_at": "2025-10-23T11:30:00Z"
+      }
+    ]
+  }
+}
+```
+
+**Use Cases**:
+- Preview what's trending in a category before selecting it
+- Debug why certain suggestions were generated
+- Understand what topics are currently hot
+
+**Features**:
+- ✅ Shows AI-extracted trending topics from last 48 hours
+- ✅ Includes context/summary of what's happening
+- ✅ Displays engagement metrics
+- ✅ Useful for transparency and debugging
+
+---
+
+### How Curated Topics Work
+
+**Backend Architecture**:
+1. **Ghost maintains Twitter lists** - One list per topic category (e.g., "AI Leaders", "Crypto Inspo")
+2. **Automated sync** (every 30 minutes):
+   - Fetches latest posts from each Twitter list
+   - Stores posts in database
+3. **AI digest** (after each sync):
+   - Analyzes recent posts from each list
+   - Extracts 5-10 trending topics/themes
+   - Stores with context and sample posts
+4. **Suggestion generation**:
+   - Uses trending topics from user's selected categories
+   - AI generates personalized suggestions based on what's trending
+
+**Data Flow**:
+```
+User selects topics (AI, Crypto, Startups)
+         ↓
+Ghost syncs posts from those topic lists
+         ↓
+AI extracts trending themes from posts
+         ↓
+Suggestions generated from trending topics
+         ↓
+User sees relevant, timely content
+```
+
+**Benefits**:
+- ✅ High-quality, curated content sources
+- ✅ Real-time trending topics
+- ✅ Personalized to user's interests
+- ✅ No need for user to follow specific accounts
+- ✅ Ghost maintains and improves lists over time
+
+**Requirements**:
+- User must select at least one topic
+- Suggestions will fail if no topics are selected
+- Topics are synced automatically in the background
+- Trending topics expire after 48 hours
+
+---
+
 ## ✅ 6. Create and Manage Drafts
 
 **Status**: ✅ IMPLEMENTED
@@ -1272,6 +1565,14 @@ Headers:
 | List sample posts | ✅ | `GET /connections/:id/samples` | View all sample posts |
 | Update sample post | ✅ | `PATCH /connections/:id/samples/:sampleId` | Edit content, notes, or sort order |
 | Delete sample post | ✅ | `DELETE /connections/:id/samples/:sampleId` | Remove sample post |
+| List curated topics | ✅ | `GET /topics` | 20 topic categories (AI, Crypto, etc.) |
+| Get user's topics | ✅ | `GET /connections/:id/topics` | User's selected topic preferences |
+| Update user's topics | ✅ | `PUT /connections/:id/topics` | Set topic preferences (replaces all) |
+| Preview trending topics | ✅ | `GET /topics/:topicId/trending` | Debug/preview trending topics in category |
+| Create rule | ✅ | `POST /connections/:id/rules` | Persistent AI rules and feedback |
+| List rules | ✅ | `GET /connections/:id/rules` | View all rules with filtering |
+| Update rule | ✅ | `PATCH /connections/:id/rules/:ruleId` | Edit or deactivate rule |
+| Delete rule | ✅ | `DELETE /connections/:id/rules/:ruleId` | Remove rule |
 
 ---
 

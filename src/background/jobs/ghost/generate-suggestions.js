@@ -5,7 +5,7 @@
  * - Topics of interest (for Ghost platform)
  */
 
-import { ConnectedAccount, NetworkPost, PostSuggestion, WritingStyle, SamplePost, Rule } from "#src/models/index.js";
+import { ConnectedAccount, NetworkPost, PostSuggestion, WritingStyle, SamplePost, Rule, UserTopicPreference, TrendingTopic } from "#src/models/index.js";
 import suggestionGenerator from "#src/services/ai/suggestion-generator.js";
 import OpenAI from "openai";
 
@@ -197,50 +197,85 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
 async function generateNetworkBasedSuggestions(job, connectedAccount, suggestionCount) {
   const writingStyle = connectedAccount.writing_style;
 
-  // Step 1: Determine the timestamp to fetch posts from (incremental)
-  // Find the latest network post we've stored
-  const latestPost = await NetworkPost.query()
-    .where("connected_account_id", connectedAccount.id)
-    .orderBy("posted_at", "desc")
-    .first();
+  // Step 1: Check if user has selected curated topics (optional)
+  const userTopicIds = await UserTopicPreference.getUserTopicIds(connectedAccount.id);
+  const hasCuratedTopics = userTopicIds.length > 0;
 
-  // Default to 48 hours ago if no posts exist
-  const sinceTimestamp = latestPost
-    ? new Date(latestPost.posted_at)
-    : new Date(Date.now() - 48 * 60 * 60 * 1000);
+  console.log(`[Generate Suggestions] User has selected ${userTopicIds.length} curated topics`);
+  job.updateProgress(10);
 
-  console.log(`[Generate Suggestions] Fetching posts since: ${sinceTimestamp.toISOString()}`);
+  // Step 2: Get trending topics from curated topics (if any selected)
+  let trendingTopicsData = [];
+  if (hasCuratedTopics) {
+    console.log(`[Generate Suggestions] Getting trending topics from curated topics...`);
+    trendingTopicsData = await TrendingTopic.getTopTopicsForGeneration(userTopicIds, 20);
+    console.log(`[Generate Suggestions] Found ${trendingTopicsData.length} trending topics from curated topics`);
+  } else {
+    console.log(`[Generate Suggestions] No curated topics selected, will use topics_of_interest field instead`);
+  }
 
-  // Step 2: Get trending topics from posts since last fetch
-  console.log(`[Generate Suggestions] Getting trending topics...`);
-  const hoursBack = Math.ceil((Date.now() - sinceTimestamp.getTime()) / (1000 * 60 * 60));
-  const trendingTopics = await NetworkPost.getTrendingTopics(connectedAccount.id, hoursBack, 10);
-
-  console.log(`[Generate Suggestions] Found ${trendingTopics.length} trending topics`);
   job.updateProgress(20);
 
-  // Step 3: Get high-engagement posts from network (same time window as trending topics)
-  console.log(`[Generate Suggestions] Getting high-engagement posts...`);
-  const postsStartTime = new Date(Date.now() - hoursBack * 60 * 60 * 1000);
-  const trendingPosts = await NetworkPost.query()
-    .where("connected_account_id", connectedAccount.id)
-    .where("posted_at", ">", postsStartTime.toISOString())
-    .whereNotNull("engagement_score")
-    .orderBy("engagement_score", "desc")
-    .limit(20);
+  // Step 3: Get sample posts from trending topics (if we have trending topics)
+  let trendingPosts = [];
+  if (trendingTopicsData.length > 0) {
+    console.log(`[Generate Suggestions] Getting sample posts from trending topics...`);
+    const allPostIds = [];
 
-  console.log(`[Generate Suggestions] Found ${trendingPosts.length} trending posts`);
+    // Collect all sample post IDs from trending topics
+    for (const trendingTopic of trendingTopicsData) {
+      if (trendingTopic.sample_post_ids && Array.isArray(trendingTopic.sample_post_ids)) {
+        allPostIds.push(...trendingTopic.sample_post_ids);
+      }
+    }
+
+    // Remove duplicates
+    const uniquePostIds = [...new Set(allPostIds)];
+
+    // Fetch the actual posts
+    if (uniquePostIds.length > 0) {
+      trendingPosts = await NetworkPost.query()
+        .whereIn("id", uniquePostIds)
+        .orderBy("engagement_score", "desc")
+        .limit(20);
+    }
+
+    console.log(`[Generate Suggestions] Found ${trendingPosts.length} sample posts from trending topics`);
+  }
   job.updateProgress(45);
+
+  // Convert trending topics to the format expected by AI
+  const trendingTopics = trendingTopicsData.map(t => ({
+    topic: t.topic_name,
+    mention_count: t.mention_count,
+    total_engagement: parseFloat(t.total_engagement || 0),
+    context: t.context, // Added context from AI digest
+  }));
 
   // Get active rules for this connected account
   const rules = await Rule.getActiveRules(connectedAccount.id);
   console.log(`[Generate Suggestions] Found ${rules.length} active rules`);
+
+  // Check if we have enough data to generate suggestions
+  const hasTopicsOfInterest = connectedAccount.topics_of_interest && connectedAccount.topics_of_interest.trim().length > 0;
+  const hasSamplePosts = connectedAccount.sample_posts && connectedAccount.sample_posts.length > 0;
+  const hasAnyTopicSource = hasCuratedTopics || hasTopicsOfInterest;
+
+  if (!hasAnyTopicSource && !hasSamplePosts) {
+    console.log(`[Generate Suggestions] No topic sources available (need curated topics OR topics_of_interest OR sample posts)`);
+    return {
+      success: false,
+      message: "Please add topics of interest, select curated topics, or add sample posts to generate suggestions.",
+    };
+  }
 
   // Step 4: Generate new suggestions with AI
   console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
 
   // Log input data for debugging
   console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
+  console.log(`[Generate Suggestions] Topics of Interest: ${hasTopicsOfInterest ? connectedAccount.topics_of_interest : 'none'}`);
+  console.log(`[Generate Suggestions] Curated Topics Selected: ${hasCuratedTopics ? userTopicIds.length : 0}`);
   console.log(`[Generate Suggestions] Trending Topics (${trendingTopics.length}):`);
   trendingTopics.forEach((t, idx) => {
     console.log(`  [${idx}] "${t.topic}" (${t.mention_count} mentions, ${t.total_engagement} engagement)`);
@@ -268,6 +303,7 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
       total_engagement: t.total_engagement,
       last_mentioned: t.last_mentioned,
     })),
+    topics: connectedAccount.topics_of_interest, // Add user's topics_of_interest text field
     writingStyle: writingStyle ? {
       tone: writingStyle.tone,
       avg_length: writingStyle.avg_length,

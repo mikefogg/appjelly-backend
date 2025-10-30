@@ -3,7 +3,7 @@
  * Generates a social media post from a user prompt
  */
 
-import { Artifact, ConnectedAccount } from "#src/models/index.js";
+import { Artifact, ConnectedAccount, Rule } from "#src/models/index.js";
 import postGenerator from "#src/services/ai/post-generator.js";
 
 export const JOB_GENERATE_POST = "generate-post";
@@ -62,10 +62,11 @@ export default async function generatePost(job) {
 
     job.updateProgress(20);
 
-    // Get writing style, voice, and sample posts
+    // Get writing style, voice, sample posts, and rules
     const writingStyle = connected_account?.writing_style;
     const voice = connected_account?.voice;
     const samplePosts = connected_account?.sample_posts || [];
+    const rules = await Rule.getActiveRules(connected_account.id);
 
     console.log(`[Generate Post] Generating from prompt: "${prompt.substring(0, 50)}..."`);
     console.log(`[Generate Post] Angle: ${angle}, Length: ${length}, Max chars: ${maxLength}`);
@@ -78,6 +79,9 @@ export default async function generatePost(job) {
     if (writingStyle) {
       console.log(`[Generate Post] Using writing style: ${writingStyle.tone}`);
     }
+    if (rules.length > 0) {
+      console.log(`[Generate Post] Using ${rules.length} rules`);
+    }
 
     // Generate post
     const result = await postGenerator.generatePost(prompt, {
@@ -89,6 +93,11 @@ export default async function generatePost(job) {
       samplePosts: samplePosts.map(sp => ({
         content: sp.content,
         notes: sp.notes,
+      })),
+      rules: rules.map(r => ({
+        rule_type: r.rule_type,
+        content: r.content,
+        priority: r.priority,
       })),
       writingStyle: writingStyle ? {
         tone: writingStyle.tone,

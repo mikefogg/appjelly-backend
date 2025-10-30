@@ -1,7 +1,7 @@
 import express from "express";
 import { param, body, query } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { ConnectedAccount, SamplePost, Rule } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
@@ -846,6 +846,106 @@ router.delete(
     } catch (error) {
       console.error("Delete rule error:", error);
       return res.status(500).json(formatError("Failed to delete rule"));
+    }
+  }
+);
+
+// GET /connections/:id/topics - Get user's selected topic preferences
+router.get(
+  "/:id/topics",
+  requireAppContext,
+  requireAuth,
+  connectionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Get user's topic preferences
+      const preferences = await UserTopicPreference.getUserTopics(req.params.id);
+
+      const data = preferences.map(pref => ({
+        id: pref.curated_topic.id,
+        slug: pref.curated_topic.slug,
+        name: pref.curated_topic.name,
+        description: pref.curated_topic.description,
+        selected_at: pref.created_at,
+      }));
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Get user topics error:", error);
+      return res.status(500).json(formatError("Failed to retrieve user topics"));
+    }
+  }
+);
+
+// PUT /connections/:id/topics - Update user's topic preferences
+router.put(
+  "/:id/topics",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    body("topic_ids")
+      .isArray()
+      .withMessage("topic_ids must be an array"),
+    body("topic_ids.*")
+      .isUUID()
+      .withMessage("Each topic_id must be a valid UUID"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { topic_ids } = req.body;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Verify all topic IDs exist and are active
+      if (topic_ids.length > 0) {
+        const topics = await CuratedTopic.query()
+          .whereIn("id", topic_ids)
+          .where("is_active", true);
+
+        if (topics.length !== topic_ids.length) {
+          return res.status(400).json(formatError("One or more invalid topic IDs", 400));
+        }
+      }
+
+      // Update user's topic preferences
+      await UserTopicPreference.setUserTopics(req.params.id, topic_ids);
+
+      // Fetch updated preferences
+      const preferences = await UserTopicPreference.getUserTopics(req.params.id);
+
+      const data = preferences.map(pref => ({
+        id: pref.curated_topic.id,
+        slug: pref.curated_topic.slug,
+        name: pref.curated_topic.name,
+        description: pref.curated_topic.description,
+        selected_at: pref.created_at,
+      }));
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Update user topics error:", error);
+      return res.status(500).json(formatError("Failed to update user topics"));
     }
   }
 );
