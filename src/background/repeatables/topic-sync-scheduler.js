@@ -1,20 +1,12 @@
+import chalk from "chalk";
 import { ghostQueue, JOB_DISPATCH_CURATED_TOPICS } from "#src/background/queues/index.js";
+import { clearAllRepeatableJobs } from "#src/utils/redis.js";
 
-console.log("⏰ Setting up curated topics sync scheduler...");
+const key = "Topic Sync Scheduler";
 
-// Schedule dispatch-curated-topics to run every 30 minutes
-const scheduleTopicSync = async () => {
+export const startScheduledJobs = async () => {
   try {
-    // Remove any existing scheduled jobs for this type
-    const existingJobs = await ghostQueue.getRepeatableJobs();
-    const topicSyncJobs = existingJobs.filter(job => job.name === JOB_DISPATCH_CURATED_TOPICS);
-
-    for (const job of topicSyncJobs) {
-      await ghostQueue.removeRepeatableByKey(job.key);
-      console.log("🗑️ Removed existing topic sync schedule");
-    }
-
-    // Add new repeatable job - every 30 minutes
+    // Add repeatable job - every 30 minutes
     await ghostQueue.add(
       JOB_DISPATCH_CURATED_TOPICS,
       {
@@ -30,23 +22,26 @@ const scheduleTopicSync = async () => {
       }
     );
 
-    console.log("✅ Scheduled dispatch-curated-topics job (every 30 minutes)");
+    console.log(chalk.green("[%s] Scheduled dispatch-curated-topics job (every 30 minutes)"), key);
   } catch (error) {
-    console.error("❌ Failed to schedule topic sync:", error);
+    console.error(chalk.red("[%s] Failed to schedule topic sync"), key, error);
+    throw error;
   }
 };
 
-// Initialize schedule
-const setupTopicSyncSchedule = async () => {
-  await scheduleTopicSync();
-  console.log("✅ Topic sync schedule configured");
-};
+export const resetScheduledJobs = async () => {
+  try {
+    // Clear all of our repeatables first
+    await clearAllRepeatableJobs(ghostQueue);
+    console.log(chalk.dim("[%s] Cleared repeatable jobs..."), key);
 
-// Run setup
-setupTopicSyncSchedule().catch(error => {
-  console.error("❌ Failed to setup topic sync schedule:", error);
-  process.exit(1);
-});
+    // Small delay to ensure Redis consistency after clearing
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } catch (error) {
+    console.error(chalk.red("[%s] Failed to reset scheduled jobs"), key, error);
+    throw error;
+  }
+};
 
 // Helper to manually trigger topic dispatch
 export const triggerManualTopicDispatch = async () => {
@@ -83,5 +78,3 @@ export const getScheduledTopicSyncJobs = async () => {
     return [];
   }
 };
-
-console.log("✅ Topic sync scheduler setup complete");

@@ -1,21 +1,13 @@
+import chalk from "chalk";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_SUGGESTIONS_AUTOMATED } from "#src/background/queues/index.js";
+import { clearAllRepeatableJobs } from "#src/utils/redis.js";
 import { ConnectedAccount } from "#src/models/index.js";
 
-console.log("⏰ Setting up suggestion generation schedulers...");
+const key = "Suggestion Scheduler";
 
-// Schedule automatic suggestion generation to run every hour
-const scheduleHourlySuggestions = async () => {
+export const startScheduledJobs = async () => {
   try {
-    // Remove any existing scheduled jobs for this type
-    const existingJobs = await ghostQueue.getRepeatableJobs();
-    const suggestionJobs = existingJobs.filter(job => job.name === JOB_GENERATE_SUGGESTIONS_AUTOMATED);
-
-    for (const job of suggestionJobs) {
-      await ghostQueue.removeRepeatableByKey(job.key);
-      console.log("🗑️ Removed existing hourly suggestion generation schedule");
-    }
-
-    // Add new repeatable job - every hour
+    // Add repeatable job - every hour
     await ghostQueue.add(
       JOB_GENERATE_SUGGESTIONS_AUTOMATED,
       {
@@ -31,24 +23,26 @@ const scheduleHourlySuggestions = async () => {
       }
     );
 
-    console.log("✅ Scheduled hourly suggestion generation job");
+    console.log(chalk.green("[%s] Scheduled hourly suggestion generation job"), key);
   } catch (error) {
-    console.error("❌ Failed to schedule hourly suggestions:", error);
+    console.error(chalk.red("[%s] Failed to schedule suggestions"), key, error);
+    throw error;
   }
 };
 
-// Schedule all suggestion jobs
-const setupSuggestionSchedules = async () => {
-  await scheduleHourlySuggestions();
+export const resetScheduledJobs = async () => {
+  try {
+    // Clear all of our repeatables first
+    await clearAllRepeatableJobs(ghostQueue);
+    console.log(chalk.dim("[%s] Cleared repeatable jobs..."), key);
 
-  console.log("✅ All suggestion schedules configured");
+    // Small delay to ensure Redis consistency after clearing
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } catch (error) {
+    console.error(chalk.red("[%s] Failed to reset scheduled jobs"), key, error);
+    throw error;
+  }
 };
-
-// Initialize schedules
-setupSuggestionSchedules().catch(error => {
-  console.error("❌ Failed to setup suggestion schedules:", error);
-  process.exit(1);
-});
 
 // Helper function to manually trigger suggestion generation for all accounts
 export const triggerManualSuggestionsForAll = async () => {
@@ -105,5 +99,3 @@ export const getScheduledSuggestionJobs = async () => {
     return [];
   }
 };
-
-console.log("✅ Suggestion scheduler setup complete");

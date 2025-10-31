@@ -1,7 +1,7 @@
 import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import { redisOpts } from "#src/utils/redis.js";
-import { 
-  QUEUE_CLEANUP, 
+import {
+  QUEUE_CLEANUP,
   JOB_CLEANUP_EXPIRED_MEDIA,
   JOB_CLEANUP_OLD_ARTIFACTS,
   JOB_CLEANUP_ORPHANED_DATA
@@ -9,6 +9,9 @@ import {
 
 // Import job processors
 import cleanupExpiredMedia from "#src/background/jobs/cleanup/expired-media-cleanup.js";
+
+// Import schedulers
+import * as cleanupScheduler from "#src/background/repeatables/cleanup-scheduler.js";
 
 console.log("🧹 Starting cleanup worker manager...");
 
@@ -83,6 +86,20 @@ const shutdown = async () => {
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
+
+// Start repeating jobs
+const startSchedulers = async () => {
+  try {
+    console.log("⏰ Creating repeating jobs...");
+    await cleanupScheduler.resetScheduledJobs();
+    await cleanupScheduler.startScheduledJobs();
+    console.log("✅ Repeating jobs configured");
+  } catch (error) {
+    console.error("❌ Failed to start schedulers:", error);
+  }
+};
+
+startSchedulers();
 
 console.log("✅ Cleanup worker manager started successfully");
 console.log(`   - Queue: ${QUEUE_CLEANUP}`);

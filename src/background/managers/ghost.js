@@ -22,6 +22,10 @@ import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-t
 import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
 
+// Import schedulers
+import * as suggestionScheduler from "#src/background/repeatables/suggestion-scheduler.js";
+import * as topicSyncScheduler from "#src/background/repeatables/topic-sync-scheduler.js";
+
 console.log("👻 Starting Ghost worker manager...");
 
 const worker = new WorkerPro(
@@ -132,6 +136,22 @@ const shutdown = async () => {
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
+
+// Start repeating jobs
+const startSchedulers = async () => {
+  try {
+    console.log("⏰ Creating repeating jobs...");
+    await suggestionScheduler.resetScheduledJobs();
+    await topicSyncScheduler.resetScheduledJobs();
+    await suggestionScheduler.startScheduledJobs();
+    await topicSyncScheduler.startScheduledJobs();
+    console.log("✅ Repeating jobs configured");
+  } catch (error) {
+    console.error("❌ Failed to start schedulers:", error);
+  }
+};
+
+startSchedulers();
 
 console.log("✅ Ghost worker manager started successfully");
 console.log(`   - Queue: ${QUEUE_GHOST}`);

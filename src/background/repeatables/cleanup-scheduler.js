@@ -1,20 +1,12 @@
+import chalk from "chalk";
 import { cleanupQueue, JOB_CLEANUP_EXPIRED_MEDIA } from "#src/background/queues/index.js";
+import { clearAllRepeatableJobs } from "#src/utils/redis.js";
 
-console.log("⏰ Setting up cleanup job schedulers...");
+const key = "Cleanup Scheduler";
 
-// Schedule expired media cleanup to run every 4 hours
-const scheduleExpiredMediaCleanup = async () => {
+export const startScheduledJobs = async () => {
   try {
-    // Remove any existing scheduled jobs for this type
-    const existingJobs = await cleanupQueue.getRepeatableJobs();
-    const expiredMediaJobs = existingJobs.filter(job => job.name === JOB_CLEANUP_EXPIRED_MEDIA);
-    
-    for (const job of expiredMediaJobs) {
-      await cleanupQueue.removeRepeatableByKey(job.key);
-      console.log("🗑️ Removed existing expired media cleanup schedule");
-    }
-
-    // Add new repeatable job - every 4 hours
+    // Add repeatable job - every 4 hours
     await cleanupQueue.add(
       JOB_CLEANUP_EXPIRED_MEDIA,
       {
@@ -31,25 +23,26 @@ const scheduleExpiredMediaCleanup = async () => {
       }
     );
 
-    console.log("✅ Scheduled expired media cleanup job (every 4 hours)");
+    console.log(chalk.green("[%s] Scheduled expired media cleanup job (every 4 hours)"), key);
   } catch (error) {
-    console.error("❌ Failed to schedule expired media cleanup:", error);
+    console.error(chalk.red("[%s] Failed to schedule cleanup"), key, error);
+    throw error;
   }
 };
 
-// Schedule all cleanup jobs
-const setupCleanupSchedules = async () => {
-  await scheduleExpiredMediaCleanup();
-  
-  // Add more scheduled cleanup jobs here in the future
-  console.log("✅ All cleanup schedules configured");
-};
+export const resetScheduledJobs = async () => {
+  try {
+    // Clear all of our repeatables first
+    await clearAllRepeatableJobs(cleanupQueue);
+    console.log(chalk.dim("[%s] Cleared repeatable jobs..."), key);
 
-// Initialize schedules
-setupCleanupSchedules().catch(error => {
-  console.error("❌ Failed to setup cleanup schedules:", error);
-  process.exit(1);
-});
+    // Small delay to ensure Redis consistency after clearing
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } catch (error) {
+    console.error(chalk.red("[%s] Failed to reset scheduled jobs"), key, error);
+    throw error;
+  }
+};
 
 // Helper function to manually trigger cleanup
 export const triggerManualCleanup = async (jobType = JOB_CLEANUP_EXPIRED_MEDIA, options = {}) => {
@@ -83,5 +76,3 @@ export const getScheduledCleanupJobs = async () => {
     return [];
   }
 };
-
-console.log("✅ Cleanup scheduler setup complete");
