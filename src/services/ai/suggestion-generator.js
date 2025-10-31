@@ -37,6 +37,7 @@ class SuggestionGeneratorService {
   async generateInterestBasedSuggestions(options = {}) {
     const {
       topics = "",
+      trendingTopics = [],
       voice = null,
       samplePosts = [],
       rules = [],
@@ -54,7 +55,7 @@ class SuggestionGeneratorService {
       }));
 
       const systemPrompt = promptBuilder.buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules);
-      const userPrompt = this.buildInterestBasedPrompt(topics, suggestionCount, suggestionsConfig);
+      const userPrompt = this.buildInterestBasedPrompt(topics, trendingTopics, suggestionCount, suggestionsConfig);
 
       const response = await openai.chat.completions.create({
         model: this.model,
@@ -185,12 +186,18 @@ class SuggestionGeneratorService {
   /**
    * Build prompt for interest-based suggestions
    */
-  buildInterestBasedPrompt(topics, count, suggestionsConfig) {
+  buildInterestBasedPrompt(topics, trendingTopics, count, suggestionsConfig) {
     let prompt = `Generate ${count} post suggestions based on these topics the user likes to write about:
 
-${topics}
+${topics}`;
 
-Each suggestion should follow these specific angles and lengths:
+    // Add trending topics if available
+    if (trendingTopics && trendingTopics.length > 0) {
+      prompt += `\n\nHere are some trending topics related to these areas (use for inspiration):
+${trendingTopics.map((t, i) => `${i + 1}. ${t.topic} (${t.mention_count} mentions${t.context ? `, context: ${t.context}` : ''})`).join('\n')}`;
+    }
+
+    prompt += `\n\nEach suggestion should follow these specific angles and lengths:
 ${suggestionsConfig.map((config, i) => `${i + 1}. Angle: "${config.angle}", Length: "${config.length}"`).join('\n')}
 
 Angle definitions:

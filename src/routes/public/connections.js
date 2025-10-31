@@ -24,22 +24,25 @@ router.get(
         res.locals.app.id
       );
 
-      const data = connections.map(conn => ({
-        id: conn.id,
-        platform: conn.platform,
-        platform_user_id: conn.platform_user_id,
-        username: conn.username,
-        display_name: conn.display_name,
-        profile_data: conn.profile_data,
-        sync_status: conn.sync_status,
-        last_synced_at: conn.last_synced_at,
-        last_analyzed_at: conn.last_analyzed_at,
-        is_active: conn.is_active,
-        is_default: conn.is_default,
-        is_deletable: conn.is_deletable,
-        voice: conn.voice,
-        topics_of_interest: conn.topics_of_interest,
-        created_at: conn.created_at,
+      // Get sync info (includes completeness score) for all connections in parallel
+      const data = await Promise.all(connections.map(async (conn) => {
+        const sync_info = await conn.getSyncInfo();
+
+        return {
+          id: conn.id,
+          platform: conn.platform,
+          platform_user_id: conn.platform_user_id,
+          username: conn.username,
+          display_name: conn.display_name,
+          profile_data: conn.profile_data,
+          is_active: conn.is_active,
+          is_default: conn.is_default,
+          is_deletable: conn.is_deletable,
+          voice: conn.voice,
+          topics_of_interest: conn.topics_of_interest,
+          sync_info,
+          created_at: conn.created_at,
+        };
       }));
 
       return res.status(200).json(successResponse(data));
@@ -63,11 +66,15 @@ router.get(
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
-        .withGraphFetched("[writing_style]");
+        .withGraphFetched("[writing_style, sample_posts]");
 
       if (!connection) {
         return res.status(404).json(formatError("Connection not found", 404));
       }
+
+      // Get completeness metrics and sync info
+      const recommendations = await connection.getCompletionRecommendations();
+      const sync_info = await connection.getSyncInfo();
 
       const data = {
         id: connection.id,
@@ -76,14 +83,13 @@ router.get(
         username: connection.username,
         display_name: connection.display_name,
         profile_data: connection.profile_data,
-        sync_status: connection.sync_status,
-        last_synced_at: connection.last_synced_at,
-        last_analyzed_at: connection.last_analyzed_at,
         is_active: connection.is_active,
         is_default: connection.is_default,
         is_deletable: connection.is_deletable,
         voice: connection.voice,
         topics_of_interest: connection.topics_of_interest,
+        recommendations,
+        sync_info,
         writing_style: connection.writing_style ? {
           tone: connection.writing_style.tone,
           avg_length: connection.writing_style.avg_length,
@@ -91,6 +97,7 @@ router.get(
           confidence_score: connection.writing_style.confidence_score,
           sample_size: connection.writing_style.sample_size,
         } : null,
+        sample_posts_count: connection.sample_posts?.length || 0,
         created_at: connection.created_at,
       };
 
@@ -102,7 +109,7 @@ router.get(
   }
 );
 
-// GET /connections/:id/status - Check sync status
+// GET /connections/:id/status - Check sync status (lightweight endpoint)
 router.get(
   "/:id/status",
   requireAppContext,
@@ -114,18 +121,17 @@ router.get(
       const connection = await ConnectedAccount.query()
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+        .where("app_id", res.locals.app.id)
+        .withGraphFetched("sample_posts");
 
       if (!connection) {
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
+      const sync_info = await connection.getSyncInfo();
+
       const data = {
-        sync_status: connection.sync_status,
-        last_synced_at: connection.last_synced_at,
-        last_analyzed_at: connection.last_analyzed_at,
-        needs_sync: connection.needsSync(),
-        needs_analysis: connection.needsAnalysis(),
+        ...sync_info,
         error: connection.metadata?.last_error || null,
       };
 

@@ -53,12 +53,35 @@ export default async function generateSuggestions(job) {
 async function generateInterestBasedSuggestions(job, connectedAccount, suggestionCount) {
   let { topics_of_interest, voice, sample_posts } = connectedAccount;
 
-  // Check if we have topics of interest
-  const hasTopics = topics_of_interest && topics_of_interest.trim().length > 0;
+  // Step 1: Check if user has selected curated topics (primary method)
+  const userTopicIds = await UserTopicPreference.getUserTopicIds(connectedAccount.id);
+  const hasCuratedTopics = userTopicIds.length > 0;
+
+  console.log(`[Generate Suggestions] User has selected ${userTopicIds.length} curated topics`);
+
+  // Step 2: Get trending topics from curated topics (if any selected)
+  let trendingTopicsData = [];
+  if (hasCuratedTopics) {
+    console.log(`[Generate Suggestions] Getting trending topics from curated topics...`);
+    trendingTopicsData = await TrendingTopic.getTopTopicsForGeneration(userTopicIds, 20);
+    console.log(`[Generate Suggestions] Found ${trendingTopicsData.length} trending topics from curated topics`);
+  }
+
+  // Convert trending topics to the format expected by AI
+  const trendingTopics = trendingTopicsData.map(t => ({
+    topic: t.topic_name,
+    mention_count: t.mention_count,
+    total_engagement: parseFloat(t.total_engagement || 0),
+    context: t.context,
+  }));
+
+  // Step 3: Check topic sources (curated, custom text, or samples)
+  const hasCustomTopics = topics_of_interest && topics_of_interest.trim().length > 0;
   const hasSamples = sample_posts && sample_posts.length > 0;
+  const hasAnyTopicSource = hasCuratedTopics || hasCustomTopics;
 
   // If no topics but we have sample posts, infer topics from samples
-  if (!hasTopics && hasSamples) {
+  if (!hasAnyTopicSource && hasSamples) {
     console.log(`[Generate Suggestions] No topics defined, inferring from ${sample_posts.length} sample posts...`);
 
     try {
@@ -101,16 +124,27 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
     }
   }
 
-  // Check if we have topics now (either existing or inferred)
-  if (!topics_of_interest || topics_of_interest.trim().length === 0) {
-    console.log(`[Generate Suggestions] No topics of interest and no sample posts to infer from`);
+  // Step 4: Verify we have at least one topic source
+  if (!hasCuratedTopics && !topics_of_interest && !hasSamples) {
+    console.log(`[Generate Suggestions] No topic sources available (need curated topics OR topics_of_interest OR sample posts)`);
     return {
       success: false,
-      message: "Need either topics_of_interest or sample posts to generate suggestions. Please add topics or sample posts.",
+      message: "Please select curated topics, add topics of interest, or add sample posts to generate suggestions.",
     };
   }
 
-  console.log(`[Generate Suggestions] Topics: ${topics_of_interest}`);
+  // Log what we're using
+  console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
+  console.log(`[Generate Suggestions] Curated Topics Selected: ${hasCuratedTopics ? userTopicIds.length : 0}`);
+  console.log(`[Generate Suggestions] Custom Topics of Interest: ${hasCustomTopics ? topics_of_interest : 'none'}`);
+  console.log(`[Generate Suggestions] Trending Topics (${trendingTopics.length}):`);
+  trendingTopics.forEach((t, idx) => {
+    console.log(`  [${idx}] "${t.topic}" (${t.mention_count} mentions, ${t.total_engagement} engagement)`);
+  });
+  console.log(`[Generate Suggestions] Sample Posts: ${sample_posts?.length || 0}`);
+  console.log(`[Generate Suggestions] Voice: ${voice ? voice.substring(0, 100) + '...' : 'none'}`);
+  console.log(`[Generate Suggestions] ========================`);
+
   job.updateProgress(40);
 
   // Get active rules for this connected account
@@ -120,7 +154,8 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
   // Generate suggestions using topics + voice + samples + rules
   console.log(`[Generate Suggestions] Generating ${suggestionCount} interest-based suggestions...`);
   const result = await suggestionGenerator.generateInterestBasedSuggestions({
-    topics: topics_of_interest,
+    topics: topics_of_interest || "",
+    trendingTopics: trendingTopics,
     voice: voice,
     samplePosts: sample_posts?.map(sp => ({
       content: sp.content,
@@ -150,6 +185,9 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
       // Build metadata for interest-based suggestions
       const metadata = {
         generation_type: "interest_based",
+        had_curated_topics: hasCuratedTopics,
+        curated_topics_count: userTopicIds.length,
+        trending_topics_count: trendingTopics.length,
         topics_of_interest: topics_of_interest,
         had_voice: !!(voice && voice.trim().length > 0),
         had_samples: !!(sample_posts && sample_posts.length > 0),
@@ -187,6 +225,8 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
     success: true,
     suggestions_generated: savedCount,
     generation_type: "interest_based",
+    curated_topics_count: userTopicIds.length,
+    trending_topics_count: trendingTopics.length,
     completed_at: new Date().toISOString(),
   };
 }

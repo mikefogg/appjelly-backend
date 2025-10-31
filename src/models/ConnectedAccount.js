@@ -4,10 +4,14 @@ import App from "#src/models/App.js";
 import NetworkProfile from "#src/models/NetworkProfile.js";
 import NetworkPost from "#src/models/NetworkPost.js";
 import PostSuggestion from "#src/models/PostSuggestion.js";
+import UserTopicPreference from "#src/models/UserTopicPreference.js";
 import WritingStyle from "#src/models/WritingStyle.js";
 import UserPostHistory from "#src/models/UserPostHistory.js";
 import SamplePost from "#src/models/SamplePost.js";
-import { decrypt } from "#src/helpers/encryption.js";
+import { decrypt, encrypt } from "#src/helpers/encryption.js";
+import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
+import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
+import linkedinOAuth from "#src/services/oauth/LinkedInOAuthService.js";
 
 class ConnectedAccount extends BaseModel {
   static get tableName() {
@@ -22,7 +26,10 @@ class ConnectedAccount extends BaseModel {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
-        platform: { type: "string", enum: ["twitter", "facebook", "linkedin", "threads", "ghost"] },
+        platform: {
+          type: "string",
+          enum: ["twitter", "facebook", "linkedin", "threads", "ghost"],
+        },
         platform_user_id: { type: ["string", "null"], minLength: 1 },
         username: { type: "string", minLength: 1 },
         display_name: { type: ["string", "null"] },
@@ -35,7 +42,7 @@ class ConnectedAccount extends BaseModel {
         sync_status: {
           type: "string",
           enum: ["pending", "syncing", "ready", "error"],
-          default: "pending"
+          default: "pending",
         },
         is_active: { type: "boolean", default: true },
         is_default: { type: "boolean", default: false },
@@ -228,13 +235,15 @@ class ConnectedAccount extends BaseModel {
 
   needsSync(hoursThreshold = 24) {
     if (!this.last_synced_at) return true;
-    const hoursSinceSync = (new Date() - new Date(this.last_synced_at)) / (1000 * 60 * 60);
+    const hoursSinceSync =
+      (new Date() - new Date(this.last_synced_at)) / (1000 * 60 * 60);
     return hoursSinceSync >= hoursThreshold;
   }
 
   needsAnalysis(daysThreshold = 7) {
     if (!this.last_analyzed_at) return true;
-    const daysSinceAnalysis = (new Date() - new Date(this.last_analyzed_at)) / (1000 * 60 * 60 * 24);
+    const daysSinceAnalysis =
+      (new Date() - new Date(this.last_analyzed_at)) / (1000 * 60 * 60 * 24);
     return daysSinceAnalysis >= daysThreshold;
   }
 
@@ -250,7 +259,11 @@ class ConnectedAccount extends BaseModel {
         const threshold = new Date();
         threshold.setHours(threshold.getHours() - hoursThreshold);
         builder.where((qb) => {
-          qb.whereNull("last_synced_at").orWhere("last_synced_at", "<", threshold.toISOString());
+          qb.whereNull("last_synced_at").orWhere(
+            "last_synced_at",
+            "<",
+            threshold.toISOString()
+          );
         });
       },
     };
@@ -293,6 +306,132 @@ class ConnectedAccount extends BaseModel {
   }
 
   /**
+   * Calculate completeness score (0-100)
+   * Measures how personalized the account is for generating quality content
+   */
+  async getCompletenessScore() {
+    // Check curated topics
+    const userTopicIds = await UserTopicPreference.getUserTopicIds(this.id);
+    const hasCuratedTopics = userTopicIds.length > 0;
+
+    // Check custom topics
+    const hasCustomTopics =
+      this.topics_of_interest && this.topics_of_interest.trim().length > 0;
+    const hasTopics = hasCuratedTopics || hasCustomTopics;
+
+    // Check other data
+    const sampleCount = this.sample_posts?.length || 0;
+    const hasVoice = this.voice && this.voice.trim().length > 0;
+
+    // Must have topics OR samples to work at all
+    if (!hasTopics && sampleCount === 0) return 0;
+
+    // Basic: has topics or samples (can generate)
+    if (!hasVoice) return 33;
+
+    // Good: has topics + voice (personalized)
+    if (sampleCount < 3) return 66;
+
+    // Excellent: has everything (fully personalized)
+    return 100;
+  }
+
+  /**
+   * Get recommendations for improving completeness
+   */
+  async getCompletionRecommendations() {
+    const score = await this.getCompletenessScore();
+    const recommendations = [];
+
+    const userTopicIds = await UserTopicPreference.getUserTopicIds(this.id);
+    const hasCuratedTopics = userTopicIds.length > 0;
+    const hasCustomTopics =
+      this.topics_of_interest && this.topics_of_interest.trim().length > 0;
+    const hasTopics = hasCuratedTopics || hasCustomTopics;
+    const sampleCount = this.sample_posts?.length || 0;
+    const hasVoice = this.voice && this.voice.trim().length > 0;
+
+    if (score === 0) {
+      recommendations.push({
+        priority: "critical",
+        action: "select_topics",
+        title: "Select topics of interest",
+        description:
+          "Choose topics you want to write about to start generating posts",
+      });
+    }
+
+    if (score < 100) {
+      if (!hasVoice) {
+        recommendations.push({
+          priority: "high",
+          action: "add_voice",
+          title: "Define your voice",
+          description:
+            "Add instructions about how you want to sound to personalize your posts",
+        });
+      }
+
+      if (sampleCount === 0) {
+        recommendations.push({
+          priority: "medium",
+          action: "add_samples",
+          title: "Add sample posts",
+          description: "Add 3+ example posts to help match your writing style",
+        });
+      } else if (sampleCount < 3) {
+        recommendations.push({
+          priority: "medium",
+          action: "add_more_samples",
+          title: `Add ${3 - sampleCount} more sample post${
+            3 - sampleCount > 1 ? "s" : ""
+          }`,
+          description: "More samples improve style matching",
+        });
+      }
+    }
+
+    // Add sync recommendation for connected accounts
+    if (this.platform !== "ghost") {
+      if (!this.last_synced_at) {
+        recommendations.push({
+          priority: "high",
+          action: "sync_network",
+          title: "Sync your network",
+          description: "Sync your posts to analyze your writing style",
+        });
+      } else if (this.needsSync(24)) {
+        recommendations.push({
+          priority: "low",
+          action: "sync_network",
+          title: "Refresh network data",
+          description: "Your network data is outdated",
+        });
+      }
+    }
+
+    return recommendations;
+  }
+
+  /**
+   * Get sync status information (includes completeness score)
+   */
+  async getSyncInfo() {
+    const isGhost = this.platform === "ghost";
+    const completeness_score = await this.getCompletenessScore();
+
+    return {
+      is_ghost: isGhost,
+      sync_status: isGhost ? "ready" : this.sync_status,
+      last_synced_at: isGhost ? null : this.last_synced_at,
+      last_analyzed_at: isGhost ? null : this.last_analyzed_at,
+      needs_sync: isGhost ? false : this.needsSync(24),
+      needs_analysis: isGhost ? false : this.needsAnalysis(7),
+      completeness_score,
+    };
+  }
+
+  /**
    * Get a valid access token, refreshing if necessary
    * @returns {Promise<string|null>} Valid access token
    */
@@ -310,12 +449,16 @@ class ConnectedAccount extends BaseModel {
       return currentToken;
     }
 
-    console.log(`[ConnectedAccount] Access token expired for account ${this.id}, attempting refresh...`);
+    console.log(
+      `[ConnectedAccount] Access token expired for account ${this.id}, attempting refresh...`
+    );
 
     // Check if we have a refresh token
     const refreshToken = this.getDecryptedRefreshToken();
     if (!refreshToken) {
-      console.warn(`[ConnectedAccount] No refresh token available for account ${this.id}`);
+      console.warn(
+        `[ConnectedAccount] No refresh token available for account ${this.id}`
+      );
       // Mark account as needing re-authentication
       await this.$query().patch({
         sync_status: "error",
@@ -329,11 +472,6 @@ class ConnectedAccount extends BaseModel {
     }
 
     try {
-      // Import OAuth services dynamically to avoid circular dependencies
-      const { default: twitterOAuth } = await import("#src/services/oauth/TwitterOAuthService.js");
-      const { default: facebookOAuth } = await import("#src/services/oauth/FacebookOAuthService.js");
-      const { default: linkedinOAuth } = await import("#src/services/oauth/LinkedInOAuthService.js");
-
       const oauthServices = {
         twitter: twitterOAuth,
         facebook: facebookOAuth,
@@ -342,20 +480,21 @@ class ConnectedAccount extends BaseModel {
 
       const oauthService = oauthServices[this.platform];
       if (!oauthService) {
-        console.warn(`[ConnectedAccount] No OAuth service for platform ${this.platform}`);
+        console.warn(
+          `[ConnectedAccount] No OAuth service for platform ${this.platform}`
+        );
         return null;
       }
 
       // Refresh the token
       const tokenData = await oauthService.refreshAccessToken(refreshToken);
 
-      // Import encrypt function
-      const { encrypt } = await import("#src/helpers/encryption.js");
-
       // Update the token in the database
       await this.$query().patch({
         access_token: encrypt(tokenData.access_token),
-        refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : this.refresh_token,
+        refresh_token: tokenData.refresh_token
+          ? encrypt(tokenData.refresh_token)
+          : this.refresh_token,
         token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
         metadata: {
           ...this.metadata,
@@ -363,11 +502,16 @@ class ConnectedAccount extends BaseModel {
         },
       });
 
-      console.log(`[ConnectedAccount] Token refreshed successfully for account ${this.id}`);
+      console.log(
+        `[ConnectedAccount] Token refreshed successfully for account ${this.id}`
+      );
 
       return tokenData.access_token;
     } catch (error) {
-      console.error(`[ConnectedAccount] Failed to refresh token for account ${this.id}:`, error.message);
+      console.error(
+        `[ConnectedAccount] Failed to refresh token for account ${this.id}:`,
+        error.message
+      );
 
       // Mark account as needing re-authentication
       await this.$query().patch({
