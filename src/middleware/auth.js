@@ -109,6 +109,23 @@ export const requireAuth = async (req, res, next) => {
       // Don't fail the request if ghost account creation fails
     }
 
+    // Auto-set timezone from header if not already set
+    try {
+      const timezoneHeader = req.headers["x-timezone"];
+      if (timezoneHeader && !account.timezone) {
+        await account.$query().patch({
+          timezone: timezoneHeader,
+        });
+        // Update local account object
+        account.timezone = timezoneHeader;
+        // The generation_time_utc will be auto-calculated by the model's beforeUpdate hook
+        console.log(`Auto-set timezone for account ${account.id}: ${timezoneHeader}`);
+      }
+    } catch (timezoneError) {
+      console.warn("Failed to auto-set timezone:", timezoneError);
+      // Don't fail the request if timezone update fails
+    }
+
     // Set the account on res.locals for use in routes
     res.locals.account = account;
     next();

@@ -10,6 +10,7 @@ import {
   JOB_DISPATCH_CURATED_TOPICS,
   JOB_SYNC_CURATED_TOPIC,
   JOB_DIGEST_RECENT_TOPICS,
+  JOB_SEND_PUSH_NOTIFICATION,
 } from "#src/background/queues/index.js";
 
 // Import job processors
@@ -21,6 +22,7 @@ import generatePost from "#src/background/jobs/ghost/generate-post.js";
 import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-topics.js";
 import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
+import sendPushNotificationJob from "#src/background/jobs/ghost/send-push-notification.js";
 
 // Import schedulers
 import * as suggestionScheduler from "#src/background/repeatables/suggestion-scheduler.js";
@@ -58,6 +60,9 @@ const worker = new WorkerPro(
 
         case JOB_DIGEST_RECENT_TOPICS:
           return await digestRecentTopics(job);
+
+        case JOB_SEND_PUSH_NOTIFICATION:
+          return await sendPushNotificationJob(job);
 
         default:
           throw new Error(`Unknown Ghost job type: ${job.name}`);
@@ -156,6 +161,6 @@ startSchedulers();
 console.log("✅ Ghost worker manager started successfully");
 console.log(`   - Queue: ${QUEUE_GHOST}`);
 console.log(`   - Concurrency: ${worker.opts.concurrency}`);
-console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_SUGGESTIONS_AUTOMATED}, ${JOB_GENERATE_POST}, ${JOB_DISPATCH_CURATED_TOPICS}, ${JOB_SYNC_CURATED_TOPIC}, ${JOB_DIGEST_RECENT_TOPICS}`);
+console.log(`   - Supported jobs: ${JOB_SYNC_NETWORK}, ${JOB_ANALYZE_STYLE}, ${JOB_GENERATE_SUGGESTIONS}, ${JOB_GENERATE_SUGGESTIONS_AUTOMATED}, ${JOB_GENERATE_POST}, ${JOB_DISPATCH_CURATED_TOPICS}, ${JOB_SYNC_CURATED_TOPIC}, ${JOB_DIGEST_RECENT_TOPICS}, ${JOB_SEND_PUSH_NOTIFICATION}`);
 
 export default worker;

@@ -221,6 +221,32 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
 
   console.log(`[Generate Suggestions] Saved ${savedCount} suggestions`);
 
+  // Send push notification to user that their daily posts are ready
+  // Only send if this was an automated generation (job.data.automated === true)
+  if (job.data.automated && savedCount > 0) {
+    try {
+      const { ghostQueue, JOB_SEND_PUSH_NOTIFICATION } = await import("#src/background/queues/index.js");
+
+      await ghostQueue.add(JOB_SEND_PUSH_NOTIFICATION, {
+        account_id: connectedAccount.account_id,
+        notification: {
+          heading: "Your daily posts are ready! 📝",
+          content: `We've generated ${savedCount} fresh post ideas for you.`,
+          data: {
+            type: "suggestions_ready",
+            connected_account_id: connectedAccount.id,
+            suggestion_count: savedCount,
+          },
+        },
+      });
+
+      console.log(`[Generate Suggestions] Queued push notification for ${savedCount} suggestions`);
+    } catch (error) {
+      console.warn(`[Generate Suggestions] Failed to queue push notification:`, error.message);
+      // Don't fail the job if push notification fails
+    }
+  }
+
   return {
     success: true,
     suggestions_generated: savedCount,
@@ -447,6 +473,32 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
 
   console.log(`[Generate Suggestions] Saved ${savedCount} suggestions`);
   console.log(`[Generate Suggestions] Suggestions generated successfully`);
+
+  // Send push notification to user that their daily posts are ready
+  // Only send if this was an automated generation (job.data.automated === true)
+  if (job.data.automated && savedCount > 0) {
+    try {
+      const { ghostQueue, JOB_SEND_PUSH_NOTIFICATION } = await import("#src/background/queues/index.js");
+
+      await ghostQueue.add(JOB_SEND_PUSH_NOTIFICATION, {
+        account_id: connectedAccount.account_id,
+        notification: {
+          heading: "Your daily posts are ready! 📝",
+          content: `We've generated ${savedCount} fresh post ideas for you.`,
+          data: {
+            type: "suggestions_ready",
+            connected_account_id: connectedAccount.id,
+            suggestion_count: savedCount,
+          },
+        },
+      });
+
+      console.log(`[Generate Suggestions] Queued push notification for ${savedCount} suggestions`);
+    } catch (error) {
+      console.warn(`[Generate Suggestions] Failed to queue push notification:`, error.message);
+      // Don't fail the job if push notification fails
+    }
+  }
 
   return {
     success: true,

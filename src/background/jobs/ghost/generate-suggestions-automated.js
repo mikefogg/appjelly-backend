@@ -1,21 +1,38 @@
 /**
  * Automated Suggestions Generation Job
- * Runs hourly to generate suggestions for all active connected accounts
+ * Runs hourly to generate suggestions for accounts scheduled for this UTC hour
  */
 
-import { ConnectedAccount } from "#src/models/index.js";
+import { Account, ConnectedAccount } from "#src/models/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
 
 export default async function generateSuggestionsAutomated(job) {
-  console.log(`[Generate Suggestions Automated] Starting automated generation cycle`);
+  const currentUTCHour = new Date().getUTCHours();
+  console.log(`[Generate Suggestions Automated] Starting automated generation cycle for UTC hour ${currentUTCHour}`);
 
   try {
-    // Get all active connected accounts that are ready for suggestion generation
-    // - Network platforms: Must have sync_status = "ready"
-    // - Ghost platforms: Always included (will check for topics or sample posts in job)
-    const eligibleAccounts = await ConnectedAccount.query()
+    // Get accounts scheduled for this UTC hour
+    const scheduledAccounts = await Account.query()
+      .where("generation_time_utc", currentUTCHour)
+      .whereNotNull("timezone");
+
+    console.log(`[Generate Suggestions Automated] Found ${scheduledAccounts.length} accounts scheduled for ${currentUTCHour}:00 UTC`);
+
+    if (scheduledAccounts.length === 0) {
+      return {
+        success: true,
+        message: `No accounts scheduled for ${currentUTCHour}:00 UTC`,
+        accounts_processed: 0,
+        current_utc_hour: currentUTCHour,
+      };
+    }
+
+    // Get all connected accounts for these scheduled accounts
+    const accountIds = scheduledAccounts.map(acc => acc.id);
+    const eligibleConnections = await ConnectedAccount.query()
+      .whereIn("account_id", accountIds)
       .where("is_active", true)
       .modify((qb) => {
         qb.where((builder) => {
@@ -25,52 +42,56 @@ export default async function generateSuggestionsAutomated(job) {
         });
       });
 
-    console.log(`[Generate Suggestions Automated] Found ${eligibleAccounts.length} eligible accounts`);
+    console.log(`[Generate Suggestions Automated] Found ${eligibleConnections.length} eligible connected accounts from ${scheduledAccounts.length} scheduled accounts`);
 
-    if (eligibleAccounts.length === 0) {
+    if (eligibleConnections.length === 0) {
       return {
         success: true,
-        message: "No eligible accounts found",
+        message: `Found ${scheduledAccounts.length} scheduled accounts but no eligible connected accounts`,
         accounts_processed: 0,
+        current_utc_hour: currentUTCHour,
       };
     }
 
     job.updateProgress(20);
 
-    // Queue individual suggestion generation jobs for each account
+    // Queue individual suggestion generation jobs for each connected account
     const queuedJobs = [];
     let successCount = 0;
     let failureCount = 0;
 
-    for (const account of eligibleAccounts) {
+    for (const connection of eligibleConnections) {
       try {
         const suggestionJob = await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
-          connectedAccountId: account.id,
+          connectedAccountId: connection.id,
           suggestionCount: 3,
           automated: true,
           triggeredAt: new Date().toISOString(),
         });
 
         queuedJobs.push({
-          accountId: account.id,
-          platform: account.platform,
+          connectedAccountId: connection.id,
+          accountId: connection.account_id,
+          platform: connection.platform,
           jobId: suggestionJob.id,
         });
 
         successCount++;
       } catch (error) {
-        console.warn(`[Generate Suggestions Automated] Failed to queue for account ${account.id}:`, error.message);
+        console.warn(`[Generate Suggestions Automated] Failed to queue for connection ${connection.id}:`, error.message);
         failureCount++;
       }
     }
 
     job.updateProgress(100);
 
-    console.log(`[Generate Suggestions Automated] Completed: ${successCount} queued, ${failureCount} failed`);
+    console.log(`[Generate Suggestions Automated] Completed: ${successCount} queued, ${failureCount} failed for UTC hour ${currentUTCHour}`);
 
     return {
       success: true,
-      accounts_found: eligibleAccounts.length,
+      current_utc_hour: currentUTCHour,
+      accounts_scheduled: scheduledAccounts.length,
+      connections_found: eligibleConnections.length,
       jobs_queued: successCount,
       failures: failureCount,
       queued_jobs: queuedJobs,

@@ -154,6 +154,75 @@ router.post(
   }
 );
 
+// Update account settings (timezone, generation_time, notifications)
+router.patch(
+  "/me/settings",
+  requireAppContext,
+  requireAuth,
+  [
+    body("timezone")
+      .optional()
+      .isString()
+      .isLength({ min: 1, max: 100 })
+      .withMessage("Timezone must be a valid IANA timezone string"),
+    body("generation_time")
+      .optional()
+      .isInt({ min: 0, max: 23 })
+      .withMessage("Generation time must be an integer between 0 and 23"),
+    body("notifications_enabled")
+      .optional()
+      .isBoolean()
+      .withMessage("Notifications enabled must be a boolean"),
+    body("notification_prompt_shown")
+      .optional()
+      .isBoolean()
+      .withMessage("Notification prompt shown must be a boolean"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const account = res.locals.account;
+      const { timezone, generation_time, notifications_enabled, notification_prompt_shown } = req.body;
+
+      // Validate timezone if provided
+      if (timezone) {
+        try {
+          // Quick validation: try to get timezone offset
+          // This will throw if timezone is invalid
+          Intl.DateTimeFormat(undefined, { timeZone: timezone });
+        } catch (error) {
+          return res.status(400).json(formatError("Invalid timezone format. Please use IANA timezone (e.g., America/New_York)"));
+        }
+      }
+
+      const updates = {};
+      if (timezone !== undefined) updates.timezone = timezone;
+      if (generation_time !== undefined) updates.generation_time = generation_time;
+      if (notifications_enabled !== undefined) updates.notifications_enabled = notifications_enabled;
+      if (notification_prompt_shown !== undefined) updates.notification_prompt_shown = notification_prompt_shown;
+
+      // Update account - generation_time_utc will be auto-calculated by beforeUpdate hook
+      const updatedAccount = await account.$query().patchAndFetch(updates);
+
+      // Reload with app relationship
+      updatedAccount.app = account.app;
+
+      const data = {
+        timezone: updatedAccount.timezone,
+        generation_time: updatedAccount.generation_time,
+        generation_time_utc: updatedAccount.generation_time_utc,
+        notifications_enabled: updatedAccount.notifications_enabled,
+        notification_prompt_shown: updatedAccount.notification_prompt_shown,
+      };
+
+      return res.status(200).json(successResponse(data, "Settings updated successfully"));
+    } catch (error) {
+      console.error("Update settings error:", error);
+      return res.status(500).json(formatError("Failed to update settings"));
+    }
+  }
+);
+
 router.delete("/me", requireAppContext, requireAuth, async (req, res) => {
   try {
     const account = res.locals.account;

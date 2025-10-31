@@ -492,6 +492,7 @@ router.post(
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
         connectedAccountId: connection.id,
         suggestionCount: 3,
+        automated: true, // Set to true for testing push notifications
       });
 
       return res.status(202).json(successResponse({

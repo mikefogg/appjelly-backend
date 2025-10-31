@@ -8,6 +8,7 @@ import UserTopicPreference from "#src/models/UserTopicPreference.js";
 import WritingStyle from "#src/models/WritingStyle.js";
 import UserPostHistory from "#src/models/UserPostHistory.js";
 import SamplePost from "#src/models/SamplePost.js";
+import Rule from "#src/models/Rule.js";
 import { decrypt, encrypt } from "#src/helpers/encryption.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
@@ -118,6 +119,14 @@ class ConnectedAccount extends BaseModel {
         join: {
           from: "connected_accounts.id",
           to: "sample_posts.connected_account_id",
+        },
+      },
+      rules: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: Rule,
+        join: {
+          from: "connected_accounts.id",
+          to: "rules.connected_account_id",
         },
       },
     };
@@ -420,6 +429,21 @@ class ConnectedAccount extends BaseModel {
     const isGhost = this.platform === "ghost";
     const completeness_score = await this.getCompletenessScore();
 
+    // Check what the user has for setup checklist
+    const userTopicIds = await UserTopicPreference.getUserTopicIds(this.id);
+    const hasCuratedTopics = userTopicIds.length > 0;
+    const hasCustomTopics = this.topics_of_interest && this.topics_of_interest.trim().length > 0;
+    const hasTopics = hasCuratedTopics || hasCustomTopics;
+    const hasVoice = this.voice && this.voice.trim().length > 0;
+    const samplePostsCount = this.sample_posts?.length || 0;
+    const hasSamplePosts = samplePostsCount >= 3;
+
+    // Count topics: curated topics + 1 if custom topics exist
+    const topicsCount = userTopicIds.length + (hasCustomTopics ? 1 : 0);
+
+    // Count rules
+    const rulesCount = this.rules?.length || 0;
+
     return {
       is_ghost: isGhost,
       sync_status: isGhost ? "ready" : this.sync_status,
@@ -428,6 +452,14 @@ class ConnectedAccount extends BaseModel {
       needs_sync: isGhost ? false : this.needsSync(24),
       needs_analysis: isGhost ? false : this.needsAnalysis(7),
       completeness_score,
+      // Setup checklist - what the user has configured
+      has_topics: hasTopics,
+      has_voice: hasVoice,
+      has_sample_posts: hasSamplePosts,
+      // Detailed counts
+      topics_count: topicsCount,
+      sample_posts_count: samplePostsCount,
+      rules_count: rulesCount,
     };
   }
 

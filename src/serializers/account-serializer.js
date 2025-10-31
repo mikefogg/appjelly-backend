@@ -13,13 +13,18 @@ export const accountSerializer = (account) => {
 
 export const currentAccountSerializer = (account) => {
   const baseData = accountSerializer(account);
-  
+
   // Get subscription info using the account method (now synchronous)
   const subscriptionInfo = account.getSubscriptionInfo();
-  
+
   return {
     ...baseData,
     display_name: account.metadata?.display_name || "My Family",
+    timezone: account.timezone,
+    generation_time: account.generation_time,
+    generation_time_utc: account.generation_time_utc,
+    notifications_enabled: account.notifications_enabled,
+    notification_prompt_shown: account.notification_prompt_shown,
     app: account.app ? {
       id: account.app.id,
       slug: account.app.slug,

@@ -19,14 +19,18 @@ router.get(
   requireAuth,
   async (req, res) => {
     try {
-      const connections = await ConnectedAccount.findByAccountAndApp(
-        res.locals.account.id,
-        res.locals.app.id
-      );
+      const connections = await ConnectedAccount.query()
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .where("is_active", true)
+        .withGraphFetched("[sample_posts, rules]")
+        .orderBy("created_at", "desc");
 
       // Get sync info (includes completeness score) for all connections in parallel
       const data = await Promise.all(connections.map(async (conn) => {
         const sync_info = await conn.getSyncInfo();
+
+        console.log(sync_info);
 
         return {
           id: conn.id,
@@ -66,7 +70,7 @@ router.get(
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
-        .withGraphFetched("[writing_style, sample_posts]");
+        .withGraphFetched("[writing_style, sample_posts, rules]");
 
       if (!connection) {
         return res.status(404).json(formatError("Connection not found", 404));
