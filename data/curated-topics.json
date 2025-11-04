@@ -3,120 +3,130 @@
     "slug": "ai",
     "name": "Artificial Intelligence",
     "description": "Latest in AI/ML research, products, and developments",
-    "twitter_list_id": "1981074350477279304"
+    "twitter_list_id": "1981074350477279304",
+    "topic_type": "realtime"
   },
   {
     "slug": "crypto",
     "name": "Crypto & Web3",
     "description": "Cryptocurrency, blockchain, DeFi, and web3 developments",
-    "twitter_list_id": "1981074499098575013"
+    "twitter_list_id": "1981074499098575013",
+    "topic_type": "realtime"
   },
   {
     "slug": "startups",
     "name": "Startups & Entrepreneurship",
     "description": "Startup news, fundraising, founder stories, and business building",
-    "twitter_list_id": "1981074605629665468"
+    "twitter_list_id": "1981074605629665468",
+    "topic_type": "realtime"
   },
   {
     "slug": "dev",
     "name": "Software Development",
     "description": "Programming, software engineering, dev tools, and technical content",
-    "twitter_list_id": "1981074707605565798"
+    "twitter_list_id": "1981074707605565798",
+    "topic_type": "hybrid"
   },
   {
     "slug": "design",
     "name": "Design & UX",
     "description": "Product design, UI/UX, visual design, and design thinking",
-    "twitter_list_id": "1981092777619255600"
+    "topic_type": "evergreen"
   },
   {
     "slug": "marketing",
     "name": "Marketing & Growth",
     "description": "Digital marketing, growth strategies, content marketing, and SEO",
-    "twitter_list_id": "1981074860227854562"
+    "topic_type": "evergreen"
   },
   {
     "slug": "productivity",
     "name": "Productivity & Tools",
     "description": "Productivity tips, tools, workflows, and personal optimization",
-    "twitter_list_id": "1981074958949192114"
+    "topic_type": "evergreen"
   },
   {
     "slug": "finance",
     "name": "Finance & Investing",
     "description": "Markets, investing, personal finance, and economic news",
-    "twitter_list_id": "1981075058220019834"
+    "twitter_list_id": "1981075058220019834",
+    "topic_type": "realtime"
   },
   {
     "slug": "tech",
     "name": "Tech News",
     "description": "General technology news, big tech companies, and industry trends",
-    "twitter_list_id": "1981075173273980945"
+    "twitter_list_id": "1981075173273980945",
+    "topic_type": "realtime"
   },
   {
     "slug": "saas",
     "name": "SaaS & B2B",
     "description": "SaaS products, B2B software, and enterprise technology",
-    "twitter_list_id": "1981075245407588834"
+    "twitter_list_id": "1981075245407588834",
+    "topic_type": "hybrid"
   },
   {
     "slug": "product",
     "name": "Product Management",
     "description": "Product strategy, management, development, and best practices",
-    "twitter_list_id": "1981075328354427161"
+    "topic_type": "evergreen"
   },
   {
     "slug": "sales",
     "name": "Sales & Business Development",
     "description": "Sales strategies, BD, customer acquisition, and revenue growth",
-    "twitter_list_id": "1981075396113084673"
+    "topic_type": "evergreen"
   },
   {
     "slug": "leadership",
     "name": "Leadership & Management",
     "description": "Team management, leadership skills, and organizational culture",
-    "twitter_list_id": "1981075747381911794"
+    "topic_type": "evergreen"
   },
   {
     "slug": "creator",
     "name": "Creator Economy",
     "description": "Content creation, monetization, influencer economy, and personal brands",
-    "twitter_list_id": "1981075807054238106"
+    "topic_type": "evergreen"
   },
   {
     "slug": "gaming",
     "name": "Gaming & Esports",
     "description": "Video games, game development, esports, and gaming culture",
-    "twitter_list_id": "1981075863551549709"
+    "twitter_list_id": "1981075863551549709",
+    "topic_type": "realtime"
   },
   {
     "slug": "health",
     "name": "Health & Fitness",
     "description": "Health, fitness, wellness, nutrition, and biohacking",
-    "twitter_list_id": "1981075939770716538"
+    "topic_type": "evergreen"
   },
   {
     "slug": "climate",
     "name": "Climate & Sustainability",
     "description": "Climate tech, sustainability, clean energy, and environmental news",
-    "twitter_list_id": "1981075993969279444"
+    "twitter_list_id": "1981075993969279444",
+    "topic_type": "realtime"
   },
   {
     "slug": "science",
     "name": "Science & Research",
     "description": "Scientific discoveries, research, and academic developments",
-    "twitter_list_id": "1981076077582963175"
+    "twitter_list_id": "1981076077582963175",
+    "topic_type": "realtime"
   },
   {
     "slug": "education",
     "name": "Education & Learning",
     "description": "EdTech, online learning, education reform, and knowledge sharing",
-    "twitter_list_id": "1981076130690949416"
+    "topic_type": "evergreen"
   },
   {
     "slug": "remote",
     "name": "Remote Work",
     "description": "Remote work culture, distributed teams, and future of work",
-    "twitter_list_id": "1981076189008605222"
+    "topic_type": "evergreen"
   }
 ]

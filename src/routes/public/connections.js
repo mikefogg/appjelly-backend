@@ -1,7 +1,7 @@
 import express from "express";
 import { param, body, query } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference, TrendingTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
@@ -956,6 +956,145 @@ router.put(
     } catch (error) {
       console.error("Update user topics error:", error);
       return res.status(500).json(formatError("Failed to update user topics"));
+    }
+  }
+);
+
+// GET /connections/:id/trending - Get personalized trending topics with rotation context
+router.get(
+  "/:id/trending",
+  requireAppContext,
+  requireAuth,
+  connectionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Get user's selected topic IDs
+      const topicIds = await UserTopicPreference.getUserTopicIds(req.params.id);
+
+      if (topicIds.length === 0) {
+        return res.status(200).json(successResponse({
+          rotation_info: {
+            current_content_type: await connection.getNextRecommendedContentType(),
+            last_post: null,
+            rotation_enabled: connection.content_rotation_enabled,
+          },
+          trending_topics: []
+        }));
+      }
+
+      // Get mixed trending topics (realtime + evergreen)
+      const { realtime, evergreen } = await TrendingTopic.getMixedTrendingForTopics(topicIds, 5, 5);
+
+      // Merge and format
+      const allTrending = [...realtime, ...evergreen].map(t => ({
+        id: t.id,
+        curated_topic: {
+          id: t.curated_topic.id,
+          slug: t.curated_topic.slug,
+          name: t.curated_topic.name,
+          topic_type: t.curated_topic.topic_type,
+        },
+        topic_name: t.topic_name,
+        context: t.context,
+        topic_type: t.topic_type,
+        mention_count: t.mention_count,
+        total_engagement: parseFloat(t.total_engagement || 0),
+        detected_at: t.detected_at,
+        expires_at: t.expires_at,
+      }));
+
+      // Get rotation context
+      const recommendedContentType = await connection.getNextRecommendedContentType();
+
+      const data = {
+        rotation_info: {
+          current_content_type: recommendedContentType,
+          last_post: connection.last_posted_at ? {
+            content_type: connection.last_content_type,
+            posted_at: connection.last_posted_at,
+          } : null,
+          rotation_enabled: connection.content_rotation_enabled,
+        },
+        trending_topics: allTrending,
+      };
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Get trending topics for connection error:", error);
+      return res.status(500).json(formatError("Failed to retrieve trending topics"));
+    }
+  }
+);
+
+// PATCH /connections/:id/rotation-settings - Update content rotation settings
+router.patch(
+  "/:id/rotation-settings",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    body("rotation_enabled")
+      .optional()
+      .isBoolean()
+      .withMessage("rotation_enabled must be a boolean"),
+    body("reset_rotation")
+      .optional()
+      .isBoolean()
+      .withMessage("reset_rotation must be a boolean"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { rotation_enabled, reset_rotation } = req.body;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Reset rotation if requested
+      if (reset_rotation) {
+        await connection.resetRotation();
+      }
+
+      // Update rotation enabled setting
+      if (typeof rotation_enabled === 'boolean') {
+        await connection.$query().patch({
+          content_rotation_enabled: rotation_enabled,
+        });
+      }
+
+      // Fetch updated connection
+      const updated = await ConnectedAccount.query().findById(req.params.id);
+      const nextRecommended = await updated.getNextRecommendedContentType();
+
+      const data = {
+        rotation_enabled: updated.content_rotation_enabled,
+        last_content_type: updated.last_content_type,
+        last_posted_at: updated.last_posted_at,
+        next_recommended: nextRecommended,
+      };
+
+      return res.status(200).json(successResponse(data));
+    } catch (error) {
+      console.error("Update rotation settings error:", error);
+      return res.status(500).json(formatError("Failed to update rotation settings"));
     }
   }
 );

@@ -3,7 +3,7 @@
  * Syncs posts from a specific Twitter list for a curated topic
  */
 
-import { CuratedTopic, NetworkPost } from "#src/models/index.js";
+import { CuratedTopic, NetworkPost, ConnectedAccount } from "#src/models/index.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 import OpenAI from "openai";
 
@@ -141,12 +141,32 @@ export default async function syncCuratedTopic(job) {
 
     console.log(`[Sync Curated Topic] Syncing "${topic.name}" (${topic.slug}) from list ${topic.twitter_list_id}`);
 
-    // Use Ghost app's Twitter access token (from env or a system account)
-    // For now, we'll need a bearer token with app-level access
-    const accessToken = process.env.TWITTER_BEARER_TOKEN || process.env.TWITTER_API_BEARER_TOKEN;
+    // Get the Ghost Twitter account's OAuth credentials for accessing private lists
+    const ghostAccount = await ConnectedAccount.getGhostTwitterAccount();
 
+    if (!ghostAccount) {
+      throw new Error("No Ghost Twitter account found. Please connect a Twitter account and mark it as is_ghost_account=true");
+    }
+
+    if (!ghostAccount.access_token) {
+      throw new Error("Ghost Twitter account has no access token. Please re-authenticate the account.");
+    }
+
+    console.log(`[Sync Curated Topic] Using Ghost Twitter account: @${ghostAccount.username}`);
+
+    // Check if token needs refresh
+    if (ghostAccount.token_expires_at && new Date(ghostAccount.token_expires_at) < new Date()) {
+      console.log(`[Sync Curated Topic] Access token expired, refreshing...`);
+      const refreshedToken = await ghostAccount.refreshAccessToken();
+      if (!refreshedToken) {
+        throw new Error("Failed to refresh Ghost Twitter account token. Please re-authenticate the account.");
+      }
+    }
+
+    // Get decrypted access token (tokens are stored encrypted in database)
+    const accessToken = ghostAccount.getDecryptedAccessToken();
     if (!accessToken) {
-      throw new Error("No TWITTER_BEARER_TOKEN found in environment. This is required for accessing public lists.");
+      throw new Error("Failed to decrypt Ghost Twitter account token. Please re-authenticate the account.");
     }
 
     // Fetch tweets from the list

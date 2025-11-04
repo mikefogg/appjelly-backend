@@ -20,6 +20,13 @@ class TrendingTopic extends BaseModel {
         sample_post_ids: { type: ["array", "null"] },
         detected_at: { type: "string", format: "date-time" },
         expires_at: { type: ["string", "null"], format: "date-time" },
+        topic_type: {
+          type: "string",
+          enum: ["realtime", "evergreen"],
+          default: "realtime"
+        },
+        rotation_group: { type: ["integer", "null"], minimum: 1, maximum: 7 },
+        sort_order: { type: "integer", default: 0 },
       },
     };
   }
@@ -88,6 +95,60 @@ class TrendingTopic extends BaseModel {
       .orderBy("total_engagement", "desc")
       .orderBy("detected_at", "desc")
       .limit(limit);
+  }
+
+  // Get evergreen topics for today's rotation (based on day of week)
+  static async getEvergreenForToday(topicIds) {
+    const dayOfWeek = new Date().getDay() || 7; // 1-7 (Sunday = 7)
+
+    return this.query()
+      .whereIn("curated_topic_id", topicIds)
+      .where("topic_type", "evergreen")
+      .where("rotation_group", dayOfWeek)
+      .orderBy("sort_order", "asc")
+      .orderBy("topic_name", "asc");
+  }
+
+  // Get evergreen topics for a specific curated topic
+  static async getEvergreenForTopic(curatedTopicId, dayOfWeek = null) {
+    const day = dayOfWeek || new Date().getDay() || 7;
+
+    return this.query()
+      .where("curated_topic_id", curatedTopicId)
+      .where("topic_type", "evergreen")
+      .where("rotation_group", day)
+      .orderBy("sort_order", "asc")
+      .orderBy("topic_name", "asc");
+  }
+
+  // Get mixed trending topics (realtime + evergreen for today)
+  static async getMixedTrendingForTopics(topicIds, realtimeLimit = 5, evergreenLimit = 5) {
+    const dayOfWeek = new Date().getDay() || 7;
+    const cutoffTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+
+    // Get realtime topics
+    const realtime = await this.query()
+      .whereIn("curated_topic_id", topicIds)
+      .where("topic_type", "realtime")
+      .where("detected_at", ">", cutoffTime.toISOString())
+      .where(function() {
+        this.whereNull("expires_at")
+          .orWhere("expires_at", ">", new Date().toISOString());
+      })
+      .orderBy("total_engagement", "desc")
+      .limit(realtimeLimit)
+      .withGraphFetched("curated_topic");
+
+    // Get evergreen topics for today
+    const evergreen = await this.query()
+      .whereIn("curated_topic_id", topicIds)
+      .where("topic_type", "evergreen")
+      .where("rotation_group", dayOfWeek)
+      .orderBy("sort_order", "asc")
+      .limit(evergreenLimit)
+      .withGraphFetched("curated_topic");
+
+    return { realtime, evergreen };
   }
 }
 

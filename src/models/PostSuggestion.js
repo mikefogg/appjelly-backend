@@ -3,6 +3,7 @@ import Account from "#src/models/Account.js";
 import ConnectedAccount from "#src/models/ConnectedAccount.js";
 import App from "#src/models/App.js";
 import NetworkPost from "#src/models/NetworkPost.js";
+import TrendingTopic from "#src/models/TrendingTopic.js";
 
 class PostSuggestion extends BaseModel {
   static get tableName() {
@@ -22,6 +23,7 @@ class PostSuggestion extends BaseModel {
         content: { type: "string", minLength: 1 },
         reasoning: { type: ["string", "null"] },
         source_post_id: { type: ["string", "null"], format: "uuid" },
+        source_trending_topic_id: { type: ["string", "null"], format: "uuid" },
         source_data: { type: "object" },
         status: {
           type: "string",
@@ -32,6 +34,7 @@ class PostSuggestion extends BaseModel {
         topics: { type: ["array", "null"] },
         angle: { type: ["string", "null"], enum: [null, "hot_take", "roast", "hype", "story", "teach", "question"] },
         length: { type: ["string", "null"], enum: [null, "short", "medium", "long"] },
+        content_type: { type: ["string", "null"], enum: [null, "story", "lesson", "question", "proof", "opinion", "personal", "vision", "cta"] },
         character_count: { type: ["integer", "null"], minimum: 0 },
         metadata: { type: "object" },
         expires_at: { type: ["string", "null"], format: "date-time" },
@@ -72,6 +75,14 @@ class PostSuggestion extends BaseModel {
         join: {
           from: "post_suggestions.source_post_id",
           to: "network_posts.id",
+        },
+      },
+      source_trending_topic: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: TrendingTopic,
+        join: {
+          from: "post_suggestions.source_trending_topic_id",
+          to: "trending_topics.id",
         },
       },
     };

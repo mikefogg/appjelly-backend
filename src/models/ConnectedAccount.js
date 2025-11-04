@@ -48,8 +48,12 @@ class ConnectedAccount extends BaseModel {
         is_active: { type: "boolean", default: true },
         is_default: { type: "boolean", default: false },
         is_deletable: { type: "boolean", default: true },
+        is_ghost_account: { type: "boolean", default: false },
         voice: { type: ["string", "null"] },
         topics_of_interest: { type: ["string", "null"] },
+        last_content_type: { type: ["string", "null"] },
+        last_posted_at: { type: ["string", "null"], format: "date-time" },
+        content_rotation_enabled: { type: "boolean", default: true },
         metadata: { type: "object" },
       },
     };
@@ -557,6 +561,35 @@ class ConnectedAccount extends BaseModel {
 
       return null;
     }
+  }
+
+  // Ghost Account Methods
+  static async getGhostTwitterAccount() {
+    return this.query()
+      .where("platform", "twitter")
+      .where("is_ghost_account", true)
+      .where("is_active", true)
+      .first();
+  }
+
+  // Content Rotation Methods
+  async getNextRecommendedContentType() {
+    const { getNextContentType } = await import("#src/config/content-types.js");
+    return getNextContentType(this.last_content_type);
+  }
+
+  async updateRotationState(contentType) {
+    return this.$query().patchAndFetch({
+      last_content_type: contentType,
+      last_posted_at: new Date().toISOString(),
+    });
+  }
+
+  async resetRotation() {
+    return this.$query().patchAndFetch({
+      last_content_type: null,
+      last_posted_at: null,
+    });
   }
 }
 

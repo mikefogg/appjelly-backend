@@ -3,10 +3,14 @@
  * Generates daily post suggestions based on:
  * - Network activity (for Twitter, LinkedIn, etc.)
  * - Topics of interest (for Ghost platform)
+ * - Content rotation system (story, lesson, question, etc.)
  */
 
 import { ConnectedAccount, NetworkPost, PostSuggestion, WritingStyle, SamplePost, Rule, UserTopicPreference, TrendingTopic } from "#src/models/index.js";
 import suggestionGenerator from "#src/services/ai/suggestion-generator.js";
+import ContentGenerationService from "#src/services/ContentGenerationService.js";
+import { getNextContentType, getContentTypeSequence } from "#src/config/content-types.js";
+import { getPlatformSystemPrompt } from "#src/config/platform-rules.js";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
@@ -147,44 +151,86 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
 
   job.updateProgress(40);
 
-  // Get active rules for this connected account
-  const rules = await Rule.getActiveRules(connectedAccount.id);
-  console.log(`[Generate Suggestions] Found ${rules.length} active rules`);
+  // Get next content types in rotation sequence
+  const contentTypeSequence = getContentTypeSequence(connectedAccount.last_content_type, suggestionCount);
+  console.log(`[Generate Suggestions] Content rotation sequence:`,
+    contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')
+  );
 
-  // Generate suggestions using topics + voice + samples + rules
-  console.log(`[Generate Suggestions] Generating ${suggestionCount} interest-based suggestions...`);
-  const result = await suggestionGenerator.generateInterestBasedSuggestions({
-    topics: topics_of_interest || "",
-    trendingTopics: trendingTopics,
-    voice: voice,
-    samplePosts: sample_posts?.map(sp => ({
-      content: sp.content,
-      notes: sp.notes,
-    })) || [],
-    rules: rules.map(r => ({
-      rule_type: r.rule_type,
-      content: r.content,
-      priority: r.priority,
-    })),
-    platform: connectedAccount.platform,
-    suggestionCount,
-  });
+  // Generate suggestions - one per content type in rotation
+  console.log(`[Generate Suggestions] Generating ${suggestionCount} interest-based suggestions with rotation...`);
+  const generatedSuggestions = [];
 
-  console.log(`[Generate Suggestions] Generated ${result.suggestions.length} suggestions`);
+  for (let i = 0; i < suggestionCount; i++) {
+    const contentType = contentTypeSequence[i];
+    console.log(`[Generate Suggestions] [${i + 1}/${suggestionCount}] Generating "${contentType.name}" type...`);
+
+    try {
+      // Build rotation-aware prompt with Twitter growth rules
+      const prompt = ContentGenerationService.buildRotationAwarePrompt({
+        contentType,
+        voice,
+        topics: topics_of_interest,
+        trendingTopics,
+        samplePosts: sample_posts?.map(sp => sp.content) || [],
+        platform: connectedAccount.platform,
+      });
+
+      // Generate with OpenAI using platform-specific system prompt
+      const systemPrompt = getPlatformSystemPrompt(connectedAccount.platform);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.8,
+        max_tokens: 500,
+      });
+
+      const generatedContent = response.choices[0].message.content.trim();
+
+      generatedSuggestions.push({
+        content: generatedContent,
+        content_type: contentType.key,
+        reasoning: `Generated as "${contentType.name}" type post (position ${contentType.position} in rotation)`,
+        topics: trendingTopics.slice(0, 3).map(t => t.topic), // Include top trending topics
+        angle: null,
+        length: generatedContent.length <= 100 ? 'short' : generatedContent.length <= 200 ? 'medium' : 'long',
+      });
+
+      console.log(`[Generate Suggestions]   ✓ Generated (${generatedContent.length} chars)`);
+
+    } catch (error) {
+      console.error(`[Generate Suggestions]   ✗ Failed to generate ${contentType.name}:`, error.message);
+      // Continue with next content type
+    }
+
+    job.updateProgress(40 + (i + 1) * (30 / suggestionCount));
+  }
+
+  console.log(`[Generate Suggestions] Generated ${generatedSuggestions.length} suggestions`);
   job.updateProgress(70);
 
   // Save suggestions to database
   console.log(`[Generate Suggestions] Saving suggestions...`);
   let savedCount = 0;
 
-  for (const suggestion of result.suggestions) {
+  for (const suggestion of generatedSuggestions) {
     try {
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
       // Build metadata for interest-based suggestions
       const metadata = {
-        generation_type: "interest_based",
+        generation_type: "interest_based_rotation",
         had_curated_topics: hasCuratedTopics,
         curated_topics_count: userTopicIds.length,
         trending_topics_count: trendingTopics.length,
@@ -192,6 +238,7 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
         had_voice: !!(voice && voice.trim().length > 0),
         had_samples: !!(sample_posts && sample_posts.length > 0),
         sample_count: sample_posts?.length || 0,
+        content_type: suggestion.content_type,
       };
 
       await PostSuggestion.query().insert({
@@ -200,6 +247,7 @@ List the topics as a comma-separated list (e.g., "AI and technology, startup cul
         app_id: connectedAccount.app_id,
         suggestion_type: "original_post",
         content: suggestion.content,
+        content_type: suggestion.content_type,
         reasoning: suggestion.reasoning,
         source_post_id: null,
         topics: suggestion.topics || [],
@@ -335,8 +383,8 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
     };
   }
 
-  // Step 4: Generate new suggestions with AI
-  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
+  // Step 4: Generate new suggestions with AI + Rotation
+  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions with rotation...`);
 
   // Log input data for debugging
   console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
@@ -354,106 +402,102 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, suggestion
 
   console.log(`[Generate Suggestions] Voice: ${connectedAccount.voice ? connectedAccount.voice.substring(0, 100) + '...' : 'none'}`);
   console.log(`[Generate Suggestions] Sample Posts: ${connectedAccount.sample_posts?.length || 0}`);
-  console.log(`[Generate Suggestions] Rules: ${rules.length}`);
   console.log(`[Generate Suggestions] ========================`);
 
-  const result = await suggestionGenerator.generateSuggestions({
-    trendingPosts: trendingPosts.map(p => ({
-      content: p.content,
-      engagement_score: p.engagement_score,
-      author_username: p.platform_user_id,
-    })),
-    trendingTopics: trendingTopics.map(t => ({
-      topic: t.topic,
-      mention_count: t.mention_count,
-      total_engagement: t.total_engagement,
-      last_mentioned: t.last_mentioned,
-    })),
-    topics: connectedAccount.topics_of_interest, // Add user's topics_of_interest text field
-    writingStyle: writingStyle ? {
-      tone: writingStyle.tone,
-      avg_length: writingStyle.avg_length,
-      emoji_frequency: writingStyle.emoji_frequency,
-      hashtag_frequency: writingStyle.hashtag_frequency,
-      common_topics: writingStyle.common_topics,
-      style_summary: writingStyle.style_summary,
-    } : null,
-    voice: connectedAccount.voice,
-    samplePosts: connectedAccount.sample_posts?.map(sp => ({
-      content: sp.content,
-      notes: sp.notes,
-    })) || [],
-    rules: rules.map(r => ({
-      rule_type: r.rule_type,
-      content: r.content,
-      priority: r.priority,
-    })),
-    platform: connectedAccount.platform,
-    suggestionCount,
-  });
+  // Get next content types in rotation sequence
+  const contentTypeSequence = getContentTypeSequence(connectedAccount.last_content_type, suggestionCount);
+  console.log(`[Generate Suggestions] Content rotation sequence:`,
+    contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')
+  );
 
-  console.log(`[Generate Suggestions] === GENERATION OUTPUT ===`);
-  console.log(`[Generate Suggestions] AI returned ${result.suggestions.length} suggestions:`);
-  result.suggestions.forEach((s, idx) => {
-    console.log(`  [${idx}] Angle: ${s.angle}, Length: ${s.length}`);
-    console.log(`       Content: "${s.content.substring(0, 80)}..."`);
-    console.log(`       Topics: [${s.topics?.join(', ')}]`);
-    console.log(`       Inspired by posts: [${s.inspired_by_posts?.join(', ') || 'none'}]`);
-  });
-  console.log(`[Generate Suggestions] =========================`);
+  // Generate suggestions - one per content type in rotation
+  const generatedSuggestions = [];
 
-  console.log(`[Generate Suggestions] Generated ${result.suggestions.length} suggestions`);
+  for (let i = 0; i < suggestionCount; i++) {
+    const contentType = contentTypeSequence[i];
+    console.log(`[Generate Suggestions] [${i + 1}/${suggestionCount}] Generating "${contentType.name}" type...`);
+
+    try {
+      // Build rotation-aware prompt with Twitter growth rules
+      const prompt = ContentGenerationService.buildRotationAwarePrompt({
+        contentType,
+        voice: connectedAccount.voice,
+        topics: connectedAccount.topics_of_interest,
+        trendingTopics,
+        samplePosts: connectedAccount.sample_posts?.map(sp => sp.content) || [],
+        platform: connectedAccount.platform,
+      });
+
+      // Generate with OpenAI using platform-specific system prompt
+      const systemPrompt = getPlatformSystemPrompt(connectedAccount.platform);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.8,
+        max_tokens: 500,
+      });
+
+      const generatedContent = response.choices[0].message.content.trim();
+
+      generatedSuggestions.push({
+        content: generatedContent,
+        content_type: contentType.key,
+        reasoning: `Generated as "${contentType.name}" type post (position ${contentType.position} in rotation)`,
+        topics: trendingTopics.slice(0, 3).map(t => t.topic),
+        angle: null,
+        length: generatedContent.length <= 100 ? 'short' : generatedContent.length <= 200 ? 'medium' : 'long',
+      });
+
+      console.log(`[Generate Suggestions]   ✓ Generated (${generatedContent.length} chars)`);
+
+    } catch (error) {
+      console.error(`[Generate Suggestions]   ✗ Failed to generate ${contentType.name}:`, error.message);
+      // Continue with next content type
+    }
+
+    job.updateProgress(45 + (i + 1) * (25 / suggestionCount));
+  }
+
+  console.log(`[Generate Suggestions] Generated ${generatedSuggestions.length} suggestions`);
   job.updateProgress(70);
 
   // Step 5: Save suggestions to database
   console.log(`[Generate Suggestions] Saving suggestions...`);
   let savedCount = 0;
 
-  for (const suggestion of result.suggestions) {
+  for (const suggestion of generatedSuggestions) {
     try {
       // Set expiration time (24 hours from now)
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 24);
 
-      // Find source post if it's a reply
-      let sourcePostId = null;
-      if (suggestion.type === "reply" && suggestion.source_post_id) {
-        const sourcePost = await NetworkPost.query()
-          .where("connected_account_id", connectedAccount.id)
-          .where("post_id", suggestion.source_post_id)
-          .first();
-
-        if (sourcePost) {
-          sourcePostId = sourcePost.id;
-        }
-      }
-
-      // Map inspired_by_posts indices to actual network post IDs
-      const inspiredByPostIds = [];
-      if (suggestion.inspired_by_posts && Array.isArray(suggestion.inspired_by_posts)) {
-        for (const index of suggestion.inspired_by_posts) {
-          if (index >= 0 && index < trendingPosts.length) {
-            inspiredByPostIds.push(trendingPosts[index].id);
-          }
-        }
-      }
-
       // Build metadata with source attribution
       const metadata = {
-        generation_type: "network_based",
-        inspired_by_network_post_ids: inspiredByPostIds,
+        generation_type: "network_based_rotation",
         trending_topics_count: trendingTopics.length,
         trending_posts_count: trendingPosts.length,
+        content_type: suggestion.content_type,
       };
 
       await PostSuggestion.query().insert({
         account_id: connectedAccount.account_id,
         connected_account_id: connectedAccount.id,
         app_id: connectedAccount.app_id,
-        suggestion_type: suggestion.type || "original_post",
+        suggestion_type: "original_post",
         content: suggestion.content,
+        content_type: suggestion.content_type,
         reasoning: suggestion.reasoning,
-        source_post_id: sourcePostId,
+        source_post_id: null,
         topics: suggestion.topics || [],
         angle: suggestion.angle,
         length: suggestion.length,

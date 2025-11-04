@@ -18,6 +18,7 @@ class TwitterOAuthService extends BaseOAuthService {
         "tweet.read",
         "users.read",
         "follows.read",
+        "list.read", // Required for accessing lists
         "offline.access", // Required for refresh token
       ],
     });

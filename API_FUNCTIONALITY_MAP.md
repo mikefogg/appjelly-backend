@@ -1316,18 +1316,113 @@ Headers:
 
 ---
 
+### Get Personalized Trending Topics Feed
+
+**Endpoint**: `GET /connections/:id/trending`
+
+**Implementation**: `src/routes/public/connections.js:963`
+
+**How it works**:
+```
+GET /connections/{connection_id}/trending
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns personalized trending topics based on user's interests
+→ Includes content rotation guidance
+→ Mixes realtime + evergreen topics for daily variety
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "rotation_info": {
+      "current_content_type": {
+        "key": "lesson",
+        "name": "Lesson / Framework",
+        "description": "Teaches something actionable",
+        "next_prompt": "Yesterday was a story. Today, break down the lesson you learned.",
+        "position": 2,
+        "icon": "🎓"
+      },
+      "last_post": {
+        "content_type": "story",
+        "posted_at": "2025-11-02T14:30:00Z"
+      },
+      "rotation_enabled": true
+    },
+    "trending_topics": [
+      {
+        "id": "uuid",
+        "curated_topic": {
+          "id": "uuid",
+          "slug": "crypto",
+          "name": "Crypto & Web3",
+          "topic_type": "realtime"
+        },
+        "topic_name": "Bitcoin ETF approval",
+        "context": "SEC approved spot Bitcoin ETFs, major milestone for crypto adoption",
+        "topic_type": "realtime",
+        "mention_count": 234,
+        "total_engagement": 15234.5,
+        "detected_at": "2025-11-03T14:30:00Z",
+        "expires_at": "2025-11-05T14:30:00Z"
+      },
+      {
+        "id": "uuid",
+        "curated_topic": {
+          "id": "uuid",
+          "slug": "marketing",
+          "name": "Marketing & Growth",
+          "topic_type": "evergreen"
+        },
+        "topic_name": "Cold email templates that actually work",
+        "context": "Proven structures and psychological triggers for outbound campaigns",
+        "topic_type": "evergreen",
+        "mention_count": 0,
+        "total_engagement": 0,
+        "detected_at": "2025-11-01T00:00:00Z",
+        "expires_at": null
+      }
+    ]
+  }
+}
+```
+
+**Features**:
+- ✅ Personalized based on user's selected topics
+- ✅ Includes content rotation guidance (what type to post today)
+- ✅ Mixes realtime news + evergreen topics
+- ✅ Daily rotation for evergreen content (7-day cycle)
+- ✅ Shows last post info for rotation context
+
+---
+
 ### How Curated Topics Work
 
 **Backend Architecture**:
 1. **Ghost maintains Twitter lists** - One list per topic category (e.g., "AI Leaders", "Crypto Inspo")
-2. **Automated sync** (every 30 minutes):
-   - Fetches latest posts from each Twitter list
-   - Stores posts in database
-3. **AI digest** (after each sync):
-   - Analyzes recent posts from each list
+2. **Topic classification**:
+   - **Realtime**: News-driven (AI, Crypto, Startups, Tech, Finance, Gaming, Climate, Science)
+   - **Evergreen**: Timeless strategies (Marketing, Product, Sales, Leadership, Design, etc.)
+   - **Hybrid**: Both types (Dev, SaaS)
+3. **Automated sync** (every 30 minutes for realtime/hybrid topics):
+   - Fetches latest posts from Twitter lists
+   - AI extracts 2-4 topics per post
+   - Calculates engagement scores
+4. **AI digest** (after each sync for realtime topics):
+   - Analyzes recent posts
    - Extracts 5-10 trending topics/themes
    - Stores with context and sample posts
-4. **Suggestion generation**:
+5. **Evergreen topic generation** (one-time per category):
+   - AI generates 35 timeless topics
+   - Distributed across 7 days (5 per day)
+   - Rotates daily for fresh content
+6. **Suggestion generation**:
    - Uses trending topics from user's selected categories
    - AI generates personalized suggestions based on what's trending
 
@@ -1356,6 +1451,299 @@ User sees relevant, timely content
 - Suggestions will fail if no topics are selected
 - Topics are synced automatically in the background
 - Trending topics expire after 48 hours
+
+---
+
+## ✅ 11. Content Rotation System
+
+**Status**: ✅ IMPLEMENTED
+
+**Overview**: Automated content rotation system that guides users to post different types of content for optimal Twitter/X algorithm performance. The system tracks what they posted last and suggests what type to post next, following a proven 8-step rotation pattern.
+
+### Get Content Types Catalog
+
+**Endpoint**: `GET /topics/content-types`
+
+**Implementation**: `src/routes/public/topics.js:85`
+
+**How it works**:
+```
+GET /topics/content-types
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Returns all 8 content types with descriptions
+→ Used to display rotation system in UI
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": [
+    {
+      "key": "story",
+      "name": "Story / Case Study",
+      "description": "Builds trust through narrative",
+      "prompt_guidance": "Tell a story about how you got there. Use narrative structure with beginning, middle, end.",
+      "next_prompt": "Yesterday was a win post. Today, tell a story about how you got there.",
+      "position": 1,
+      "icon": "📖"
+    },
+    {
+      "key": "lesson",
+      "name": "Lesson / Framework",
+      "description": "Teaches something actionable",
+      "prompt_guidance": "Break down a lesson or framework. Use numbered steps or bullet points. Make it actionable.",
+      "next_prompt": "Yesterday was a story. Today, break down the lesson you learned.",
+      "position": 2,
+      "icon": "🎓"
+    },
+    {
+      "key": "question",
+      "name": "Question / Poll",
+      "description": "Drives engagement and replies",
+      "prompt_guidance": "Ask a thought-provoking question. Make it easy to answer in one line.",
+      "next_prompt": "Yesterday was a teaching post. Today, ask your audience what they think.",
+      "position": 3,
+      "icon": "❓"
+    }
+    // ... 5 more types (proof, opinion, personal, vision, cta)
+  ]
+}
+```
+
+**All 8 Content Types**:
+1. **Story / Case Study** - Builds trust through narrative
+2. **Lesson / Framework** - Teaches something actionable
+3. **Question / Poll** - Drives engagement and replies
+4. **Result / Proof** - Shows momentum and credibility
+5. **Opinion / Hot Take** - Sparks debate and reach
+6. **Behind the Scenes / Personal** - Humanizes you
+7. **Vision / Prediction** - Inspires and leads
+8. **Announcement / CTA** - Converts attention into growth
+
+---
+
+### Generate Suggestion from Trending Topic
+
+**Endpoint**: `POST /suggestions/from-topic`
+
+**Implementation**: `src/routes/public/suggestions.js:521`
+
+**How it works**:
+```
+POST /suggestions/from-topic
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "trending_topic_id": "uuid",
+  "connected_account_id": "uuid",
+  "content_type": "lesson",  // optional - uses rotation if omitted
+  "angle": "agree"            // optional - agree, disagree, hot_take, etc.
+}
+
+→ Generates AI content from a trending topic
+→ Applies content rotation guidance
+→ Includes Twitter growth rules automatically
+→ Returns suggestion immediately (201 Created)
+```
+
+**Request validation**:
+- `trending_topic_id`: UUID, required - The trending topic to write about
+- `connected_account_id`: UUID, required - Which account to generate for
+- `content_type`: enum, optional - Override rotation (story, lesson, question, proof, opinion, personal, vision, cta)
+- `angle`: enum, optional - Perspective to take
+  - `"agree"` - Agree and expand on the topic
+  - `"disagree"` - Contrarian take disagreeing with it
+  - `"hot_take"` - Spicy, attention-grabbing opinion
+  - `"question"` - Thought-provoking question about it
+  - `"personal_story"` - Share your personal experience
+  - `"explain"` - Explain in simple terms
+  - `"prediction"` - Make a prediction about where this is headed
+  - `"lesson"` - Extract an actionable lesson
+
+**Response** (201 Created):
+```json
+{
+  "code": 201,
+  "status": "Success",
+  "data": {
+    "suggestion": {
+      "id": "uuid",
+      "content": "Generated post content following all growth rules...",
+      "content_type": "lesson",
+      "angle": "agree",
+      "character_count": 275,
+      "status": "pending",
+      "created_at": "2025-11-03T15:00:00Z"
+    },
+    "source_topic": {
+      "id": "uuid",
+      "topic_name": "Bitcoin ETF approval",
+      "context": "SEC approved spot Bitcoin ETFs...",
+      "curated_topic_slug": "crypto"
+    },
+    "next_recommended": {
+      "key": "question",
+      "name": "Question / Poll",
+      "description": "Drives engagement and replies",
+      "next_prompt": "Yesterday was a teaching post. Today, ask your audience what they think.",
+      "position": 3
+    }
+  }
+}
+```
+
+**Features**:
+- ✅ Instant generation (not async like /posts/generate)
+- ✅ Respects content rotation automatically
+- ✅ Can override content type manually
+- ✅ Multiple angles to choose from
+- ✅ Includes Twitter growth rules in every generation
+- ✅ Returns next recommended type for rotation
+- ✅ Tracks source topic for analytics
+
+---
+
+### Update Rotation Settings
+
+**Endpoint**: `PATCH /connections/:id/rotation-settings`
+
+**Implementation**: `src/routes/public/connections.js:1040`
+
+**How it works**:
+```
+PATCH /connections/{connection_id}/rotation-settings
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "rotation_enabled": true,  // optional - enable/disable rotation
+  "reset_rotation": false     // optional - reset to start of cycle
+}
+
+→ Updates content rotation preferences
+→ Can reset rotation to start over
+→ Returns current rotation state
+```
+
+**Request validation**:
+- `rotation_enabled`: Boolean, optional - Enable or disable rotation feature
+- `reset_rotation`: Boolean, optional - Clear last_content_type and start fresh
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "rotation_enabled": true,
+    "last_content_type": "story",
+    "last_posted_at": "2025-11-02T14:30:00Z",
+    "next_recommended": {
+      "key": "lesson",
+      "name": "Lesson / Framework",
+      "description": "Teaches something actionable",
+      "next_prompt": "Yesterday was a story. Today, break down the lesson you learned.",
+      "position": 2
+    }
+  }
+}
+```
+
+**Use Cases**:
+- Enable/disable rotation without losing history
+- Reset rotation to start from beginning
+- Check current rotation state
+
+---
+
+### Enhanced: Mark Suggestion as Used
+
+**Endpoint**: `POST /suggestions/:id/use` (ENHANCED)
+
+**Implementation**: `src/routes/public/suggestions.js:178`
+
+**What's new**:
+- Now updates content rotation state automatically
+- Tracks `last_content_type` and `last_posted_at`
+- Returns next recommended content type
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Suggestion marked as used",
+    "status": "used",
+    "updated_rotation": {
+      "last_content_type": "lesson",
+      "last_posted_at": "2025-11-03T15:30:00Z",
+      "next_recommended": {
+        "key": "question",
+        "name": "Question / Poll",
+        "description": "Drives engagement and replies",
+        "position": 3
+      }
+    }
+  }
+}
+```
+
+**Features**:
+- ✅ Automatically advances rotation when used
+- ✅ Only updates rotation if suggestion has content_type
+- ✅ Returns next recommended type for UI
+- ✅ Backward compatible (works with old suggestions)
+
+---
+
+### How Content Rotation Works
+
+**The 8-Step Rotation Pattern**:
+```
+Story → Lesson → Question → Proof → Opinion → Personal → Vision → CTA → (repeat)
+```
+
+**Why Rotation Matters**:
+- ✅ Algorithm prefers content variety
+- ✅ Different types drive different engagement
+- ✅ Prevents content fatigue
+- ✅ Builds well-rounded audience relationship
+- ✅ Maximizes reach across different engagement types
+
+**Automatic Guidance**:
+1. User opens app → Sees "Today: post a Lesson"
+2. User browses trending topics
+3. User clicks "Write about this" → AI generates lesson-style post
+4. User posts → System marks as "lesson"
+5. Next day → "Today: post a Question"
+
+**Manual Override**:
+- User can select any content type manually
+- Rotation still tracks what they actually posted
+- Next suggestion based on what they last used
+
+**Integration with Trending Topics**:
+- Each trending topic shows suggested content type
+- User can choose different angle (agree, disagree, etc.)
+- AI prompt includes both content type + Twitter growth rules
+- Every generation follows algorithm best practices
+
+**Twitter Growth Rules** (Auto-applied):
+- Never start with "@" (limits reach)
+- First line = hook (expansion driver)
+- No links in main tweet (kills reach)
+- Minimal hashtags (1 max)
+- Line breaks for readability
+- Short sentences (1 idea per line)
+- Bold claims without hedging
+- Visual hierarchy with spacing
 
 ---
 
@@ -1573,6 +1961,10 @@ Headers:
 | List rules | ✅ | `GET /connections/:id/rules` | View all rules with filtering |
 | Update rule | ✅ | `PATCH /connections/:id/rules/:ruleId` | Edit or deactivate rule |
 | Delete rule | ✅ | `DELETE /connections/:id/rules/:ruleId` | Remove rule |
+| Get content types | ✅ | `GET /topics/content-types` | All 8 rotation content types |
+| Get personalized trending | ✅ | `GET /connections/:id/trending` | Trending topics + rotation context |
+| Generate from topic | ✅ | `POST /suggestions/from-topic` | Create suggestion from trending topic |
+| Update rotation settings | ✅ | `PATCH /connections/:id/rotation-settings` | Enable/disable/reset rotation |
 
 ---
 
@@ -1679,16 +2071,29 @@ Headers:
 ### First Time User:
 1. ✅ Authenticate with Clerk → Auto-creates account
 2. ✅ Connect Twitter (OAuth) → `POST /oauth/twitter/connect`
-3. ✅ Wait for sync (polling `GET /connections/:id/status`)
-4. ✅ Get suggestions → `GET /suggestions?connected_account_id=...`
-5. ✅ Generate custom tweet → `POST /posts/generate`
-6. ✅ Poll for completion → `GET /posts/:id`
+3. ✅ Select interests → `PUT /connections/:id/topics`
+4. ✅ Wait for sync (polling `GET /connections/:id/status`)
+5. ✅ Get trending topics feed → `GET /connections/:id/trending`
+6. ✅ Generate from trending topic → `POST /suggestions/from-topic`
+7. ✅ Mark as used (advances rotation) → `POST /suggestions/:id/use`
 
-### Daily User:
+### Daily User (Content Rotation Flow):
 1. ✅ Open app → Authenticate
-2. ✅ Get suggestions → `GET /suggestions?connected_account_id=...`
-3. ✅ Generate custom tweet → `POST /posts/generate`
-4. ✅ Mark suggestion as used → `POST /suggestions/:id/use`
+2. ✅ Get trending feed with rotation → `GET /connections/:id/trending`
+   - Sees "Today: post a Lesson"
+   - Sees mix of realtime news + evergreen topics
+3. ✅ Click trending topic → `POST /suggestions/from-topic`
+   - AI generates lesson-style post
+   - Includes Twitter growth rules
+4. ✅ Post content → `POST /suggestions/:id/use`
+   - Rotation advances to "Question" for tomorrow
+5. ✅ Next day → Sees "Today: post a Question"
+
+### Custom Prompt User:
+1. ✅ Open app → Authenticate
+2. ✅ Generate custom tweet → `POST /posts/generate`
+3. ✅ Poll for completion → `GET /posts/:id`
+4. ✅ Get suggestions → `GET /suggestions?connected_account_id=...`
 
 ### Draft-First User:
 1. ✅ Open app → Authenticate
@@ -1710,3 +2115,19 @@ Headers:
 - Suggestions have an `expires_at` timestamp (24 hours from creation) to mark them as "stale"
 - All suggestions are returned regardless of age; client decides filtering based on `expires_at`
 - Suggestion status only reflects user actions: `pending`, `used`, or `dismissed`
+
+### New: Content Rotation System
+- Tracks what content type user posted last
+- Auto-suggests next type in 8-step rotation
+- Can be enabled/disabled per connection
+- Works seamlessly with trending topics
+- Every generation includes Twitter growth rules
+- Rotation only advances when `POST /suggestions/:id/use` is called
+
+### New: Trending Topics Enhancement
+- Topics classified as realtime, evergreen, or hybrid
+- Realtime topics sync every 30 minutes from Twitter lists
+- Evergreen topics generated by AI (35 per category)
+- Daily rotation for evergreen content (7-day cycle)
+- User sees 5 realtime + 5 evergreen topics per feed refresh
+- Trending topics include context and engagement metrics

@@ -18,6 +18,11 @@ class CuratedTopic extends BaseModel {
         name: { type: "string", minLength: 1, maxLength: 255 },
         description: { type: ["string", "null"] },
         twitter_list_id: { type: ["string", "null"], maxLength: 255 },
+        topic_type: {
+          type: "string",
+          enum: ["realtime", "evergreen", "hybrid"],
+          default: "realtime"
+        },
         is_active: { type: "boolean", default: true },
         last_synced_at: { type: ["string", "null"], format: "date-time" },
         last_digested_at: { type: ["string", "null"], format: "date-time" },
@@ -71,7 +76,15 @@ class CuratedTopic extends BaseModel {
     return this.query()
       .where("is_active", true)
       .whereNotNull("twitter_list_id")
+      .whereIn("topic_type", ["realtime", "hybrid"])
       .orderBy("last_synced_at", "asc")
+      .orderBy("name", "asc");
+  }
+
+  static async getEvergreenTopics() {
+    return this.query()
+      .where("is_active", true)
+      .where("topic_type", "evergreen")
       .orderBy("name", "asc");
   }
 }

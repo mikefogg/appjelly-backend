@@ -4,6 +4,7 @@ import { requireAuth, requireAppContext, handleValidationErrors } from "#src/mid
 import { CuratedTopic, TrendingTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
+import { getAllContentTypes } from "#src/config/content-types.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -77,6 +78,23 @@ router.get(
     } catch (error) {
       console.error("Get trending topics error:", error);
       return res.status(500).json(formatError("Failed to retrieve trending topics"));
+    }
+  }
+);
+
+// GET /content-types - Get all content types for rotation (public catalog)
+router.get(
+  "/content-types",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const contentTypes = getAllContentTypes();
+
+      return res.status(200).json(successResponse(contentTypes));
+    } catch (error) {
+      console.error("Get content types error:", error);
+      return res.status(500).json(formatError("Failed to retrieve content types"));
     }
   }
 );

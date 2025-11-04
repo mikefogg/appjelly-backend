@@ -3,7 +3,8 @@
  *
  * Reads curated-topics.json and syncs to database
  * - Creates new topics if they don't exist (by slug)
- * - Updates existing topics (name, description, twitter_list_id)
+ * - Updates existing topics (name, description, twitter_list_id, topic_type)
+ * - Sets twitter_list_id to null for evergreen topics (no list needed)
  *
  * Usage: node tasks/admin/generate-topics.js
  */
@@ -34,7 +35,7 @@ async function generateTopics() {
 
     // Process each topic
     for (const topicData of topics) {
-      const { slug, name, description, twitter_list_id } = topicData;
+      const { slug, name, description, twitter_list_id, topic_type } = topicData;
 
       // Check if topic exists
       const existingTopic = await CuratedTopic.query()
@@ -46,7 +47,8 @@ async function generateTopics() {
         const hasChanges =
           existingTopic.name !== name ||
           existingTopic.description !== description ||
-          existingTopic.twitter_list_id !== twitter_list_id;
+          existingTopic.twitter_list_id !== twitter_list_id ||
+          existingTopic.topic_type !== topic_type;
 
         if (hasChanges) {
           await CuratedTopic.query()
@@ -55,6 +57,7 @@ async function generateTopics() {
               name,
               description,
               twitter_list_id,
+              topic_type,
               updated_at: new Date().toISOString(),
             });
 
@@ -71,6 +74,7 @@ async function generateTopics() {
           name,
           description,
           twitter_list_id,
+          topic_type: topic_type || 'realtime',
           is_active: true,
         });
 

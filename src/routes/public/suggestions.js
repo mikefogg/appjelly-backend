@@ -1,10 +1,17 @@
 import express from "express";
 import { param, query, body } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost } from "#src/models/index.js";
+import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, TrendingTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_POST } from "#src/background/queues/index.js";
+import ContentGenerationService from "#src/services/ContentGenerationService.js";
+import { getPlatformSystemPrompt } from "#src/config/platform-rules.js";
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const router = express.Router({ mergeParams: true });
 
@@ -169,7 +176,7 @@ router.get(
   }
 );
 
-// POST /suggestions/:id/use - Mark suggestion as used
+// POST /suggestions/:id/use - Mark suggestion as used and update rotation
 router.post(
   "/:id/use",
   requireAppContext,
@@ -181,7 +188,8 @@ router.post(
       const suggestion = await PostSuggestion.query()
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+        .where("app_id", res.locals.app.id)
+        .withGraphFetched("connected_account");
 
       if (!suggestion) {
         return res.status(404).json(formatError("Suggestion not found", 404));
@@ -193,9 +201,21 @@ router.post(
         await suggestion.markAsUsed();
       }
 
+      // Update rotation state if suggestion has content_type
+      let nextRecommended = null;
+      if (suggestion.content_type && suggestion.connected_account) {
+        await suggestion.connected_account.updateRotationState(suggestion.content_type);
+        nextRecommended = await suggestion.connected_account.getNextRecommendedContentType();
+      }
+
       return res.status(200).json(successResponse({
         message: "Suggestion marked as used",
         status: "used",
+        updated_rotation: nextRecommended ? {
+          last_content_type: suggestion.content_type,
+          last_posted_at: new Date(),
+          next_recommended: nextRecommended,
+        } : null,
       }));
     } catch (error) {
       console.error("Use suggestion error:", error);
@@ -508,6 +528,145 @@ router.post(
     } catch (error) {
       console.error("Generate suggestions error:", error);
       return res.status(500).json(formatError("Failed to trigger suggestion generation"));
+    }
+  }
+);
+
+// POST /suggestions/from-topic - Generate suggestion from trending topic
+router.post(
+  "/from-topic",
+  requireAppContext,
+  requireAuth,
+  [
+    body("trending_topic_id")
+      .isUUID()
+      .withMessage("trending_topic_id is required and must be a valid UUID"),
+    body("connected_account_id")
+      .isUUID()
+      .withMessage("connected_account_id is required and must be a valid UUID"),
+    body("content_type")
+      .optional()
+      .isString()
+      .isIn(["story", "lesson", "question", "proof", "opinion", "personal", "vision", "cta"])
+      .withMessage("content_type must be one of: story, lesson, question, proof, opinion, personal, vision, cta"),
+    body("angle")
+      .optional()
+      .isString()
+      .isIn(["agree", "disagree", "hot_take", "question", "personal_story", "explain", "prediction", "lesson"])
+      .withMessage("angle must be one of: agree, disagree, hot_take, question, personal_story, explain, prediction, lesson"),
+    body("custom_prompt")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 500 })
+      .withMessage("custom_prompt must be between 1 and 500 characters"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { trending_topic_id, connected_account_id, content_type, angle, custom_prompt } = req.body;
+
+      // Verify connected account belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(connected_account_id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connected account not found", 404));
+      }
+
+      // Fetch trending topic with curated topic details
+      const trendingTopic = await TrendingTopic.query()
+        .findById(trending_topic_id)
+        .withGraphFetched("curated_topic");
+
+      if (!trendingTopic) {
+        return res.status(404).json(formatError("Trending topic not found", 404));
+      }
+
+      // Build prompt with rotation context
+      const { prompt, contentType: selectedContentType, rotationPosition } =
+        ContentGenerationService.buildPromptWithRotation({
+          connectedAccount: connection,
+          trendingTopic,
+          contentType: content_type,
+          promptAngle: angle,
+          userPrompt: custom_prompt,
+        });
+
+      console.log(`[Suggestions from Topic] Generating for trending topic: ${trendingTopic.topic_name}`);
+
+      // Generate with AI using platform-specific system prompt
+      const systemPrompt = getPlatformSystemPrompt(connection.platform);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+
+      const generatedContent = response.choices[0].message.content;
+
+      // Create suggestion
+      const suggestion = await PostSuggestion.query().insert({
+        account_id: res.locals.account.id,
+        connected_account_id,
+        app_id: res.locals.app.id,
+        suggestion_type: "original_post",
+        content: generatedContent,
+        content_type: selectedContentType,
+        source_trending_topic_id: trending_topic_id,
+        reasoning: `Generated from trending topic: ${trendingTopic.topic_name}`,
+        status: "pending",
+        character_count: generatedContent.length,
+        angle: null, // Angle stored in metadata.prompt_angle instead
+        metadata: {
+          generation_source: "trending_topic",
+          trending_topic_id: trending_topic_id,
+          curated_topic_slug: trendingTopic.curated_topic.slug,
+          content_type: selectedContentType,
+          rotation_position: rotationPosition,
+          prompt_angle: angle,
+        },
+      });
+
+      // Get next recommended content type for response
+      const nextType = await connection.getNextRecommendedContentType();
+
+      const data = {
+        suggestion: {
+          id: suggestion.id,
+          content: suggestion.content,
+          content_type: suggestion.content_type,
+          angle: suggestion.angle,
+          character_count: suggestion.character_count,
+          status: suggestion.status,
+          created_at: suggestion.created_at,
+        },
+        source_topic: {
+          id: trendingTopic.id,
+          topic_name: trendingTopic.topic_name,
+          context: trendingTopic.context,
+          curated_topic_slug: trendingTopic.curated_topic.slug,
+        },
+        next_recommended: nextType,
+      };
+
+      return res.status(201).json(successResponse(data));
+    } catch (error) {
+      console.error("Generate from trending topic error:", error);
+      return res.status(500).json(formatError("Failed to generate suggestion from trending topic"));
     }
   }
 );

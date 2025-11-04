@@ -1,6 +1,7 @@
 import BaseModel from "#src/models/BaseModel.js";
 import ConnectedAccount from "#src/models/ConnectedAccount.js";
 import NetworkProfile from "#src/models/NetworkProfile.js";
+import CuratedTopic from "#src/models/CuratedTopic.js";
 
 class NetworkPost extends BaseModel {
   static get tableName() {
@@ -10,12 +11,14 @@ class NetworkPost extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["connected_account_id", "network_profile_id", "platform", "post_id", "content", "posted_at"],
+      required: ["platform", "post_id", "content", "posted_at"],
       properties: {
         ...super.jsonSchema.properties,
-        connected_account_id: { type: "string", format: "uuid" },
-        network_profile_id: { type: "string", format: "uuid" },
+        connected_account_id: { type: ["string", "null"], format: "uuid" },
+        network_profile_id: { type: ["string", "null"], format: "uuid" },
+        curated_topic_id: { type: ["string", "null"], format: "uuid" },
         platform: { type: "string", enum: ["twitter", "threads", "linkedin"] },
+        platform_user_id: { type: ["string", "null"] },
         post_id: { type: "string", minLength: 1 },
         content: { type: "string", minLength: 1 },
         posted_at: { type: "string", format: "date-time" },
@@ -49,6 +52,14 @@ class NetworkPost extends BaseModel {
         join: {
           from: "network_posts.network_profile_id",
           to: "network_profiles.id",
+        },
+      },
+      curated_topic: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: CuratedTopic,
+        join: {
+          from: "network_posts.curated_topic_id",
+          to: "curated_topics.id",
         },
       },
     };
