@@ -53,6 +53,11 @@ export default async function dispatchCuratedTopics(job) {
           delay,
           removeOnComplete: true,
           removeOnFail: false,
+          attempts: 3, // Retry up to 3 times
+          backoff: {
+            type: 'exponential',
+            delay: 60000, // Start with 1 minute, then 2min, 4min
+          },
         }
       );
 

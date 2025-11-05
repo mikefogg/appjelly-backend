@@ -94,19 +94,15 @@ export default async function digestRecentTopics(job) {
 
     console.log(`[Digest Recent Topics] Digesting "${topic.name}" (${topic.slug})`);
 
-    // Get posts since last digest (or all posts if never digested)
-    const sinceTime = topic.last_digested_at
-      ? new Date(topic.last_digested_at)
-      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // 7 days ago if never digested
-
+    // Get posts that haven't been digested yet
     const recentPosts = await NetworkPost.query()
       .where("curated_topic_id", topic.id)
-      .where("posted_at", ">", sinceTime.toISOString())
+      .whereNull("digested_at") // Only posts not yet digested
       .orderBy("engagement_score", "desc")
       .orderBy("posted_at", "desc")
-      .limit(100); // Analyze top 100 posts
+      .limit(100); // Analyze top 100 undigested posts
 
-    console.log(`[Digest Recent Topics] Found ${recentPosts.length} posts since ${sinceTime.toISOString()}`);
+    console.log(`[Digest Recent Topics] Found ${recentPosts.length} undigested posts`);
 
     if (recentPosts.length < MIN_POSTS_FOR_DIGEST) {
       console.log(`[Digest Recent Topics] Not enough posts (need ${MIN_POSTS_FOR_DIGEST}, have ${recentPosts.length}), skipping digest`);
@@ -125,17 +121,26 @@ export default async function digestRecentTopics(job) {
     console.log(`[Digest Recent Topics] AI identified ${trendingTopics.length} trending topics`);
 
     if (trendingTopics.length === 0) {
-      console.log(`[Digest Recent Topics] No trending topics identified`);
+      console.log(`[Digest Recent Topics] No trending topics identified, but marking posts as digested`);
+
+      // Mark posts as digested even if no trending topics found
+      const digestedAt = new Date().toISOString();
+      await NetworkPost.query()
+        .whereIn('id', recentPosts.map(p => p.id))
+        .patch({ digested_at: digestedAt });
+
       await topic.$query().patch({
-        last_digested_at: new Date().toISOString(),
+        last_digested_at: digestedAt,
       });
+
       return {
         success: true,
         trending_topics_found: 0,
+        posts_digested: recentPosts.length,
       };
     }
 
-    // Store trending topics in database
+    // Store trending topics in database (keeps history, doesn't delete old ones)
     let stored = 0;
     const now = new Date();
     const expiresAt = new Date(now.getTime() + TRENDING_TOPIC_EXPIRY_HOURS * 60 * 60 * 1000);
@@ -182,6 +187,13 @@ export default async function digestRecentTopics(job) {
       }
     }
 
+    // Mark all analyzed posts as digested
+    await NetworkPost.query()
+      .whereIn('id', recentPosts.map(p => p.id))
+      .patch({ digested_at: now.toISOString() });
+
+    console.log(`[Digest Recent Topics] Marked ${recentPosts.length} posts as digested`);
+
     // Update topic's last_digested_at
     await topic.$query().patch({
       last_digested_at: now.toISOString(),
@@ -199,6 +211,7 @@ export default async function digestRecentTopics(job) {
       success: true,
       topic: topic.name,
       posts_analyzed: recentPosts.length,
+      posts_digested: recentPosts.length,
       trending_topics_found: trendingTopics.length,
       trending_topics_stored: stored,
       expires_at: expiresAt.toISOString(),

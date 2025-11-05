@@ -20,6 +20,10 @@ import syncCuratedTopicJob from "#src/background/jobs/ghost/sync-curated-topic.j
 import digestRecentTopicsJob from "#src/background/jobs/ghost/digest-recent-topics.js";
 import generateEvergreenTopicsJob from "#src/background/jobs/ghost/generate-evergreen-topics.js";
 
+// Rate limit handling: add delay between Twitter API calls
+const RATE_LIMIT_DELAY_MS = 5000; // 5 seconds between topics to avoid rate limits
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Parse command line arguments
 const args = process.argv.slice(2);
 const slugArg = args.find(arg => arg.startsWith('--slug='))?.split('=')[1];
@@ -161,6 +165,16 @@ async function runTopicPipeline() {
       } catch (error) {
         console.error(`❌ Failed: ${error.message}`);
         failedCount++;
+      }
+
+      // Add delay between realtime/hybrid topics to avoid Twitter rate limits
+      // Only add delay if processing multiple topics and this is a realtime/hybrid topic
+      const isRealtime = topic.topic_type === 'realtime' || topic.topic_type === 'hybrid';
+      const hasMoreTopics = topics.indexOf(topic) < topics.length - 1;
+
+      if (isRealtime && hasMoreTopics && topics.length > 1) {
+        console.log(`⏱️  Waiting ${RATE_LIMIT_DELAY_MS/1000}s to avoid rate limits...`);
+        await sleep(RATE_LIMIT_DELAY_MS);
       }
     }
 

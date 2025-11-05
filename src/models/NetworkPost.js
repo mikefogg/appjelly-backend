@@ -29,6 +29,7 @@ class NetworkPost extends BaseModel {
         engagement_score: { type: ["number", "null"], minimum: 0 },
         topics: { type: ["array", "null"], items: { type: "string" } },
         sentiment: { type: ["string", "null"], enum: ["positive", "negative", "neutral", null] },
+        digested_at: { type: ["string", "null"], format: "date-time" },
         metadata: { type: "object" },
       },
     };

@@ -148,25 +148,12 @@ export default async function syncCuratedTopic(job) {
       throw new Error("No Ghost Twitter account found. Please connect a Twitter account and mark it as is_ghost_account=true");
     }
 
-    if (!ghostAccount.access_token) {
-      throw new Error("Ghost Twitter account has no access token. Please re-authenticate the account.");
-    }
-
     console.log(`[Sync Curated Topic] Using Ghost Twitter account: @${ghostAccount.username}`);
 
-    // Check if token needs refresh
-    if (ghostAccount.token_expires_at && new Date(ghostAccount.token_expires_at) < new Date()) {
-      console.log(`[Sync Curated Topic] Access token expired, refreshing...`);
-      const refreshedToken = await ghostAccount.refreshAccessToken();
-      if (!refreshedToken) {
-        throw new Error("Failed to refresh Ghost Twitter account token. Please re-authenticate the account.");
-      }
-    }
-
-    // Get decrypted access token (tokens are stored encrypted in database)
-    const accessToken = ghostAccount.getDecryptedAccessToken();
+    // Get valid access token (handles refresh if expired)
+    const accessToken = await ghostAccount.getValidAccessToken();
     if (!accessToken) {
-      throw new Error("Failed to decrypt Ghost Twitter account token. Please re-authenticate the account.");
+      throw new Error("Failed to get valid Ghost Twitter account token. Please re-authenticate the account.");
     }
 
     // Fetch tweets from the list
@@ -283,6 +270,17 @@ export default async function syncCuratedTopic(job) {
     };
 
   } catch (error) {
+    // Check if it's a rate limit error (429)
+    if (error.message && error.message.includes('Too Many Requests')) {
+      const attemptNumber = job.attemptsMade || 0;
+      console.error(
+        `[Sync Curated Topic] Rate limit hit (429). ` +
+        `Attempt ${attemptNumber + 1}/3. Will retry with exponential backoff.`
+      );
+      // Re-throw to trigger BullMQ retry logic
+      throw new Error('RATE_LIMIT: ' + error.message);
+    }
+
     console.error(`[Sync Curated Topic] Error:`, error);
     throw error;
   }
