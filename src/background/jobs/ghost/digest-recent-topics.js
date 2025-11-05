@@ -14,7 +14,8 @@ const openai = new OpenAI({
 export const JOB_DIGEST_RECENT_TOPICS = "digest-recent-topics";
 
 // Minimum posts needed to run a digest
-const MIN_POSTS_FOR_DIGEST = 10;
+// Set to 1 to capture breaking news immediately - even a single viral post can be newsworthy
+const MIN_POSTS_FOR_DIGEST = 1;
 
 // Trending topics expire after 48 hours
 const TRENDING_TOPIC_EXPIRY_HOURS = 48;

@@ -31,6 +31,8 @@ class NetworkPost extends BaseModel {
         sentiment: { type: ["string", "null"], enum: ["positive", "negative", "neutral", null] },
         digested_at: { type: ["string", "null"], format: "date-time" },
         metadata: { type: "object" },
+        created_at: { type: "string", format: "date-time" },
+        updated_at: { type: ["string", "null"], format: "date-time" },
       },
     };
   }
