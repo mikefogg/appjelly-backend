@@ -6,7 +6,7 @@
 import express from "express";
 import crypto from "crypto";
 import { requireAuth, requireAppContext } from "#src/middleware/index.js";
-import { ConnectedAccount } from "#src/models/index.js";
+import { ConnectedAccount, ConnectedAccountAuth } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { successResponse } from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
@@ -31,6 +31,126 @@ const stateStore = new Map();
 // In-memory mobile OAuth session storage
 // Maps session_token -> { accountId, appId, platform, createdAt }
 const mobileOAuthSessions = new Map();
+
+/**
+ * Create or update ConnectedAccount and ConnectedAccountAuth
+ * Helper to handle the new OAuth architecture
+ */
+async function createOrUpdateConnection({
+  accountId,
+  appId,
+  platform,
+  accessToken,
+  refreshToken,
+  expiresIn,
+  profile,
+  oauthService,
+  metadata = {},
+}) {
+  // Check for existing connection
+  const existing = await ConnectedAccount.query()
+    .where("account_id", accountId)
+    .where("app_id", appId)
+    .where("platform", platform)
+    .withGraphFetched('auth')
+    .first();
+
+  // For new connections: check by platform_user_id to handle reconnects
+  const existingByUserId = !existing ? await ConnectedAccount.query()
+    .where("account_id", accountId)
+    .where("app_id", appId)
+    .where("platform", platform)
+    .whereRaw("profile_data->>'platform_user_id' = ?", [profile.platform_user_id])
+    .withGraphFetched('auth')
+    .first() : null;
+
+  const conn = existing || existingByUserId;
+
+  if (conn) {
+    // Update existing connection
+    let authId = conn.connected_account_auth_id;
+
+    // Update or create auth
+    if (authId && conn.auth) {
+      // Update existing auth
+      await ConnectedAccountAuth.query()
+        .findById(authId)
+        .patch({
+          access_token: encrypt(accessToken),
+          refresh_token: refreshToken ? encrypt(refreshToken) : conn.auth.refresh_token,
+          token_expires_at: oauthService.calculateExpiresAt(expiresIn),
+          metadata: {
+            ...(conn.auth.metadata || {}),
+            platform_user_id: profile.platform_user_id,
+            username: profile.username,
+            profile_data: profile.profile_data,
+          },
+          updated_at: new Date().toISOString(),
+        });
+    } else {
+      // Create new auth for existing account
+      const newAuth = await ConnectedAccountAuth.query().insert({
+        access_token: encrypt(accessToken),
+        refresh_token: refreshToken ? encrypt(refreshToken) : null,
+        token_expires_at: oauthService.calculateExpiresAt(expiresIn),
+        metadata: {
+          platform_user_id: profile.platform_user_id,
+          username: profile.username,
+          profile_data: profile.profile_data,
+        },
+      });
+      authId = newAuth.id;
+    }
+
+    // Update connected account
+    const updated = await conn.$query().patchAndFetch({
+      connected_account_auth_id: authId,
+      platform, // In case it was custom before
+      label: profile.username,
+      username: profile.username,
+      display_name: profile.display_name,
+      profile_data: profile.profile_data,
+      sync_status: "pending",
+      is_active: true,
+      metadata: {
+        ...conn.metadata,
+        ...metadata,
+        reconnected_at: new Date().toISOString(),
+      },
+    });
+
+    return updated;
+  } else {
+    // Create new auth
+    const newAuth = await ConnectedAccountAuth.query().insert({
+      access_token: encrypt(accessToken),
+      refresh_token: refreshToken ? encrypt(refreshToken) : null,
+      token_expires_at: oauthService.calculateExpiresAt(expiresIn),
+      metadata: {
+        platform_user_id: profile.platform_user_id,
+        username: profile.username,
+        profile_data: profile.profile_data,
+      },
+    });
+
+    // Create new connection
+    const connection = await ConnectedAccount.query().insert({
+      account_id: accountId,
+      app_id: appId,
+      platform,
+      connected_account_auth_id: newAuth.id,
+      label: profile.username,
+      username: profile.username,
+      display_name: profile.display_name,
+      profile_data: profile.profile_data,
+      sync_status: "pending",
+      is_active: true,
+      metadata,
+    });
+
+    return connection;
+  }
+}
 
 /**
  * Generate and store CSRF state token
@@ -228,49 +348,20 @@ router.get(
           // Get user profile
           const profile = await oauthService.getUserProfile(tokenData.access_token);
 
-          // Check for existing connection
-          const existing = await ConnectedAccount.query()
-            .where("account_id", mobileSession.accountId)
-            .where("app_id", mobileSession.appId)
-            .where("platform", platform)
-            .where("platform_user_id", profile.platform_user_id)
-            .first();
-
-          let connection;
-
-          if (existing) {
-            // Update existing connection
-            connection = await existing.$query().patchAndFetch({
-              access_token: encrypt(tokenData.access_token),
-              refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
-              token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
-              username: profile.username,
-              display_name: profile.display_name,
-              profile_data: profile.profile_data,
-              sync_status: "pending",
-              is_active: true,
-              metadata: {
-                ...existing.metadata,
-                reconnected_at: new Date().toISOString(),
-              },
-            });
-          } else {
-            // Create new connection
-            connection = await ConnectedAccount.query().insert({
-              account_id: mobileSession.accountId,
-              app_id: mobileSession.appId,
-              platform,
-              platform_user_id: profile.platform_user_id,
-              username: profile.username,
-              display_name: profile.display_name,
-              profile_data: profile.profile_data,
-              access_token: encrypt(tokenData.access_token),
-              refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
-              token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
-              sync_status: "pending",
-              is_active: true,
-            });
-          }
+          // Create or update connection
+          const connection = await createOrUpdateConnection({
+            accountId: mobileSession.accountId,
+            appId: mobileSession.appId,
+            platform,
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token,
+            expiresIn: tokenData.expires_in,
+            profile,
+            oauthService,
+            metadata: {
+              connection_method: "mobile_oauth",
+            },
+          });
 
           // Trigger background sync jobs (don't await - let them run async)
           ghostQueue.add(JOB_SYNC_NETWORK, {
@@ -331,49 +422,20 @@ router.get(
       // Fetch user profile
       const profile = await oauthService.getUserProfile(accessToken);
 
-      // Check for existing connection
-      const existing = await ConnectedAccount.query()
-        .where("account_id", stateData.accountId)
-        .where("app_id", stateData.appId)
-        .where("platform", platform)
-        .where("platform_user_id", profile.platform_user_id)
-        .first();
-
-      let connection;
-
-      if (existing) {
-        // Update existing connection
-        connection = await existing.$query().patchAndFetch({
-          access_token: encrypt(accessToken),
-          refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
-          token_expires_at: oauthService.calculateExpiresAt(expiresIn),
-          username: profile.username,
-          display_name: profile.display_name,
-          profile_data: profile.profile_data,
-          sync_status: "pending",
-          is_active: true,
-          metadata: {
-            ...existing.metadata,
-            reconnected_at: new Date().toISOString(),
-          },
-        });
-      } else {
-        // Create new connection
-        connection = await ConnectedAccount.query().insert({
-          account_id: stateData.accountId,
-          app_id: stateData.appId,
-          platform,
-          platform_user_id: profile.platform_user_id,
-          username: profile.username,
-          display_name: profile.display_name,
-          profile_data: profile.profile_data,
-          access_token: encrypt(accessToken),
-          refresh_token: tokenData.refresh_token ? encrypt(tokenData.refresh_token) : null,
-          token_expires_at: oauthService.calculateExpiresAt(expiresIn),
-          sync_status: "pending",
-          is_active: true,
-        });
-      }
+      // Create or update connection
+      const connection = await createOrUpdateConnection({
+        accountId: stateData.accountId,
+        appId: stateData.appId,
+        platform,
+        accessToken,
+        refreshToken: tokenData.refresh_token,
+        expiresIn,
+        profile,
+        oauthService,
+        metadata: {
+          connection_method: "web_oauth",
+        },
+      });
 
       // Trigger background sync jobs in parallel
       await Promise.all([
@@ -387,16 +449,16 @@ router.get(
 
       // Return success response
       // In a real app, redirect to a success page
-      return res.status(200).json(successResponse({
-        message: "Successfully connected account",
-        connection: {
-          id: connection.id,
-          platform: connection.platform,
-          username: connection.username,
-          display_name: connection.display_name,
-          sync_status: connection.sync_status,
-        },
-      }));
+      return res.status(200).json({
+        id: connection.id,
+        platform: connection.platform,
+        label: connection.label,
+        username: connection.username,
+        is_connected: !!connection.connected_account_auth_id,
+        sync_status: connection.sync_status,
+        last_synced_at: connection.last_synced_at,
+        created_at: connection.created_at,
+      });
     } catch (error) {
       console.error("OAuth callback error:", error);
       return res.status(500).json(
@@ -453,53 +515,20 @@ router.post(
       // Fetch user profile
       const profile = await oauthService.getUserProfile(finalAccessToken);
 
-      // Check for existing connection
-      const existing = await ConnectedAccount.query()
-        .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id)
-        .where("platform", platform)
-        .where("platform_user_id", profile.platform_user_id)
-        .first();
-
-      let connection;
-
-      if (existing) {
-        // Update existing connection
-        connection = await existing.$query().patchAndFetch({
-          access_token: encrypt(finalAccessToken),
-          refresh_token: refresh_token ? encrypt(refresh_token) : null,
-          token_expires_at: oauthService.calculateExpiresAt(finalExpiresIn),
-          username: profile.username,
-          display_name: profile.display_name,
-          profile_data: profile.profile_data,
-          sync_status: "pending",
-          is_active: true,
-          metadata: {
-            ...existing.metadata,
-            reconnected_at: new Date().toISOString(),
-            connection_method: "native_oauth",
-          },
-        });
-      } else {
-        // Create new connection
-        connection = await ConnectedAccount.query().insert({
-          account_id: res.locals.account.id,
-          app_id: res.locals.app.id,
-          platform,
-          platform_user_id: profile.platform_user_id,
-          username: profile.username,
-          display_name: profile.display_name,
-          profile_data: profile.profile_data,
-          access_token: encrypt(finalAccessToken),
-          refresh_token: refresh_token ? encrypt(refresh_token) : null,
-          token_expires_at: oauthService.calculateExpiresAt(finalExpiresIn),
-          sync_status: "pending",
-          is_active: true,
-          metadata: {
-            connection_method: "native_oauth",
-          },
-        });
-      }
+      // Create or update connection
+      const connection = await createOrUpdateConnection({
+        accountId: res.locals.account.id,
+        appId: res.locals.app.id,
+        platform,
+        accessToken: finalAccessToken,
+        refreshToken: refresh_token,
+        expiresIn: finalExpiresIn,
+        profile,
+        oauthService,
+        metadata: {
+          connection_method: "native_oauth",
+        },
+      });
 
       // Trigger background sync jobs in parallel
       await Promise.all([
@@ -512,16 +541,16 @@ router.post(
       ]);
 
       // Return success response
-      return res.status(201).json(successResponse({
-        message: "Successfully connected account",
-        connection: {
-          id: connection.id,
-          platform: connection.platform,
-          username: connection.username,
-          display_name: connection.display_name,
-          sync_status: connection.sync_status,
-        },
-      }));
+      return res.status(201).json({
+        id: connection.id,
+        platform: connection.platform,
+        label: connection.label,
+        username: connection.username,
+        is_connected: !!connection.connected_account_auth_id,
+        sync_status: connection.sync_status,
+        last_synced_at: connection.last_synced_at,
+        created_at: connection.created_at,
+      });
     } catch (error) {
       console.error("OAuth connect error:", error);
       return res.status(500).json(
@@ -550,8 +579,9 @@ router.get(
       const data = connections.map(conn => ({
         id: conn.id,
         platform: conn.platform,
-        username: conn.username,
-        display_name: conn.display_name,
+        label: conn.label, // User-facing name (e.g., "Personal Twitter", "@handle", "My Blog")
+        username: conn.username, // Platform username (e.g., "@johndoe")
+        is_connected: !!conn.connected_account_auth_id,
         sync_status: conn.sync_status,
         last_synced_at: conn.last_synced_at,
         created_at: conn.created_at,
@@ -561,6 +591,208 @@ router.get(
     } catch (error) {
       console.error("Get OAuth connections error:", error);
       return res.status(500).json(formatError("Failed to retrieve connections"));
+    }
+  }
+);
+
+/**
+ * POST /oauth/accounts
+ * Create a manual (non-OAuth) account
+ * Allows users to create accounts without connecting OAuth
+ */
+router.post(
+  "/accounts",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { platform, label, username } = req.body;
+
+      // Validate required fields
+      if (!label || label.trim().length === 0) {
+        return res.status(400).json(
+          formatError("label is required", 400)
+        );
+      }
+
+      // Validate platform if provided
+      const validPlatforms = ["twitter", "linkedin", "threads", "facebook", "ghost", "custom", null];
+      if (platform && !validPlatforms.includes(platform)) {
+        return res.status(400).json(
+          formatError(`Invalid platform. Supported: ${validPlatforms.filter(p => p).join(", ")}`, 400)
+        );
+      }
+
+      // Create manual account
+      const account = await ConnectedAccount.query().insert({
+        account_id: res.locals.account.id,
+        app_id: res.locals.app.id,
+        platform: platform || "custom",
+        label: label.trim(),
+        username: username?.trim() || null,
+        connected_account_auth_id: null, // Manual account - no OAuth
+        sync_status: "ready", // Manual accounts are always "ready"
+        is_active: true,
+        metadata: {
+          connection_method: "manual",
+          created_at: new Date().toISOString(),
+        },
+      });
+
+      return res.status(201).json({
+        id: account.id,
+        platform: account.platform,
+        label: account.label,
+        username: account.username,
+        is_connected: false,
+        sync_status: account.sync_status,
+        last_synced_at: account.last_synced_at,
+        created_at: account.created_at,
+      });
+    } catch (error) {
+      console.error("Create manual account error:", error);
+      return res.status(500).json(
+        formatError(`Failed to create account: ${error.message}`)
+      );
+    }
+  }
+);
+
+/**
+ * PATCH /oauth/accounts/:id
+ * Update an existing account
+ * Platform can only be changed for manual (non-connected) accounts
+ */
+router.patch(
+  "/accounts/:id",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { platform, label, username } = req.body;
+
+      // Find account
+      const account = await ConnectedAccount.query()
+        .findById(id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!account) {
+        return res.status(404).json(
+          formatError("Account not found", 404)
+        );
+      }
+
+      // Build update object
+      const updates = {};
+
+      if (label !== undefined) {
+        if (label.trim().length === 0) {
+          return res.status(400).json(
+            formatError("label cannot be empty", 400)
+          );
+        }
+        updates.label = label.trim();
+      }
+
+      if (username !== undefined) {
+        updates.username = username?.trim() || null;
+      }
+
+      if (platform !== undefined) {
+        // Validate platform change
+        if (account.connected_account_auth_id) {
+          return res.status(400).json(
+            formatError("Cannot change platform for connected accounts. Disconnect first.", 400)
+          );
+        }
+
+        const validPlatforms = ["twitter", "linkedin", "threads", "facebook", "ghost", "custom", null];
+        if (platform && !validPlatforms.includes(platform)) {
+          return res.status(400).json(
+            formatError(`Invalid platform. Supported: ${validPlatforms.filter(p => p).join(", ")}`, 400)
+          );
+        }
+
+        updates.platform = platform || "custom";
+      }
+
+      // Update account
+      const updated = await account.$query().patchAndFetch(updates);
+
+      return res.status(200).json({
+        id: updated.id,
+        platform: updated.platform,
+        label: updated.label,
+        username: updated.username,
+        is_connected: !!updated.connected_account_auth_id,
+        sync_status: updated.sync_status,
+        last_synced_at: updated.last_synced_at,
+        created_at: updated.created_at,
+      });
+    } catch (error) {
+      console.error("Update account error:", error);
+
+      // Check if it's the platform lock validation error from model
+      if (error.message && error.message.includes("Cannot change platform")) {
+        return res.status(400).json(formatError(error.message, 400));
+      }
+
+      return res.status(500).json(
+        formatError(`Failed to update account: ${error.message}`)
+      );
+    }
+  }
+);
+
+/**
+ * DELETE /oauth/accounts/:id
+ * Delete (soft delete) an account
+ */
+router.delete(
+  "/accounts/:id",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Find account
+      const account = await ConnectedAccount.query()
+        .findById(id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!account) {
+        return res.status(404).json(
+          formatError("Account not found", 404)
+        );
+      }
+
+      if (!account.is_deletable) {
+        return res.status(400).json(
+          formatError("This account cannot be deleted", 400)
+        );
+      }
+
+      // Soft delete by marking as inactive
+      await account.$query().patch({
+        is_active: false,
+        metadata: {
+          ...account.metadata,
+          deleted_at: new Date().toISOString(),
+        },
+      });
+
+      return res.status(200).json(successResponse({
+        message: "Account deleted successfully",
+      }));
+    } catch (error) {
+      console.error("Delete account error:", error);
+      return res.status(500).json(
+        formatError(`Failed to delete account: ${error.message}`)
+      );
     }
   }
 );

@@ -81,13 +81,8 @@ export const requireAuth = async (req, res, next) => {
         // Reload with subscription data
         account = await Account.findWithSubscriptionData(userId, app.id);
 
-        // Create default ghost account for new user
-        try {
-          await ConnectedAccount.findOrCreateGhostAccount(account.id, app.id);
-        } catch (ghostError) {
-          console.warn("Failed to create ghost account:", ghostError);
-          // Don't fail the whole request if ghost account creation fails
-        }
+        // Note: We no longer auto-create a ghost account
+        // Users must explicitly create accounts via POST /oauth/accounts or OAuth connection
       } catch (creationError) {
         console.error("Failed to auto-create account:", creationError);
         return res.status(500).json(formatError("Failed to create account"));
@@ -99,14 +94,6 @@ export const requireAuth = async (req, res, next) => {
       return res
         .status(404)
         .json(formatError("Account not found for this app", 404));
-    }
-
-    // Ensure ghost account exists (for existing users who signed up before this feature)
-    try {
-      await ConnectedAccount.findOrCreateGhostAccount(account.id, app.id);
-    } catch (ghostError) {
-      console.warn("Failed to ensure ghost account:", ghostError);
-      // Don't fail the request if ghost account creation fails
     }
 
     // Auto-set timezone from header if not already set

@@ -15,6 +15,7 @@ export { default as Subscription } from "#src/models/Subscription.js";
 
 // Ghost models
 export { default as ConnectedAccount } from "#src/models/ConnectedAccount.js";
+export { default as ConnectedAccountAuth } from "#src/models/ConnectedAccountAuth.js";
 export { default as NetworkProfile } from "#src/models/NetworkProfile.js";
 export { default as NetworkPost } from "#src/models/NetworkPost.js";
 export { default as UserPostHistory } from "#src/models/UserPostHistory.js";

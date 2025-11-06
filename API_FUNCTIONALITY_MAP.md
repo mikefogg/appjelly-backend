@@ -27,6 +27,8 @@ X-App-Slug: ghost
 
 **Status**: ✅ IMPLEMENTED
 
+### 2a. Connect with OAuth (Auto-Posting Enabled)
+
 **Endpoint**: `POST /oauth/:platform/connect`
 
 **Implementation**: `src/routes/public/oauth.js`
@@ -51,7 +53,7 @@ Body: {
 → Validates access token with platform API
 → Fetches user profile (username, display name, etc.)
 → Encrypts tokens with AES-256-GCM
-→ Creates ConnectedAccount record
+→ Creates ConnectedAccount + ConnectedAccountAuth records
 → Triggers background sync job
 → Returns connection details
 ```
@@ -66,8 +68,10 @@ Body: {
     "connection": {
       "id": "uuid",
       "platform": "twitter",
+      "label": "@yourusername",
       "username": "yourusername",
       "display_name": "Your Name",
+      "is_connected": true,
       "sync_status": "pending"
     }
   }
@@ -75,22 +79,173 @@ Body: {
 ```
 
 **Security Features**:
+- ✅ OAuth tokens stored in separate `connected_account_auth` table
 - ✅ Tokens encrypted with AES-256-GCM before storage
 - ✅ Duplicate connection prevention
 - ✅ User ownership validation
 - ✅ Platform API verification
 
-**Database fields** (`connected_accounts` table):
-- `platform`: "twitter" | "facebook" | "linkedin"
-- `platform_user_id`: Platform user ID
-- `username`: @handle or display name
-- `access_token`: OAuth token (encrypted)
-- `refresh_token`: OAuth refresh token (encrypted)
-- `token_expires_at`: Token expiration timestamp
+**React Native Integration**: See `REACT_NATIVE_OAUTH_GUIDE.md` for complete expo-auth-session examples
+
+---
+
+### 2b. Create Manual Account (Content Generation Only)
+
+**Endpoint**: `POST /oauth/accounts`
+
+**Implementation**: `src/routes/public/oauth.js:604`
+
+**How it works**:
+```
+POST /oauth/accounts
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "platform": "twitter",  // optional, defaults to "custom"
+  "label": "Personal Twitter",  // required
+  "username": "@handle"  // optional
+}
+
+→ Creates ConnectedAccount WITHOUT OAuth
+→ Platform is editable until OAuth connected
+→ Content generation works, but no auto-posting
+→ User can connect OAuth later
+```
+
+**Valid Platforms**:
+`"twitter"`, `"linkedin"`, `"threads"`, `"facebook"`, `"ghost"`, `"custom"`, or `null`
+
+**Response** (201 Created):
+```json
+{
+  "code": 201,
+  "status": "Success",
+  "data": {
+    "message": "Manual account created successfully",
+    "account": {
+      "id": "uuid",
+      "platform": "twitter",
+      "label": "Personal Twitter",
+      "username": "@handle",
+      "is_connected": false
+    }
+  }
+}
+```
+
+**Use Cases**:
+- ✅ Start generating content before connecting OAuth
+- ✅ Test content style for different platforms
+- ✅ Create "Custom" accounts for blog/newsletter content
+- ✅ Manage multiple content personas per platform
+
+---
+
+### 2c. Update Account
+
+**Endpoint**: `PATCH /oauth/accounts/:id`
+
+**Implementation**: `src/routes/public/oauth.js:667`
+
+**How it works**:
+```
+PATCH /oauth/accounts/{account_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+Body: {
+  "label": "New Label",
+  "username": "@newhandle",
+  "platform": "linkedin"  // ONLY if is_connected === false
+}
+
+→ Updates account details
+→ Platform changes ONLY allowed for manual accounts
+→ Connected accounts: platform is locked
+```
+
+**Platform Editing Rules**:
+- ✅ Can edit platform when `is_connected === false`
+- ❌ Cannot edit platform when `is_connected === true`
+- If user tries to change platform on connected account, returns 400 error
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Account updated successfully",
+    "account": {
+      "id": "uuid",
+      "platform": "linkedin",
+      "label": "Work Account",
+      "username": "@newhandle",
+      "is_connected": false
+    }
+  }
+}
+```
+
+---
+
+### 2d. Delete Account
+
+**Endpoint**: `DELETE /oauth/accounts/:id`
+
+**Implementation**: `src/routes/public/oauth.js:754`
+
+**How it works**:
+```
+DELETE /oauth/accounts/{account_id}
+Headers:
+  Authorization: Bearer <clerk_jwt>
+  X-App-Slug: ghost
+
+→ Soft deletes account (is_active = false)
+→ Adds deleted_at timestamp
+→ Cannot delete if is_deletable = false
+```
+
+**Response** (200 OK):
+```json
+{
+  "code": 200,
+  "status": "Success",
+  "data": {
+    "message": "Account deleted successfully"
+  }
+}
+```
+
+---
+
+### Database Architecture
+
+**Connected Accounts** (`connected_accounts` table):
+- `id`: UUID
+- `platform`: "twitter" | "linkedin" | "threads" | "facebook" | "ghost" | "custom" | null
+- `label`: User-friendly name (e.g., "Personal Twitter", "Work LinkedIn")
+- `username`: Optional display handle
+- `connected_account_auth_id`: FK to auth table (null for manual accounts)
 - `sync_status`: "pending" | "syncing" | "ready" | "error"
 - `is_active`: true | false (for soft deletes)
+- `is_connected`: Computed - whether OAuth is connected
 
-**React Native Integration**: See `REACT_NATIVE_OAUTH_GUIDE.md` for complete expo-auth-session examples
+**OAuth Credentials** (`connected_account_auth` table - NEW):
+- `id`: UUID
+- `access_token`: Encrypted OAuth token
+- `refresh_token`: Encrypted refresh token
+- `token_expires_at`: Token expiration timestamp
+- `metadata`: Platform-specific OAuth data (user_id, username, etc.)
+
+**Key Changes**:
+- OAuth tokens now stored separately in `connected_account_auth`
+- Accounts can exist without OAuth (manual mode)
+- `label` is primary user-facing identifier
+- `platform` is editable for manual accounts
+- `is_connected` indicates OAuth status
 
 ---
 

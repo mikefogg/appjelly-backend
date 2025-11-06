@@ -9,6 +9,7 @@ import WritingStyle from "#src/models/WritingStyle.js";
 import UserPostHistory from "#src/models/UserPostHistory.js";
 import SamplePost from "#src/models/SamplePost.js";
 import Rule from "#src/models/Rule.js";
+import ConnectedAccountAuth from "#src/models/ConnectedAccountAuth.js";
 import { decrypt, encrypt } from "#src/helpers/encryption.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
@@ -22,21 +23,20 @@ class ConnectedAccount extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["account_id", "app_id", "platform", "username"],
+      required: ["account_id", "app_id"],
       properties: {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
         app_id: { type: "string", format: "uuid" },
         platform: {
-          type: "string",
-          enum: ["twitter", "facebook", "linkedin", "threads", "ghost"],
+          type: ["string", "null"],
+          enum: ["twitter", "facebook", "linkedin", "threads", "ghost", "custom", null],
+          default: "custom",
         },
-        platform_user_id: { type: ["string", "null"], minLength: 1 },
-        username: { type: "string", minLength: 1 },
-        display_name: { type: ["string", "null"] },
-        access_token: { type: ["string", "null"], minLength: 1 },
-        refresh_token: { type: ["string", "null"] },
-        token_expires_at: { type: ["string", "null"], format: "date-time" },
+        label: { type: ["string", "null"], minLength: 1 }, // User-facing name
+        username: { type: ["string", "null"], minLength: 1 }, // Optional display handle
+        display_name: { type: ["string", "null"] }, // Kept for backward compat
+        connected_account_auth_id: { type: ["string", "null"], format: "uuid" }, // Link to OAuth
         profile_data: { type: "object" },
         last_synced_at: { type: ["string", "null"], format: "date-time" },
         last_analyzed_at: { type: ["string", "null"], format: "date-time" },
@@ -75,6 +75,14 @@ class ConnectedAccount extends BaseModel {
         join: {
           from: "connected_accounts.app_id",
           to: "apps.id",
+        },
+      },
+      auth: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: ConnectedAccountAuth,
+        join: {
+          from: "connected_accounts.connected_account_auth_id",
+          to: "connected_account_auth.id",
         },
       },
       network_profiles: {
@@ -136,6 +144,23 @@ class ConnectedAccount extends BaseModel {
     };
   }
 
+  /**
+   * Prevent platform changes for connected accounts
+   */
+  async $beforeUpdate(opt, queryContext) {
+    await super.$beforeUpdate(opt, queryContext);
+
+    // If platform is changing and account is connected, block it
+    if (this.platform && this.$old && this.$old.platform !== this.platform) {
+      if (this.connected_account_auth_id || this.$old.connected_account_auth_id) {
+        throw new Error(
+          'Cannot change platform for connected accounts. ' +
+          'Disconnect the account first to change platform.'
+        );
+      }
+    }
+  }
+
   static async findByAccountAndApp(accountId, appId) {
     return this.query()
       .where("account_id", accountId)
@@ -176,10 +201,10 @@ class ConnectedAccount extends BaseModel {
         account_id: accountId,
         app_id: appId,
         platform: "ghost",
-        platform_user_id: null,
-        username: "My Drafts",
+        label: "My Drafts",
+        username: null,
         display_name: "My Drafts",
-        access_token: null,
+        connected_account_auth_id: null, // No OAuth for ghost accounts
         sync_status: "ready", // Ghost accounts are always ready
         is_default: true,
         is_deletable: false,
@@ -283,39 +308,54 @@ class ConnectedAccount extends BaseModel {
   }
 
   /**
+   * Check if account is connected via OAuth
+   */
+  isConnected() {
+    return !!this.connected_account_auth_id;
+  }
+
+  /**
    * Get decrypted access token
-   * Tokens are stored encrypted in database
+   * Tokens are stored encrypted in database and in auth table
    */
   getDecryptedAccessToken() {
-    if (!this.access_token) return null;
-    try {
-      return decrypt(this.access_token);
-    } catch (error) {
-      console.error("Failed to decrypt access token:", error);
-      return null;
+    // Check if we have auth loaded
+    if (this.auth) {
+      if (!this.auth.access_token) return null;
+      try {
+        return decrypt(this.auth.access_token);
+      } catch (error) {
+        console.error("Failed to decrypt access token:", error);
+        return null;
+      }
     }
+    return null;
   }
 
   /**
    * Get decrypted refresh token
-   * Tokens are stored encrypted in database
+   * Tokens are stored encrypted in database and in auth table
    */
   getDecryptedRefreshToken() {
-    if (!this.refresh_token) return null;
-    try {
-      return decrypt(this.refresh_token);
-    } catch (error) {
-      console.error("Failed to decrypt refresh token:", error);
-      return null;
+    // Check if we have auth loaded
+    if (this.auth) {
+      if (!this.auth.refresh_token) return null;
+      try {
+        return decrypt(this.auth.refresh_token);
+      } catch (error) {
+        console.error("Failed to decrypt refresh token:", error);
+        return null;
+      }
     }
+    return null;
   }
 
   /**
    * Check if access token is expired
    */
   isTokenExpired() {
-    if (!this.token_expires_at) return false;
-    return new Date() >= new Date(this.token_expires_at);
+    if (!this.auth || !this.auth.token_expires_at) return false;
+    return new Date() >= new Date(this.auth.token_expires_at);
   }
 
   /**
@@ -472,6 +512,22 @@ class ConnectedAccount extends BaseModel {
    * @returns {Promise<string|null>} Valid access token
    */
   async getValidAccessToken() {
+    // Check if connected
+    if (!this.isConnected()) {
+      console.warn(`[ConnectedAccount] Account ${this.id} not connected`);
+      return null;
+    }
+
+    // Load auth if not already loaded
+    if (!this.auth) {
+      await this.$fetchGraph('auth');
+    }
+
+    if (!this.auth) {
+      console.warn(`[ConnectedAccount] No auth found for account ${this.id}`);
+      return null;
+    }
+
     // Check if token exists
     const currentToken = this.getDecryptedAccessToken();
     if (!currentToken) {
@@ -525,13 +581,27 @@ class ConnectedAccount extends BaseModel {
       // Refresh the token
       const tokenData = await oauthService.refreshAccessToken(refreshToken);
 
-      // Update the token in the database
+      // Update the token in the auth table
+      await ConnectedAccountAuth.query()
+        .findById(this.connected_account_auth_id)
+        .patch({
+          access_token: encrypt(tokenData.access_token),
+          refresh_token: tokenData.refresh_token
+            ? encrypt(tokenData.refresh_token)
+            : this.auth.refresh_token,
+          token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
+          updated_at: new Date().toISOString(),
+        });
+
+      // Update local instance
+      this.auth.access_token = encrypt(tokenData.access_token);
+      if (tokenData.refresh_token) {
+        this.auth.refresh_token = encrypt(tokenData.refresh_token);
+      }
+      this.auth.token_expires_at = oauthService.calculateExpiresAt(tokenData.expires_in);
+
+      // Update metadata
       await this.$query().patch({
-        access_token: encrypt(tokenData.access_token),
-        refresh_token: tokenData.refresh_token
-          ? encrypt(tokenData.refresh_token)
-          : this.refresh_token,
-        token_expires_at: oauthService.calculateExpiresAt(tokenData.expires_in),
         metadata: {
           ...this.metadata,
           last_token_refresh: new Date().toISOString(),
