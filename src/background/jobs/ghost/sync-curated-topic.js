@@ -270,18 +270,15 @@ export default async function syncCuratedTopic(job) {
     };
 
   } catch (error) {
-    // Check if it's a rate limit error (429)
+    // Log the error - no retries, will be picked up in next hourly cycle
     if (error.message && error.message.includes('Too Many Requests')) {
-      const attemptNumber = job.attemptsMade || 0;
       console.error(
         `[Sync Curated Topic] Rate limit hit (429). ` +
-        `Attempt ${attemptNumber + 1}/3. Will retry with exponential backoff.`
+        `Will skip this sync and try again in next hourly cycle.`
       );
-      // Re-throw to trigger BullMQ retry logic
-      throw new Error('RATE_LIMIT: ' + error.message);
+    } else {
+      console.error(`[Sync Curated Topic] Error:`, error);
     }
-
-    console.error(`[Sync Curated Topic] Error:`, error);
     throw error;
   }
 }

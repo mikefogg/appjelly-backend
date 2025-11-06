@@ -10,9 +10,10 @@ import { JOB_SYNC_CURATED_TOPIC } from "./sync-curated-topic.js";
 
 export const JOB_DISPATCH_CURATED_TOPICS = "dispatch-curated-topics";
 
-// Stagger delay: 90 seconds (1.5 minutes) between each sync job
-// This spreads 10 jobs across 15 minutes, staying under rate limit
-const STAGGER_DELAY_MS = 90 * 1000; // 90 seconds
+// Stagger delay: 3 minutes between each sync job
+// This spreads 10 jobs across 30 minutes to avoid bursts and stay well under rate limits
+// No retries - if any job fails, it will be picked up in the next hourly cycle
+const STAGGER_DELAY_MS = 180 * 1000; // 3 minutes (180 seconds)
 
 export default async function dispatchCuratedTopics(job) {
   console.log(`[Dispatch Curated Topics] Starting dispatch...`);
@@ -53,11 +54,7 @@ export default async function dispatchCuratedTopics(job) {
           delay,
           removeOnComplete: true,
           removeOnFail: false,
-          attempts: 3, // Retry up to 3 times
-          backoff: {
-            type: 'exponential',
-            delay: 60000, // Start with 1 minute, then 2min, 4min
-          },
+          attempts: 1, // No retries - if it fails, wait for next hourly cycle
         }
       );
 

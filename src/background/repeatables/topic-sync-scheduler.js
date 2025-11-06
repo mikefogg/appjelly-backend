@@ -6,7 +6,7 @@ const key = "Topic Sync Scheduler";
 
 export const startScheduledJobs = async () => {
   try {
-    // Add repeatable job - every 30 minutes
+    // Add repeatable job - every hour
     await ghostQueue.add(
       JOB_DISPATCH_CURATED_TOPICS,
       {
@@ -14,7 +14,7 @@ export const startScheduledJobs = async () => {
       },
       {
         repeat: {
-          pattern: "*/30 * * * *", // Every 30 minutes
+          pattern: "0 * * * *", // Every hour at the top of the hour
         },
         jobId: "dispatch-curated-topics-automated",
         removeOnComplete: 10,
@@ -22,7 +22,7 @@ export const startScheduledJobs = async () => {
       }
     );
 
-    console.log(chalk.green("[%s] Scheduled dispatch-curated-topics job (every 30 minutes)"), key);
+    console.log(chalk.green("[%s] Scheduled dispatch-curated-topics job (every hour)"), key);
   } catch (error) {
     console.error(chalk.red("[%s] Failed to schedule topic sync"), key, error);
     throw error;
