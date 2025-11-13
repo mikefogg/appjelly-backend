@@ -57,28 +57,56 @@ class SuggestionGeneratorService {
       const systemPrompt = promptBuilder.buildInterestBasedSystemPrompt(platform, voice, samplePosts, rules);
       const userPrompt = this.buildInterestBasedPrompt(topics, trendingTopics, suggestionCount, suggestionsConfig);
 
-      const response = await openai.chat.completions.create({
-        model: this.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.8,
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
-      });
+      let model = this.getModelForTask('post_suggestion');
+      try {
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.8,
+          max_tokens: 1500,
+          response_format: { type: "json_object" },
+        });
 
-      const result = JSON.parse(response.choices[0].message.content);
-      const usage = response.usage;
+        const result = JSON.parse(response.choices[0].message.content);
+        const usage = response.usage;
 
-      return {
-        suggestions: result.suggestions || [],
-        metadata: {
-          total_tokens: usage.total_tokens,
-          generation_time_seconds: (Date.now() - startTime) / 1000,
-          ai_model: this.model,
-        },
-      };
+        return {
+          suggestions: result.suggestions || [],
+          metadata: {
+            total_tokens: usage.total_tokens,
+            generation_time_seconds: (Date.now() - startTime) / 1000,
+            ai_model: this.model,
+          },
+        };
+      } catch (error) {
+        console.warn('gpt-5 failed, falling back to gpt-5-nano:', error);
+        model = this.getModelForTask('post_suggestion', true);
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.8,
+          max_tokens: 1500,
+          response_format: { type: "json_object" },
+        });
+
+        const result = JSON.parse(response.choices[0].message.content);
+        const usage = response.usage;
+
+        return {
+          suggestions: result.suggestions || [],
+          metadata: {
+            total_tokens: usage.total_tokens,
+            generation_time_seconds: (Date.now() - startTime) / 1000,
+            ai_model: this.model,
+          },
+        };
+      }
     } catch (error) {
       console.error("Interest-based suggestion generation error:", error);
       throw new Error(`Failed to generate interest-based suggestions: ${error.message}`);
@@ -113,28 +141,56 @@ class SuggestionGeneratorService {
       const systemPrompt = promptBuilder.buildSuggestionSystemPrompt(platform, voice, samplePosts, rules, writingStyle);
       const userPrompt = this.buildSuggestionPrompt(trendingPosts, trendingTopics, topics, suggestionCount, suggestionsConfig);
 
-      const response = await openai.chat.completions.create({
-        model: this.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.8,
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
-      });
+      let model = this.getModelForTask('post_suggestion');
+      try {
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.8,
+          max_tokens: 1500,
+          response_format: { type: "json_object" },
+        });
 
-      const result = JSON.parse(response.choices[0].message.content);
-      const usage = response.usage;
+        const result = JSON.parse(response.choices[0].message.content);
+        const usage = response.usage;
 
-      return {
-        suggestions: result.suggestions || [],
-        metadata: {
-          total_tokens: usage.total_tokens,
-          generation_time_seconds: (Date.now() - startTime) / 1000,
-          ai_model: this.model,
-        },
-      };
+        return {
+          suggestions: result.suggestions || [],
+          metadata: {
+            total_tokens: usage.total_tokens,
+            generation_time_seconds: (Date.now() - startTime) / 1000,
+            ai_model: this.model,
+          },
+        };
+      } catch (error) {
+        console.warn('gpt-5 failed, falling back to gpt-5-nano:', error);
+        model = this.getModelForTask('post_suggestion', true);
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.8,
+          max_tokens: 1500,
+          response_format: { type: "json_object" },
+        });
+
+        const result = JSON.parse(response.choices[0].message.content);
+        const usage = response.usage;
+
+        return {
+          suggestions: result.suggestions || [],
+          metadata: {
+            total_tokens: usage.total_tokens,
+            generation_time_seconds: (Date.now() - startTime) / 1000,
+            ai_model: this.model,
+          },
+        };
+      }
     } catch (error) {
       console.error("Suggestion generation error:", error);
       throw new Error(`Failed to generate suggestions: ${error.message}`);
@@ -182,6 +238,12 @@ class SuggestionGeneratorService {
     }
   }
 
+  getModelForTask(taskType, useFallback = false) {
+    if (taskType === 'post_suggestion') {
+      return useFallback ? 'gpt-5-nano' : 'gpt-5';
+    }
+    return process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  }
 
   /**
    * Build prompt for interest-based suggestions

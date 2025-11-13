@@ -600,21 +600,42 @@ router.post(
       // Generate with AI using platform-specific system prompt
       const systemPrompt = getPlatformSystemPrompt(connection.platform);
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: systemPrompt
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 500,
-      });
+      let model = 'gpt-5';
+      try {
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 500,
+        });
+      } catch (error) {
+        console.warn('gpt-5 failed, falling back to gpt-5-nano:', error);
+        model = 'gpt-5-nano';
+        const response = await openai.chat.completions.create({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
+            },
+            {
+              role: "user",
+              content: prompt
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 500,
+        });
+      }
 
       const generatedContent = response.choices[0].message.content;
 
