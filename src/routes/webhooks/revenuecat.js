@@ -22,13 +22,12 @@ router.post("/:appSlug", async (req, res) => {
     }
 
     // Validate authorization header
-    // RevenueCat sends the Bearer token you configure in their dashboard
+    // RevenueCat sends the header value exactly as configured in their dashboard
     if (process.env.REVENUECAT_WEBHOOK_AUTH_KEY) {
       const authHeader = req.headers["authorization"];
-      const expectedAuth = `Bearer ${process.env.REVENUECAT_WEBHOOK_AUTH_KEY}`;
 
-      if (!authHeader || authHeader !== expectedAuth) {
-        return res.status(401).json(formatError("Invalid webhook authorization"));
+      if (!authHeader || authHeader !== process.env.REVENUECAT_WEBHOOK_AUTH_KEY) {
+        return res.status(401).json(formatError("Invalid webhook authorization", 401));
       }
     }
 
