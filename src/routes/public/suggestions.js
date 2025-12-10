@@ -1,9 +1,20 @@
 import express from "express";
 import { param, query, body } from "express-validator";
-import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
+import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
 import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, TrendingTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
-import { successResponse } from "#src/serializers/index.js";
+import {
+  successResponse,
+  suggestionListSerializer,
+  suggestionDetailSerializer,
+  suggestionUseSerializer,
+  suggestionDismissSerializer,
+  generateResponsePendingSerializer,
+  replyOpportunitySerializer,
+  generateSuggestionsQueuedSerializer,
+  suggestionFromTopicSerializer,
+  inspiringPostSerializer,
+} from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_POST } from "#src/background/queues/index.js";
 import ContentGenerationService from "#src/services/ContentGenerationService.js";
 import { getPlatformSystemPrompt } from "#src/config/platform-rules.js";
@@ -53,31 +64,7 @@ router.get(
         .withGraphFetched("[source_post.network_profile]")
         .orderBy("created_at", "desc");
 
-      const data = suggestions.map(suggestion => ({
-        id: suggestion.id,
-        suggestion_type: suggestion.suggestion_type,
-        content: suggestion.content,
-        reasoning: suggestion.reasoning,
-        character_count: suggestion.character_count,
-        topics: suggestion.topics,
-        angle: suggestion.angle,
-        length: suggestion.length,
-        status: suggestion.status,
-        source_post: suggestion.source_post ? {
-          id: suggestion.source_post.id,
-          content: suggestion.source_post.content,
-          posted_at: suggestion.source_post.posted_at,
-          engagement_score: suggestion.source_post.engagement_score,
-          author: {
-            username: suggestion.source_post.network_profile?.username,
-            display_name: suggestion.source_post.network_profile?.display_name,
-          },
-        } : null,
-        created_at: suggestion.created_at,
-        expires_at: suggestion.expires_at,
-      }));
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(suggestions.map(suggestionListSerializer)));
     } catch (error) {
       console.error("Get suggestions error:", error);
       return res.status(500).json(formatError("Failed to retrieve suggestions"));
@@ -114,61 +101,11 @@ router.get(
             .withGraphFetched("network_profile")
             .orderBy("engagement_score", "desc");
 
-          inspiringPosts = networkPosts.map(post => ({
-            id: post.id,
-            content: post.content,
-            posted_at: post.posted_at,
-            engagement_score: post.engagement_score,
-            like_count: post.like_count,
-            retweet_count: post.retweet_count,
-            reply_count: post.reply_count,
-            topics: post.topics,
-            author: {
-              username: post.network_profile?.username,
-              display_name: post.network_profile?.display_name,
-              profile_image_url: post.network_profile?.profile_image_url,
-            },
-          }));
+          inspiringPosts = networkPosts;
         }
       }
 
-      const data = {
-        id: suggestion.id,
-        suggestion_type: suggestion.suggestion_type,
-        content: suggestion.content,
-        reasoning: suggestion.reasoning,
-        character_count: suggestion.character_count,
-        topics: suggestion.topics,
-        angle: suggestion.angle,
-        length: suggestion.length,
-        status: suggestion.status,
-        source_post: suggestion.source_post ? {
-          id: suggestion.source_post.id,
-          content: suggestion.source_post.content,
-          posted_at: suggestion.source_post.posted_at,
-          engagement_score: suggestion.source_post.engagement_score,
-          author: {
-            username: suggestion.source_post.network_profile?.username,
-            display_name: suggestion.source_post.network_profile?.display_name,
-            profile_image_url: suggestion.source_post.network_profile?.profile_image_url,
-          },
-        } : null,
-        inspiring_posts: inspiringPosts,
-        metadata: {
-          generation_type: suggestion.metadata?.generation_type,
-          trending_topics_count: suggestion.metadata?.trending_topics_count,
-          trending_posts_count: suggestion.metadata?.trending_posts_count,
-        },
-        connected_account: {
-          id: suggestion.connected_account.id,
-          platform: suggestion.connected_account.platform,
-          username: suggestion.connected_account.username,
-        },
-        created_at: suggestion.created_at,
-        expires_at: suggestion.expires_at,
-      };
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(suggestionDetailSerializer(suggestion, inspiringPosts)));
     } catch (error) {
       console.error("Get suggestion error:", error);
       return res.status(500).json(formatError("Failed to retrieve suggestion"));
@@ -208,15 +145,7 @@ router.post(
         nextRecommended = await suggestion.connected_account.getNextRecommendedContentType();
       }
 
-      return res.status(200).json(successResponse({
-        message: "Suggestion marked as used",
-        status: "used",
-        updated_rotation: nextRecommended ? {
-          last_content_type: suggestion.content_type,
-          last_posted_at: new Date(),
-          next_recommended: nextRecommended,
-        } : null,
-      }));
+      return res.status(200).json(successResponse(suggestionUseSerializer(suggestion, nextRecommended)));
     } catch (error) {
       console.error("Use suggestion error:", error);
       return res.status(500).json(formatError("Failed to mark suggestion as used"));
@@ -248,10 +177,9 @@ router.post(
         await suggestion.markAsDismissed();
       }
 
-      return res.status(200).json(successResponse({
-        message: "Suggestion dismissed",
-        dismissed_at: suggestion.dismissed_at || new Date().toISOString(),
-      }));
+      return res.status(200).json(successResponse(
+        suggestionDismissSerializer(suggestion.dismissed_at || new Date().toISOString())
+      ));
     } catch (error) {
       console.error("Dismiss suggestion error:", error);
       return res.status(500).json(formatError("Failed to dismiss suggestion"));
@@ -264,6 +192,7 @@ router.post(
   "/:id/generate-response",
   requireAppContext,
   requireAuth,
+  requireSubscription("ghost_pro"),
   [
     ...suggestionParamValidators,
     body("angle")
@@ -354,23 +283,9 @@ router.post(
         artifactId: artifact.id,
       });
 
-      // Return pending response
-      const data = {
-        id: artifact.id,
-        status: "pending",
-        message: "Response generation queued",
-        input: {
-          id: input.id,
-          prompt: input.prompt,
-        },
-        reply_to: {
-          post_id: suggestion.source_post.id,
-          author: sourceAuthor,
-          content: sourceContent,
-        },
-      };
-
-      return res.status(202).json(successResponse(data));
+      return res.status(202).json(successResponse(
+        generateResponsePendingSerializer(artifact, input, suggestion.source_post, sourceAuthor)
+      ));
     } catch (error) {
       console.error("Generate response error:", error);
       return res.status(500).json(formatError("Failed to generate response"));
@@ -451,22 +366,7 @@ router.get(
         .orderBy("engagement_score", "desc")
         .limit(parseInt(limit));
 
-      const data = replyOpportunities.map(post => ({
-        id: post.id,
-        content: post.content,
-        posted_at: post.posted_at,
-        engagement_score: post.engagement_score,
-        like_count: post.like_count,
-        retweet_count: post.retweet_count,
-        reply_count: post.reply_count,
-        author: {
-          username: post.network_profile?.username,
-          display_name: post.network_profile?.display_name,
-          profile_image_url: post.network_profile?.profile_image_url,
-        },
-      }));
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(replyOpportunities.map(replyOpportunitySerializer)));
     } catch (error) {
       console.error("Get reply opportunities error:", error);
       return res.status(500).json(formatError("Failed to retrieve reply opportunities"));
@@ -479,6 +379,7 @@ router.post(
   "/generate",
   requireAppContext,
   requireAuth,
+  requireSubscription("ghost_pro"),
   [
     body("connected_account_id")
       .isUUID()
@@ -515,16 +416,9 @@ router.post(
         automated: true, // Set to true for testing push notifications
       });
 
-      return res.status(202).json(successResponse({
-        message: "Suggestion generation queued",
-        generation_started_at: generationStartedAt,
-        polling_instructions: {
-          poll_endpoint: `/suggestions?connected_account_id=${connection.id}`,
-          check_for_suggestions_created_after: generationStartedAt,
-          estimated_completion_seconds: 15,
-          recommended_poll_interval_ms: 2000,
-        },
-      }));
+      return res.status(202).json(successResponse(
+        generateSuggestionsQueuedSerializer(connection.id, generationStartedAt)
+      ));
     } catch (error) {
       console.error("Generate suggestions error:", error);
       return res.status(500).json(formatError("Failed to trigger suggestion generation"));
@@ -537,6 +431,7 @@ router.post(
   "/from-topic",
   requireAppContext,
   requireAuth,
+  requireSubscription("ghost_pro"),
   [
     body("trending_topic_id")
       .isUUID()
@@ -601,8 +496,9 @@ router.post(
       const systemPrompt = getPlatformSystemPrompt(connection.platform);
 
       let model = 'gpt-5';
+      let response;
       try {
-        const response = await openai.chat.completions.create({
+        response = await openai.chat.completions.create({
           model,
           messages: [
             {
@@ -620,7 +516,7 @@ router.post(
       } catch (error) {
         console.warn('gpt-5 failed, falling back to gpt-5-nano:', error);
         model = 'gpt-5-nano';
-        const response = await openai.chat.completions.create({
+        response = await openai.chat.completions.create({
           model,
           messages: [
             {
@@ -665,26 +561,9 @@ router.post(
       // Get next recommended content type for response
       const nextType = await connection.getNextRecommendedContentType();
 
-      const data = {
-        suggestion: {
-          id: suggestion.id,
-          content: suggestion.content,
-          content_type: suggestion.content_type,
-          angle: suggestion.angle,
-          character_count: suggestion.character_count,
-          status: suggestion.status,
-          created_at: suggestion.created_at,
-        },
-        source_topic: {
-          id: trendingTopic.id,
-          topic_name: trendingTopic.topic_name,
-          context: trendingTopic.context,
-          curated_topic_slug: trendingTopic.curated_topic.slug,
-        },
-        next_recommended: nextType,
-      };
-
-      return res.status(201).json(successResponse(data));
+      return res.status(201).json(successResponse(
+        suggestionFromTopicSerializer(suggestion, trendingTopic, nextType)
+      ));
     } catch (error) {
       console.error("Generate from trending topic error:", error);
       return res.status(500).json(formatError("Failed to generate suggestion from trending topic"));

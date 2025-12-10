@@ -1,5 +1,6 @@
 import BaseModel from "#src/models/BaseModel.js";
 import Account from "#src/models/Account.js";
+import App from "#src/models/App.js";
 
 class Subscription extends BaseModel {
   static get tableName() {
@@ -13,6 +14,7 @@ class Subscription extends BaseModel {
       properties: {
         ...super.jsonSchema.properties,
         account_id: { type: "string", format: "uuid" },
+        app_id: { type: ["string", "null"], format: "uuid" },
         rc_user_id: { type: "string", minLength: 1 },
         rc_entitlement: { type: "string" },
         rc_product_id: { type: "string" },
@@ -33,6 +35,14 @@ class Subscription extends BaseModel {
         join: {
           from: "subscriptions.account_id",
           to: "accounts.id",
+        },
+      },
+      app: {
+        relation: BaseModel.BelongsToOneRelation,
+        modelClass: App,
+        join: {
+          from: "subscriptions.app_id",
+          to: "apps.id",
         },
       },
     };

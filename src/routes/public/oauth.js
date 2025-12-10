@@ -8,7 +8,11 @@ import crypto from "crypto";
 import { requireAuth, requireAppContext } from "#src/middleware/index.js";
 import { ConnectedAccount, ConnectedAccountAuth } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
-import { successResponse } from "#src/serializers/index.js";
+import {
+  successResponse,
+  connectionOAuthSerializer,
+  messageResponse,
+} from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
 import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
@@ -447,18 +451,8 @@ router.get(
         }),
       ]);
 
-      // Return success response
-      // In a real app, redirect to a success page
-      return res.status(200).json({
-        id: connection.id,
-        platform: connection.platform,
-        label: connection.label,
-        username: connection.username,
-        is_connected: !!connection.connected_account_auth_id,
-        sync_status: connection.sync_status,
-        last_synced_at: connection.last_synced_at,
-        created_at: connection.created_at,
-      });
+      // Return success response (callback doesn't go through successResponse wrapper)
+      return res.status(200).json(connectionOAuthSerializer(connection));
     } catch (error) {
       console.error("OAuth callback error:", error);
       return res.status(500).json(
@@ -541,16 +535,7 @@ router.post(
       ]);
 
       // Return success response
-      return res.status(201).json({
-        id: connection.id,
-        platform: connection.platform,
-        label: connection.label,
-        username: connection.username,
-        is_connected: !!connection.connected_account_auth_id,
-        sync_status: connection.sync_status,
-        last_synced_at: connection.last_synced_at,
-        created_at: connection.created_at,
-      });
+      return res.status(201).json(successResponse(connectionOAuthSerializer(connection)));
     } catch (error) {
       console.error("OAuth connect error:", error);
       return res.status(500).json(
@@ -576,18 +561,7 @@ router.get(
         .where("is_active", true)
         .orderBy("created_at", "desc");
 
-      const data = connections.map(conn => ({
-        id: conn.id,
-        platform: conn.platform,
-        label: conn.label, // User-facing name (e.g., "Personal Twitter", "@handle", "My Blog")
-        username: conn.username, // Platform username (e.g., "@johndoe")
-        is_connected: !!conn.connected_account_auth_id,
-        sync_status: conn.sync_status,
-        last_synced_at: conn.last_synced_at,
-        created_at: conn.created_at,
-      }));
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(connections.map(connectionOAuthSerializer)));
     } catch (error) {
       console.error("Get OAuth connections error:", error);
       return res.status(500).json(formatError("Failed to retrieve connections"));
@@ -639,16 +613,7 @@ router.post(
         },
       });
 
-      return res.status(201).json({
-        id: account.id,
-        platform: account.platform,
-        label: account.label,
-        username: account.username,
-        is_connected: false,
-        sync_status: account.sync_status,
-        last_synced_at: account.last_synced_at,
-        created_at: account.created_at,
-      });
+      return res.status(201).json(successResponse(connectionOAuthSerializer(account)));
     } catch (error) {
       console.error("Create manual account error:", error);
       return res.status(500).json(
@@ -721,16 +686,7 @@ router.patch(
       // Update account
       const updated = await account.$query().patchAndFetch(updates);
 
-      return res.status(200).json({
-        id: updated.id,
-        platform: updated.platform,
-        label: updated.label,
-        username: updated.username,
-        is_connected: !!updated.connected_account_auth_id,
-        sync_status: updated.sync_status,
-        last_synced_at: updated.last_synced_at,
-        created_at: updated.created_at,
-      });
+      return res.status(200).json(connectionOAuthSerializer(updated));
     } catch (error) {
       console.error("Update account error:", error);
 
@@ -785,9 +741,7 @@ router.delete(
         },
       });
 
-      return res.status(200).json(successResponse({
-        message: "Account deleted successfully",
-      }));
+      return res.status(200).json(successResponse(messageResponse("Account deleted successfully")));
     } catch (error) {
       console.error("Delete account error:", error);
       return res.status(500).json(

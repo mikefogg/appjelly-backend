@@ -19,16 +19,18 @@ services:
       - 'data.appjelly.io'
 
   # Our Ghost Worker Class - Main AI & Content Generation Worker
+  # Throng handles multiple workers internally via GHOST_WORKERS env var (default: 2)
   - type: worker
     name: ghost-worker
     runtime: node
     branch: ghost
     buildCommand: npm install
     startCommand: node src/background/managers/ghost.js
-    numInstances: 2
+    numInstances: 1
     plan: standard
 
   # Our Cleanup Worker Class - Handles expired media and cleanup tasks
+  # Throng handles multiple workers internally via CLEANUP_WORKERS env var (default: 1)
   - type: worker
     name: ghost-cleanup-worker
     runtime: node

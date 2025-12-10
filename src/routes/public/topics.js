@@ -3,7 +3,11 @@ import { param } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
 import { CuratedTopic, TrendingTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
-import { successResponse } from "#src/serializers/index.js";
+import {
+  successResponse,
+  curatedTopicListSerializer,
+  topicTrendingResponseSerializer,
+} from "#src/serializers/index.js";
 import { getAllContentTypes } from "#src/config/content-types.js";
 
 const router = express.Router({ mergeParams: true });
@@ -21,15 +25,7 @@ router.get(
     try {
       const topics = await CuratedTopic.getActiveTopics();
 
-      const data = topics.map(topic => ({
-        id: topic.id,
-        slug: topic.slug,
-        name: topic.name,
-        description: topic.description,
-        is_active: topic.is_active,
-      }));
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(topics.map(curatedTopicListSerializer)));
     } catch (error) {
       console.error("Get topics error:", error);
       return res.status(500).json(formatError("Failed to retrieve topics"));
@@ -55,26 +51,7 @@ router.get(
       // Get recent trending topics for this curated topic
       const trendingTopics = await TrendingTopic.getRecentForTopic(req.params.topicId, 48);
 
-      const data = {
-        curated_topic: {
-          id: topic.id,
-          slug: topic.slug,
-          name: topic.name,
-          last_synced_at: topic.last_synced_at,
-          last_digested_at: topic.last_digested_at,
-        },
-        trending_topics: trendingTopics.map(t => ({
-          id: t.id,
-          topic_name: t.topic_name,
-          context: t.context,
-          mention_count: t.mention_count,
-          total_engagement: parseFloat(t.total_engagement || 0),
-          detected_at: t.detected_at,
-          expires_at: t.expires_at,
-        })),
-      };
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(topicTrendingResponseSerializer(topic, trendingTopics)));
     } catch (error) {
       console.error("Get trending topics error:", error);
       return res.status(500).json(formatError("Failed to retrieve trending topics"));

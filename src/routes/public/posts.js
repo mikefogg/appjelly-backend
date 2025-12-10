@@ -1,9 +1,19 @@
 import express from "express";
 import { param, body } from "express-validator";
-import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
+import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
 import { Input, Artifact, ConnectedAccount } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
-import { successResponse, paginatedResponse } from "#src/serializers/index.js";
+import {
+  successResponse,
+  paginatedResponse,
+  postListSerializer,
+  postDetailSerializer,
+  draftCreateSerializer,
+  postGeneratePendingSerializer,
+  postUpdateSerializer,
+  postImprovementSerializer,
+  messageResponse,
+} from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_POST } from "#src/background/queues/index.js";
 import  aiService from "#src/helpers/ai-service.js";
 
@@ -73,20 +83,7 @@ router.post(
         },
       });
 
-      const data = {
-        id: artifact.id,
-        status: "draft",
-        content: artifact.content,
-        character_count: content.length,
-        connected_account: {
-          id: connection.id,
-          platform: connection.platform,
-          username: connection.username,
-        },
-        created_at: artifact.created_at,
-      };
-
-      return res.status(201).json(successResponse(data));
+      return res.status(201).json(successResponse(draftCreateSerializer(artifact, connection)));
     } catch (error) {
       console.error("Create draft error:", error);
       return res.status(500).json(formatError("Failed to create draft"));
@@ -99,6 +96,7 @@ router.post(
   "/generate",
   requireAppContext,
   requireAuth,
+  requireSubscription("ghost_pro"),
   [
     body("prompt")
       .isString()
@@ -189,23 +187,7 @@ router.post(
         artifactId: artifact.id,
       });
 
-      // Return pending response
-      const data = {
-        id: artifact.id,
-        status: "pending",
-        message: "Post generation queued",
-        input: {
-          id: input.id,
-          prompt: input.prompt,
-        },
-        connected_account: {
-          id: connection.id,
-          platform: connection.platform,
-          username: connection.username,
-        },
-      };
-
-      return res.status(202).json(successResponse(data));
+      return res.status(202).json(successResponse(postGeneratePendingSerializer(artifact, input, connection)));
     } catch (error) {
       console.error("Generate post error:", error);
       return res.status(500).json(formatError("Failed to generate post"));
@@ -262,29 +244,7 @@ router.get(
 
       const artifacts = await query.page(pagination.page - 1, pagination.per_page);
 
-      const data = artifacts.results.map(artifact => ({
-        id: artifact.id,
-        status: artifact.status,
-        content: artifact.content,
-        character_count: artifact.content?.length || 0,
-        is_draft: artifact.isDraft(),
-        angle: artifact.input?.metadata?.angle || artifact.metadata?.angle || null,
-        length: artifact.input?.metadata?.length || artifact.metadata?.length || null,
-        topics: artifact.metadata?.topics || [],
-        input: artifact.input ? {
-          id: artifact.input.id,
-          prompt: artifact.input.prompt,
-        } : null,
-        connected_account: artifact.connected_account ? {
-          id: artifact.connected_account.id,
-          platform: artifact.connected_account.platform,
-          username: artifact.connected_account.username,
-        } : null,
-        created_at: artifact.created_at,
-        updated_at: artifact.updated_at,
-      }));
-
-      return res.status(200).json(paginatedResponse(data, {
+      return res.status(200).json(paginatedResponse(artifacts.results.map(postListSerializer), {
         ...pagination,
         total: artifacts.total,
         has_more: artifacts.results.length === pagination.per_page,
@@ -316,35 +276,7 @@ router.get(
         return res.status(404).json(formatError("Post not found", 404));
       }
 
-      const data = {
-        id: artifact.id,
-        status: artifact.status,
-        content: artifact.content,
-        character_count: artifact.content?.length || 0,
-        angle: artifact.input?.metadata?.angle || artifact.metadata?.angle || null,
-        length: artifact.input?.metadata?.length || artifact.metadata?.length || null,
-        topics: artifact.metadata?.topics || [],
-        input: artifact.input ? {
-          id: artifact.input.id,
-          prompt: artifact.input.prompt,
-        } : null,
-        connected_account: artifact.connected_account ? {
-          id: artifact.connected_account.id,
-          platform: artifact.connected_account.platform,
-          username: artifact.connected_account.username,
-        } : null,
-        generation_info: {
-          total_tokens: artifact.total_tokens,
-          cost_usd: artifact.cost_usd,
-          generation_time_seconds: artifact.generation_time_seconds,
-          ai_model: artifact.ai_model,
-        },
-        metadata: artifact.metadata,
-        created_at: artifact.created_at,
-        updated_at: artifact.updated_at,
-      };
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(postDetailSerializer(artifact)));
     } catch (error) {
       console.error("Get post error:", error);
       return res.status(500).json(formatError("Failed to retrieve post"));
@@ -389,11 +321,7 @@ router.patch(
         },
       });
 
-      return res.status(200).json(successResponse({
-        id: artifact.id,
-        content,
-        message: "Post updated successfully",
-      }));
+      return res.status(200).json(successResponse(postUpdateSerializer(artifact, content)));
     } catch (error) {
       console.error("Update post error:", error);
       return res.status(500).json(formatError("Failed to update post"));
@@ -406,6 +334,7 @@ router.post(
   "/:id/improve",
   requireAppContext,
   requireAuth,
+  requireSubscription("ghost_pro"),
   [
     ...postParamValidators,
     body("instructions")
@@ -448,26 +377,9 @@ router.post(
       });
       const generationTime = (Date.now() - startTime) / 1000;
 
-      const data = {
-        original: {
-          content: artifact.content,
-          character_count: artifact.content.length,
-        },
-        improved: {
-          content: aiResponse.text,
-          character_count: aiResponse.text.length,
-        },
-        instructions: instructions || null,
-        generation_info: {
-          total_tokens: aiResponse.usage.totalTokens,
-          cost_usd: aiResponse.cost,
-          generation_time_seconds: generationTime,
-          ai_model: aiResponse.model,
-        },
-        message: "AI improvement generated. Use PATCH /posts/:id to save if you like it.",
-      };
-
-      return res.status(200).json(successResponse(data));
+      return res.status(200).json(successResponse(
+        postImprovementSerializer(artifact, aiResponse.text, instructions, aiResponse, generationTime)
+      ));
     } catch (error) {
       console.error("Improve post error:", error);
       return res.status(500).json(formatError("Failed to improve post"));
@@ -502,9 +414,7 @@ router.post(
         },
       });
 
-      return res.status(200).json(successResponse({
-        message: "Post marked as copied",
-      }));
+      return res.status(200).json(successResponse(messageResponse("Post marked as copied")));
     } catch (error) {
       console.error("Copy post error:", error);
       return res.status(500).json(formatError("Failed to mark post as copied"));
@@ -533,9 +443,7 @@ router.delete(
 
       await artifact.$query().delete();
 
-      return res.status(200).json(successResponse({
-        message: "Post deleted successfully",
-      }));
+      return res.status(200).json(successResponse(messageResponse("Post deleted successfully")));
     } catch (error) {
       console.error("Delete post error:", error);
       return res.status(500).json(formatError("Failed to delete post"));

@@ -110,10 +110,11 @@ class Account extends BaseModel {
 
   // Instance methods for subscription management
   getActiveSubscription() {
-    // Use pre-loaded subscription data if available, otherwise query
+    // A subscription is active if it hasn't expired yet, regardless of renewal status.
+    // This ensures cancelled subscriptions remain active until their expiration date.
     if (this.subscriptions && Array.isArray(this.subscriptions)) {
       return this.subscriptions.find(sub =>
-        sub.rc_renewal_status === "active" &&
+        sub.rc_renewal_status !== "expired" &&
         new Date(sub.rc_expiration) > new Date()
       ) || null;
     }
@@ -122,7 +123,7 @@ class Account extends BaseModel {
     return this.constructor.query()
       .joinRelated("subscriptions")
       .where("account_id", this.id)
-      .where("subscriptions.rc_renewal_status", "active")
+      .where("subscriptions.rc_renewal_status", "!=", "expired")
       .where("subscriptions.rc_expiration", ">", new Date().toISOString())
       .orderBy("subscriptions.rc_expiration", "desc")
       .first();
@@ -135,7 +136,18 @@ class Account extends BaseModel {
 
   hasEntitlement(entitlementName) {
     const subscription = this.getActiveSubscription();
-    return subscription?.rc_entitlement === entitlementName;
+    if (!subscription?.rc_entitlement) return false;
+
+    // Pro-level entitlements that all grant the same access
+    const proEntitlements = ['pro', 'pro_plus', 'ghost_pro'];
+
+    // If checking for any pro-level access, accept any of the pro entitlements
+    if (proEntitlements.includes(entitlementName)) {
+      return proEntitlements.includes(subscription.rc_entitlement);
+    }
+
+    // Otherwise do exact match
+    return subscription.rc_entitlement === entitlementName;
   }
 
   getSubscriptionInfo() {

@@ -1,6 +1,6 @@
 import express from "express";
-import subscriptionService from "#src/helpers/subscription-service.js";
 import formatError from "#src/helpers/format-error.js";
+import { App } from "#src/models/index.js";
 import {
   subscriptionQueue,
   JOB_PROCESS_REVENUECAT_WEBHOOK,
@@ -9,25 +9,38 @@ import {
 const router = express.Router({ mergeParams: true });
 
 // RevenueCat webhook endpoint
-router.post("/", async (req, res) => {
+// URL: /webhooks/revenuecat/:appSlug
+router.post("/:appSlug", async (req, res) => {
   try {
+    const { appSlug } = req.params;
     const webhookData = req.body;
 
-    // Validate webhook signature if configured
-    const signature = req.headers["x-revenuecat-signature"];
-    if (process.env.REVENUECAT_WEBHOOK_SECRET && signature) {
-      // TODO: Implement signature validation
-      // const isValidSignature = validateRevenueCatSignature(req.body, signature, process.env.REVENUECAT_WEBHOOK_SECRET);
-      // if (!isValidSignature) {
-      //   return res.status(401).json(formatError("Invalid webhook signature"));
-      // }
+    // Look up the app by slug
+    const app = await App.query().findOne({ slug: appSlug });
+    if (!app) {
+      return res.status(404).json(formatError("App not found", 404));
+    }
+
+    // Validate authorization header
+    // RevenueCat sends the Bearer token you configure in their dashboard
+    if (process.env.REVENUECAT_WEBHOOK_AUTH_KEY) {
+      const authHeader = req.headers["authorization"];
+      const expectedAuth = `Bearer ${process.env.REVENUECAT_WEBHOOK_AUTH_KEY}`;
+
+      if (!authHeader || authHeader !== expectedAuth) {
+        return res.status(401).json(formatError("Invalid webhook authorization"));
+      }
     }
 
     // Queue background job for comprehensive processing
     // This handles: notifications, analytics, user updates, etc.
     await subscriptionQueue.add(
       JOB_PROCESS_REVENUECAT_WEBHOOK,
-      { event: webhookData.event },
+      {
+        event: webhookData.event,
+        appId: app.id,
+        appSlug: app.slug,
+      },
       {
         priority: getEventPriority(webhookData.event?.type),
         delay: 0, // Process immediately

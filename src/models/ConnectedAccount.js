@@ -54,6 +54,7 @@ class ConnectedAccount extends BaseModel {
         last_content_type: { type: ["string", "null"] },
         last_posted_at: { type: ["string", "null"], format: "date-time" },
         content_rotation_enabled: { type: "boolean", default: true },
+        preserve_line_breaks: { type: "boolean", default: false },
         metadata: { type: "object" },
       },
     };
@@ -304,6 +305,123 @@ class ConnectedAccount extends BaseModel {
           );
         });
       },
+    };
+  }
+
+  /**
+   * Fetch connections with all counts needed for list serialization in a single query.
+   * Avoids N+1 queries by computing sample_posts_count, rules_count, and curated_topics_count
+   * directly in SQL.
+   */
+  static async findWithCountsForList(accountId, appId) {
+    const connections = await this.query()
+      .select(
+        "connected_accounts.*",
+        this.relatedQuery("sample_posts")
+          .count()
+          .as("sample_posts_count"),
+        this.relatedQuery("rules")
+          .where("is_active", true)
+          .count()
+          .as("rules_count")
+      )
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("is_active", true)
+      .orderBy("created_at", "desc");
+
+    // Batch fetch curated topic counts for all connections in one query
+    if (connections.length > 0) {
+      const connectionIds = connections.map(c => c.id);
+      const topicCounts = await UserTopicPreference.query()
+        .select("connected_account_id")
+        .count("* as count")
+        .whereIn("connected_account_id", connectionIds)
+        .groupBy("connected_account_id");
+
+      // Create a map for quick lookup
+      const topicCountMap = new Map(
+        topicCounts.map(tc => [tc.connected_account_id, parseInt(tc.count, 10)])
+      );
+
+      // Attach counts to each connection
+      for (const conn of connections) {
+        conn.curated_topics_count = topicCountMap.get(conn.id) || 0;
+      }
+    }
+
+    return connections;
+  }
+
+  /**
+   * Compute sync info from pre-loaded data (no additional queries).
+   * Use this after fetching with findWithCountsForList().
+   */
+  computeSyncInfo() {
+    const isGhost = this.platform === "ghost";
+
+    // These come from findWithCountsForList()
+    const samplePostsCount = parseInt(this.sample_posts_count, 10) || 0;
+    const rulesCount = parseInt(this.rules_count, 10) || 0;
+    const curatedTopicsCount = this.curated_topics_count || 0;
+
+    // Check what the user has
+    const hasCustomTopics = this.topics_of_interest && this.topics_of_interest.trim().length > 0;
+    const hasCuratedTopics = curatedTopicsCount > 0;
+    const hasTopics = hasCuratedTopics || hasCustomTopics;
+    const hasVoice = this.voice && this.voice.trim().length > 0;
+    const hasSamplePosts = samplePostsCount >= 3;
+
+    // Topic count: curated + 1 if custom exists
+    const topicsCount = curatedTopicsCount + (hasCustomTopics ? 1 : 0);
+
+    // Compute completeness score
+    let completenessScore = 0;
+    if (hasTopics || samplePostsCount > 0) {
+      completenessScore = 33;
+      if (hasVoice) {
+        completenessScore = 66;
+        if (samplePostsCount >= 3) {
+          completenessScore = 100;
+        }
+      }
+    }
+
+    // Compute needs_sync and needs_analysis
+    const now = new Date();
+    let needsSync = false;
+    let needsAnalysis = false;
+
+    if (!isGhost) {
+      if (!this.last_synced_at) {
+        needsSync = true;
+      } else {
+        const hoursSinceSync = (now - new Date(this.last_synced_at)) / (1000 * 60 * 60);
+        needsSync = hoursSinceSync >= 24;
+      }
+
+      if (!this.last_analyzed_at) {
+        needsAnalysis = true;
+      } else {
+        const daysSinceAnalysis = (now - new Date(this.last_analyzed_at)) / (1000 * 60 * 60 * 24);
+        needsAnalysis = daysSinceAnalysis >= 7;
+      }
+    }
+
+    return {
+      is_ghost: isGhost,
+      sync_status: isGhost ? "ready" : this.sync_status,
+      last_synced_at: isGhost ? null : this.last_synced_at,
+      last_analyzed_at: isGhost ? null : this.last_analyzed_at,
+      needs_sync: needsSync,
+      needs_analysis: needsAnalysis,
+      completeness_score: completenessScore,
+      has_topics: hasTopics,
+      has_voice: hasVoice,
+      has_sample_posts: hasSamplePosts,
+      topics_count: topicsCount,
+      sample_posts_count: samplePostsCount,
+      rules_count: rulesCount,
     };
   }
 

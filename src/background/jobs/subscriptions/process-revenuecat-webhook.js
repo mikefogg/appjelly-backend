@@ -18,7 +18,7 @@ const ALLOWED_WEBHOOK_TYPES = [
 ];
 
 const ProcessRevenueCatWebhookWorker = async ({ data }) => {
-  const event = data.event;
+  const { event, appId } = data;
   const jobKey = "revenuecat-webhook";
 
   // Validate event type
@@ -31,25 +31,25 @@ const ProcessRevenueCatWebhookWorker = async ({ data }) => {
 
   if (process.env.NODE_ENV === "development") {
     console.log(
-      `[${jobKey}] Processing ${event.type} for app_user_id: ${event.app_user_id}`
+      `[${jobKey}] Processing ${event.type} for app_user_id: ${event.app_user_id} (app: ${appId})`
     );
   }
 
   try {
     // Handle user transfers between accounts
     if (event.type === "TRANSFER") {
-      return await handleTransfer(event, jobKey);
+      return await handleTransfer(event, appId, jobKey);
     }
 
     // Process regular subscription events
-    return await processSubscriptionEvent(event, jobKey);
+    return await processSubscriptionEvent(event, appId, jobKey);
   } catch (error) {
     console.error(`[${jobKey}] Error processing webhook:`, error);
     throw error; // Re-throw to trigger job retry
   }
 };
 
-const handleTransfer = async (event, jobKey) => {
+const handleTransfer = async (event, appId, jobKey) => {
   const fromAliases = event.transferred_from || [];
   const toAliases = event.transferred_to || [];
 
@@ -77,16 +77,19 @@ const handleTransfer = async (event, jobKey) => {
     return Promise.resolve();
   }
 
-  // Transfer subscriptions to the new account
-  const updatedSubs = await Subscription.query()
-    .whereIn("rc_user_id", fromAliases)
-    .patch({
-      rc_user_id: toAliases[0],
-      account_id: toAccount.id,
-      metadata: raw(
-        `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId}"}'`
-      ),
-    });
+  // Transfer subscriptions to the new account (only for this app)
+  let query = Subscription.query().whereIn("rc_user_id", fromAliases);
+  if (appId) {
+    query = query.where("app_id", appId);
+  }
+
+  const updatedSubs = await query.patch({
+    rc_user_id: toAliases[0],
+    account_id: toAccount.id,
+    metadata: raw(
+      `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId}"}'`
+    ),
+  });
 
   if (process.env.NODE_ENV === "development") {
     console.log(
@@ -112,7 +115,7 @@ const handleTransfer = async (event, jobKey) => {
   return Promise.resolve();
 };
 
-const processSubscriptionEvent = async (event, jobKey) => {
+const processSubscriptionEvent = async (event, appId, jobKey) => {
   const originalAlias = event.original_app_user_id;
   const customIds =
     event.aliases?.filter((alias) => !alias.includes(RC_ANON)) || [];
@@ -131,9 +134,9 @@ const processSubscriptionEvent = async (event, jobKey) => {
     );
   }
 
-  // Find existing subscription
+  // Find existing subscription (scoped to app if provided)
   const productId = event.product_id;
-  let subscription = await Subscription.query()
+  let query = Subscription.query()
     .where((builder) => {
       if (event.aliases && event.aliases.length > 0) {
         builder.whereIn("rc_user_id", event.aliases);
@@ -142,12 +145,17 @@ const processSubscriptionEvent = async (event, jobKey) => {
       }
     })
     .where("rc_product_id", productId)
-    .where("rc_platform", event.store)
-    .first();
+    .where("rc_platform", event.store);
+
+  if (appId) {
+    query = query.where("app_id", appId);
+  }
+
+  let subscription = await query.first();
 
   // Create new subscription if it doesn't exist
   if (!subscription) {
-    subscription = await createNewSubscription(event, account, originalAlias);
+    subscription = await createNewSubscription(event, account, originalAlias, appId);
 
     // Handle first-time purchase events
     if (event.type === "INITIAL_PURCHASE") {
@@ -171,9 +179,10 @@ const processSubscriptionEvent = async (event, jobKey) => {
   return Promise.resolve();
 };
 
-const createNewSubscription = async (event, account, originalAlias) => {
+const createNewSubscription = async (event, account, originalAlias, appId) => {
   const subscriptionData = {
     account_id: account?.id || null,
+    app_id: appId || null,
     rc_user_id: originalAlias,
     rc_entitlement: event.entitlement_ids?.[0] || "pro_access",
     rc_product_id: event.product_id,
