@@ -218,7 +218,9 @@ ${voiceProfile.formatting_habits || ""}
       : "";
 
     const userPrompt = `${voiceContext}
-${examplesSection}${rulesSection}Write ${contentTypes.length} posts about: ${topic}
+${examplesSection}${rulesSection}Write ${contentTypes.length} posts from someone in the world of: ${topic}
+
+These are their interests, not a checklist. Write natural thoughts they'd share, not one post per topic.
 
 Max ${maxLength} chars each. Match the voice and examples exactly. Don't make up accomplishments.
 
