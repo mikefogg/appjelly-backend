@@ -4,7 +4,7 @@
  * Triggered when samples/rules change, or user requests regeneration
  */
 
-import { ConnectedAccount, SamplePost, Rule, VoiceProfile } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, VoiceProfile, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import crypto from "crypto";
 
@@ -32,6 +32,17 @@ export default async function generateVoiceProfile(job) {
 
     if (!connectedAccount) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
+    }
+
+    // Check for active subscription
+    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
+    if (!activeSubscription) {
+      console.log(`[Generate Voice Profile] No active subscription for account ${connectedAccount.account_id} - skipping`);
+      return {
+        success: false,
+        skipped: true,
+        reason: "No active subscription",
+      };
     }
 
     // Check if there's already a profile being generated

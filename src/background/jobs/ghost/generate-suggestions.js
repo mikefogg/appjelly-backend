@@ -6,7 +6,7 @@
  * - Content rotation system (story, lesson, question, etc.)
  */
 
-import { ConnectedAccount, NetworkPost, PostSuggestion, UserTopicPreference, TrendingTopic, VoiceProfile } from "#src/models/index.js";
+import { ConnectedAccount, NetworkPost, PostSuggestion, UserTopicPreference, TrendingTopic, VoiceProfile, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
 
@@ -24,6 +24,17 @@ export default async function generateSuggestions(job) {
 
     if (!connectedAccount) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
+    }
+
+    // Check for active subscription
+    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
+    if (!activeSubscription) {
+      console.log(`[Generate Suggestions] No active subscription for account ${connectedAccount.account_id} - skipping`);
+      return {
+        success: false,
+        skipped: true,
+        reason: "No active subscription",
+      };
     }
 
     // Get voice profile for this account

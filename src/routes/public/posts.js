@@ -35,37 +35,21 @@ router.post(
       .isLength({ min: 1, max: 5000 })
       .withMessage("Content must be between 1 and 5000 characters"),
     body("connected_account_id")
-      .optional()
       .isUUID()
-      .withMessage("connected_account_id must be a valid UUID"),
+      .withMessage("connected_account_id is required and must be a valid UUID"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { content, connected_account_id } = req.body;
 
-      let connection = null;
-      let platform = null;
+      const connection = await ConnectedAccount.query()
+        .findById(connected_account_id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
 
-      // If connected_account_id provided, verify it belongs to user
-      // Otherwise, use the default ghost account
-      if (connected_account_id) {
-        connection = await ConnectedAccount.query()
-          .findById(connected_account_id)
-          .where("account_id", res.locals.account.id)
-          .where("app_id", res.locals.app.id);
-
-        if (!connection) {
-          return res.status(404).json(formatError("Connected account not found", 404));
-        }
-        platform = connection.platform;
-      } else {
-        // Use ghost account for standalone posts
-        connection = await ConnectedAccount.findOrCreateGhostAccount(
-          res.locals.account.id,
-          res.locals.app.id
-        );
-        platform = "ghost";
+      if (!connection) {
+        return res.status(404).json(formatError("Connected account not found", 404));
       }
 
       // Create draft artifact (no input_id)
@@ -77,9 +61,9 @@ router.post(
         status: "draft",
         content,
         metadata: {
-          platform,
+          platform: connection.platform,
           source: "user",
-          mode: platform === "ghost" ? "standalone" : "connected",
+          mode: connection.platform === "ghost" ? "standalone" : "connected",
         },
       });
 
@@ -112,44 +96,29 @@ router.post(
       .isIn(["short", "medium", "long"])
       .withMessage("Length must be one of: short, medium, long"),
     body("connected_account_id")
-      .optional()
       .isUUID()
-      .withMessage("connected_account_id must be a valid UUID"),
+      .withMessage("connected_account_id is required and must be a valid UUID"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { prompt, angle, length, connected_account_id } = req.body;
 
-      let connection = null;
-      let platform = null;
+      const connection = await ConnectedAccount.query()
+        .findById(connected_account_id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
 
-      // If connected_account_id provided, verify it belongs to user
-      // Otherwise, use the default ghost account
-      if (connected_account_id) {
-        connection = await ConnectedAccount.query()
-          .findById(connected_account_id)
-          .where("account_id", res.locals.account.id)
-          .where("app_id", res.locals.app.id);
-
-        if (!connection) {
-          return res.status(404).json(formatError("Connected account not found", 404));
-        }
-
-        // Check if connection is ready (only for non-ghost accounts)
-        if (connection.platform !== "ghost" && connection.sync_status !== "ready") {
-          return res.status(400).json(formatError("Connected account is not ready. Please wait for sync to complete.", 400));
-        }
-
-        platform = connection.platform;
-      } else {
-        // Use ghost account for standalone posts
-        connection = await ConnectedAccount.findOrCreateGhostAccount(
-          res.locals.account.id,
-          res.locals.app.id
-        );
-        platform = "ghost";
+      if (!connection) {
+        return res.status(404).json(formatError("Connected account not found", 404));
       }
+
+      // Check if connection is ready (only for non-ghost accounts)
+      if (connection.platform !== "ghost" && connection.sync_status !== "ready") {
+        return res.status(400).json(formatError("Connected account is not ready. Please wait for sync to complete.", 400));
+      }
+
+      const platform = connection.platform;
 
       // Create input
       const input = await Input.query().insert({
@@ -239,6 +208,8 @@ router.get(
         query = query.where("status", "draft").whereNull("input_id");
       } else if (type === "generated") {
         query = query.whereNotNull("input_id");
+      } else if (type === "used") {
+        query = query.whereRaw("metadata->>'copied' = 'true'");
       }
       // type === "all" or undefined: return both
 

@@ -10,6 +10,10 @@ import {
   successResponse,
 } from "#src/serializers/index.js";
 import { formatError } from "#src/helpers/index.js";
+import {
+  subscriptionQueue,
+  JOB_SYNC_SUBSCRIPTION_STATUS,
+} from "#src/background/queues/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -201,6 +205,51 @@ router.patch(
     } catch (error) {
       console.error("Update settings error:", error);
       return res.status(500).json(formatError("Failed to update settings"));
+    }
+  }
+);
+
+// Sync subscription status from RevenueCat
+router.post(
+  "/me/sync-subscription",
+  requireAppContext,
+  requireAuth,
+  [
+    body("rc_customer_id")
+      .isString()
+      .notEmpty()
+      .withMessage("RevenueCat customer ID is required"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const account = res.locals.account;
+      const app = res.locals.app;
+      const { rc_customer_id } = req.body;
+
+      // Queue the sync job
+      await subscriptionQueue.add(
+        JOB_SYNC_SUBSCRIPTION_STATUS,
+        {
+          rcCustomerId: rc_customer_id,
+          accountId: account.id,
+          appId: app.id,
+        },
+        {
+          // Dedupe by customer ID - only one sync per customer at a time
+          jobId: `sync-sub-${rc_customer_id}`,
+        }
+      );
+
+      return res.status(202).json(
+        successResponse(
+          { queued: true },
+          "Subscription sync queued"
+        )
+      );
+    } catch (error) {
+      console.error("Sync subscription error:", error);
+      return res.status(500).json(formatError("Failed to queue subscription sync"));
     }
   }
 );

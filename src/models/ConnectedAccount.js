@@ -181,67 +181,6 @@ class ConnectedAccount extends BaseModel {
       .orderBy("created_at", "desc");
   }
 
-  /**
-   * Find or create the default ghost account for a user
-   * Ghost account is used for standalone posts (not tied to social platforms)
-   */
-  static async findOrCreateGhostAccount(accountId, appId) {
-    // Try to find existing ghost account
-    const existing = await this.query()
-      .where("account_id", accountId)
-      .where("app_id", appId)
-      .where("platform", "ghost")
-      .where("is_default", true)
-      .first();
-
-    if (existing) {
-      return existing;
-    }
-
-    // Create new ghost account
-    try {
-      return await this.query().insert({
-        account_id: accountId,
-        app_id: appId,
-        platform: "ghost",
-        label: "My Drafts",
-        username: null,
-        display_name: "My Drafts",
-        connected_account_auth_id: null, // No OAuth for ghost accounts
-        sync_status: "ready", // Ghost accounts are always ready
-        is_default: true,
-        is_deletable: false,
-        is_active: true,
-        metadata: {
-          created_reason: "default_ghost_account",
-          created_at: new Date().toISOString(),
-        },
-      });
-    } catch (error) {
-      // If unique constraint violation (race condition), fetch the existing account
-      // Check both raw PostgreSQL error code and db-errors wrapped error
-      const isUniqueViolation =
-        error.code === "23505" || // Raw PostgreSQL error
-        error.constraint === "connected_accounts_unique_default_ghost" || // db-errors constraint name
-        error.name === "UniqueViolationError"; // db-errors error name
-
-      if (isUniqueViolation) {
-        const existing = await this.query()
-          .where("account_id", accountId)
-          .where("app_id", appId)
-          .where("platform", "ghost")
-          .where("is_default", true)
-          .first();
-
-        if (existing) {
-          return existing;
-        }
-      }
-      // Re-throw if it's a different error
-      throw error;
-    }
-  }
-
   async markAsSyncing() {
     return this.$query().patchAndFetch({
       sync_status: "syncing",

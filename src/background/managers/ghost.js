@@ -16,6 +16,7 @@ import {
   JOB_DIGEST_RECENT_TOPICS,
   JOB_SEND_PUSH_NOTIFICATION,
   JOB_PROCESS_REVENUECAT_WEBHOOK,
+  JOB_SYNC_SUBSCRIPTION_STATUS,
 } from "#src/background/queues/index.js";
 
 // Import job processors
@@ -31,6 +32,7 @@ import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
 import sendPushNotificationJob from "#src/background/jobs/ghost/send-push-notification.js";
 import processRevenueCatWebhook from "#src/background/jobs/subscriptions/process-revenuecat-webhook.js";
+import syncSubscriptionStatus from "#src/background/jobs/subscriptions/sync-subscription-status.js";
 
 // Import schedulers
 import * as suggestionScheduler from "#src/background/repeatables/suggestion-scheduler.js";
@@ -157,6 +159,9 @@ function start(id) {
             switch (job.name) {
               case JOB_PROCESS_REVENUECAT_WEBHOOK:
                 return await processRevenueCatWebhook(job);
+
+              case JOB_SYNC_SUBSCRIPTION_STATUS:
+                return await syncSubscriptionStatus(job);
 
               default:
                 throw new Error(`Unknown subscription job type: ${job.name}`);

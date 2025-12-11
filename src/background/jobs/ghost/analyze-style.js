@@ -4,7 +4,7 @@
  * Auto-creates sample posts and generates voice from best-performing content
  */
 
-import { ConnectedAccount, UserPostHistory, WritingStyle, SamplePost } from "#src/models/index.js";
+import { ConnectedAccount, UserPostHistory, WritingStyle, SamplePost, Subscription } from "#src/models/index.js";
 import twitterService from "#src/services/twitter.js";
 import AI from "#src/services/ai/index.js";
 import rateLimiter from "#src/services/rate-limiter.js";
@@ -149,6 +149,17 @@ export default async function analyzeStyle(job) {
 
     if (!connectedAccount) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
+    }
+
+    // Check for active subscription
+    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
+    if (!activeSubscription) {
+      console.log(`[Analyze Style] No active subscription for account ${connectedAccount.account_id} - skipping`);
+      return {
+        success: false,
+        skipped: true,
+        reason: "No active subscription",
+      };
     }
 
     // Skip if already analyzed (we only analyze once per account)

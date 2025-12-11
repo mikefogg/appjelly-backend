@@ -3,7 +3,7 @@
  * Takes user feedback and updates the voice profile accordingly
  */
 
-import { VoiceFeedback, VoiceProfile, SamplePost } from "#src/models/index.js";
+import { VoiceFeedback, VoiceProfile, SamplePost, ConnectedAccount, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 
 export const JOB_PROCESS_VOICE_FEEDBACK = "process-voice-feedback";
@@ -27,6 +27,23 @@ export default async function processVoiceFeedback(job) {
         success: false,
         skipped: true,
         reason: `Feedback already ${feedback.status}`,
+      };
+    }
+
+    // Check for active subscription
+    const connectedAccount = await ConnectedAccount.query().findById(feedback.connected_account_id);
+    if (!connectedAccount) {
+      throw new Error(`Connected account ${feedback.connected_account_id} not found`);
+    }
+
+    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
+    if (!activeSubscription) {
+      console.log(`[Process Voice Feedback] No active subscription for account ${connectedAccount.account_id} - skipping`);
+      await feedback.markFailed("No active subscription");
+      return {
+        success: false,
+        skipped: true,
+        reason: "No active subscription",
       };
     }
 

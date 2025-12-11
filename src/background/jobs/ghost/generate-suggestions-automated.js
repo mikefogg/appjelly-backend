@@ -1,9 +1,10 @@
 /**
  * Automated Suggestions Generation Job
  * Runs hourly to generate suggestions for accounts scheduled for this UTC hour
+ * Only generates for accounts with active subscriptions
  */
 
-import { Account, ConnectedAccount } from "#src/models/index.js";
+import { Account, ConnectedAccount, Subscription } from "#src/models/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
@@ -29,10 +30,28 @@ export default async function generateSuggestionsAutomated(job) {
       };
     }
 
-    // Get all connected accounts for these scheduled accounts
+    // Filter to only accounts with active subscriptions
     const accountIds = scheduledAccounts.map(acc => acc.id);
-    const eligibleConnections = await ConnectedAccount.query()
+    const activeSubscriptions = await Subscription.query()
       .whereIn("account_id", accountIds)
+      .modify("active");
+
+    const subscribedAccountIds = [...new Set(activeSubscriptions.map(sub => sub.account_id))];
+
+    console.log(`[Generate Suggestions Automated] ${subscribedAccountIds.length} of ${accountIds.length} accounts have active subscriptions`);
+
+    if (subscribedAccountIds.length === 0) {
+      return {
+        success: true,
+        message: `Found ${scheduledAccounts.length} scheduled accounts but none have active subscriptions`,
+        accounts_processed: 0,
+        current_utc_hour: currentUTCHour,
+      };
+    }
+
+    // Get all connected accounts for subscribed accounts only
+    const eligibleConnections = await ConnectedAccount.query()
+      .whereIn("account_id", subscribedAccountIds)
       .where("is_active", true)
       .modify((qb) => {
         qb.where((builder) => {

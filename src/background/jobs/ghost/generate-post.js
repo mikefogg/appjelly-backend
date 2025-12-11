@@ -3,7 +3,7 @@
  * Generates a social media post from a user prompt
  */
 
-import { Artifact, VoiceProfile } from "#src/models/index.js";
+import { Artifact, VoiceProfile, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 
 export const JOB_GENERATE_POST = "generate-post";
@@ -21,6 +21,21 @@ export default async function generatePost(job) {
 
     if (!artifact) {
       throw new Error(`Artifact ${artifactId} not found`);
+    }
+
+    // Check for active subscription
+    const activeSubscription = await Subscription.findActiveByAccount(artifact.account_id);
+    if (!activeSubscription) {
+      console.log(`[Generate Post] No active subscription for account ${artifact.account_id} - skipping`);
+      await artifact.$query().patch({
+        status: "failed",
+        metadata: { ...artifact.metadata, error: "No active subscription" },
+      });
+      return {
+        success: false,
+        skipped: true,
+        reason: "No active subscription",
+      };
     }
 
     const { input, connected_account } = artifact;
