@@ -4,6 +4,17 @@ import { addDays, addYears } from "date-fns";
 
 const RC_ANON = "$RCAnonymousID";
 
+// Map RevenueCat store names to our platform enum values
+const mapStoreToPlatform = (store) => {
+  const storeMap = {
+    app_store: "ios",
+    play_store: "android",
+    stripe: "web",
+    amazon: "amazon",
+  };
+  return storeMap[store?.toLowerCase()] || "unknown";
+};
+
 const ALLOWED_WEBHOOK_TYPES = [
   "INITIAL_PURCHASE",
   "RENEWAL",
@@ -100,40 +111,53 @@ const handleTransfer = async (event, appId, jobKey) => {
     return Promise.resolve();
   }
 
-  // Transfer subscriptions to the new account (only for this app)
-  let query = Subscription.query().whereIn("rc_user_id", fromAliases);
+  // Try to transfer existing subscriptions from all aliases (from and to)
+  const allAliases = [...fromAliases, ...toAliases];
+  let query = Subscription.query().whereIn("rc_user_id", allAliases);
   if (appId) {
     query = query.where("app_id", appId);
   }
 
   const updatedSubs = await query.patch({
-    rc_user_id: toAliases[0],
+    rc_user_id: toUserId,
     account_id: toAccount.id,
     metadata: raw(
-      `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId}"}'`
+      `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId || "unknown"}"}'`
     ),
   });
 
-  if (process.env.NODE_ENV === "development") {
-    console.log(
-      `[${jobKey}] Transferred ${updatedSubs} subscriptions from ${fromUserId} to ${toUserId}`
-    );
-  }
+  console.log(
+    `[${jobKey}] Transferred ${updatedSubs} subscriptions to ${toUserId}`
+  );
 
-  // Queue analytics update for both accounts
-  if (fromUserId) {
-    // await analyticsQueue.add(JOB_UPDATE_USER_ANALYTICS, {
-    //   accountClerkId: fromUserId,
-    //   event: "subscription_transferred_out",
-    //   metadata: { to_user_id: toUserId },
-    // });
-  }
+  // If no subscriptions were transferred, check if there's an active subscription for this product
+  // and create it for the target account
+  if (updatedSubs === 0 && event.product_id) {
+    console.log(`[${jobKey}] No existing subscriptions found, creating from transfer event`);
 
-  // await analyticsQueue.add(JOB_UPDATE_USER_ANALYTICS, {
-  //   accountClerkId: toUserId,
-  //   event: "subscription_transferred_in",
-  //   metadata: { from_user_id: fromUserId },
-  // });
+    await Subscription.query().insert({
+      account_id: toAccount.id,
+      app_id: appId || null,
+      rc_user_id: toUserId,
+      rc_entitlement: event.entitlement_ids?.[0] || "pro_access",
+      rc_product_id: event.product_id,
+      rc_period_type: (event.period_type || "normal").toLowerCase(),
+      rc_renewal_status: "active",
+      rc_platform: mapStoreToPlatform(event.store),
+      rc_expiration: event.expiration_at_ms
+        ? addDays(new Date(event.expiration_at_ms), 1).toISOString()
+        : addYears(new Date(), 100).toISOString(),
+      metadata: {
+        original_aliases: allAliases,
+        entitlement_ids: event.entitlement_ids || [],
+        created_from_transfer: true,
+        transferred_from: fromUserId,
+        webhook_event_type: event.type,
+      },
+    });
+
+    console.log(`[${jobKey}] Created subscription for ${toUserId} from transfer`);
+  }
 
   return Promise.resolve();
 };
@@ -143,17 +167,36 @@ const processSubscriptionEvent = async (event, appId, jobKey) => {
   const customIds =
     event.aliases?.filter((alias) => !alias.includes(RC_ANON)) || [];
   const appUserId = event.app_user_id;
-  const userId = customIds.includes(appUserId) ? appUserId : customIds[0];
 
-  // Find the account associated with this user
+  // Try to find account by any of the non-anonymous aliases
   let account = null;
-  if (userId) {
-    account = await Account.query().findOne({ clerk_id: userId });
+  let userId = null;
+
+  // First try app_user_id if it's in customIds
+  if (customIds.includes(appUserId)) {
+    account = await Account.query().findOne({ clerk_id: appUserId });
+    if (account) userId = appUserId;
+  }
+
+  // If not found, try each custom ID
+  if (!account && customIds.length > 0) {
+    for (const id of customIds) {
+      account = await Account.query().findOne({ clerk_id: id });
+      if (account) {
+        userId = id;
+        break;
+      }
+    }
+  }
+
+  // Fall back to first customId for userId if account not found
+  if (!userId) {
+    userId = customIds.includes(appUserId) ? appUserId : customIds[0];
   }
 
   if (!account && process.env.NODE_ENV === "development") {
     console.log(
-      `[${jobKey}] No account found for user ${userId}, creating placeholder subscription`
+      `[${jobKey}] No account found for aliases: ${customIds.join(", ")}, creating placeholder subscription`
     );
   }
 
@@ -168,7 +211,7 @@ const processSubscriptionEvent = async (event, appId, jobKey) => {
       }
     })
     .where("rc_product_id", productId)
-    .where("rc_platform", event.store);
+    .where("rc_platform", mapStoreToPlatform(event.store));
 
   if (appId) {
     query = query.where("app_id", appId);
@@ -209,9 +252,9 @@ const createNewSubscription = async (event, account, originalAlias, appId) => {
     rc_user_id: originalAlias,
     rc_entitlement: event.entitlement_ids?.[0] || "pro_access",
     rc_product_id: event.product_id,
-    rc_period_type: event.period_type || "normal",
+    rc_period_type: (event.period_type || "normal").toLowerCase(),
     rc_renewal_status: "active",
-    rc_platform: event.store,
+    rc_platform: mapStoreToPlatform(event.store),
     rc_expiration: event.expiration_at_ms
       ? addDays(new Date(event.expiration_at_ms), 1).toISOString()
       : addYears(new Date(), 100).toISOString(), // Lifetime for non-expiring products
@@ -230,7 +273,7 @@ const updateSubscription = async (subscription, event, account) => {
   const updateData = {
     account_id: subscription.account_id || account?.id || null,
     rc_user_id: event.original_app_user_id,
-    rc_period_type: event.period_type || subscription.rc_period_type,
+    rc_period_type: (event.period_type || subscription.rc_period_type || "normal").toLowerCase(),
     rc_expiration: event.expiration_at_ms
       ? addDays(new Date(event.expiration_at_ms), 1).toISOString()
       : addYears(new Date(), 100).toISOString(),
