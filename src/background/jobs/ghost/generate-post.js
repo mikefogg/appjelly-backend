@@ -3,8 +3,8 @@
  * Generates a social media post from a user prompt
  */
 
-import { Artifact, ConnectedAccount, Rule } from "#src/models/index.js";
-import postGenerator from "#src/services/ai/post-generator.js";
+import { Artifact, VoiceProfile } from "#src/models/index.js";
+import AI from "#src/services/ai/index.js";
 
 export const JOB_GENERATE_POST = "generate-post";
 
@@ -14,10 +14,10 @@ export default async function generatePost(job) {
   console.log(`[Generate Post] Starting generation for artifact: ${artifactId}`);
 
   try {
-    // Get artifact with input, connected account, and sample posts
+    // Get artifact with input and connected account
     const artifact = await Artifact.query()
       .findById(artifactId)
-      .withGraphFetched("[input, connected_account.[writing_style, sample_posts]]");
+      .withGraphFetched("[input, connected_account]");
 
     if (!artifact) {
       throw new Error(`Artifact ${artifactId} not found`);
@@ -62,55 +62,24 @@ export default async function generatePost(job) {
 
     job.updateProgress(20);
 
-    // Get writing style, voice, sample posts, and rules
-    const writingStyle = connected_account?.writing_style;
-    const voice = connected_account?.voice;
-    const samplePosts = connected_account?.sample_posts || [];
-    const rules = await Rule.getActiveRules(connected_account.id);
+    // Get voice profile for this connected account
+    const voiceProfile = await VoiceProfile.getCurrentProfile(connected_account.id);
 
     console.log(`[Generate Post] Generating from prompt: "${prompt.substring(0, 50)}..."`);
     console.log(`[Generate Post] Angle: ${angle}, Length: ${length}, Max chars: ${maxLength}`);
-    if (voice) {
-      console.log(`[Generate Post] Using custom voice`);
-    }
-    if (samplePosts.length > 0) {
-      console.log(`[Generate Post] Using ${samplePosts.length} sample posts`);
-    }
-    if (writingStyle) {
-      console.log(`[Generate Post] Using writing style: ${writingStyle.tone}`);
-    }
-    if (rules.length > 0) {
-      console.log(`[Generate Post] Using ${rules.length} rules`);
+    if (voiceProfile) {
+      console.log(`[Generate Post] Using voice profile v${voiceProfile.version}`);
+    } else {
+      console.log(`[Generate Post] No voice profile found`);
     }
 
-    // Generate post
-    const result = await postGenerator.generatePost(prompt, {
+    // Generate post using AI service
+    const result = await AI.generatePost({
+      topic: prompt,
+      voiceProfile: voiceProfile?.toPromptFormat(),
+      contentType: angle || "post",
       platform: platform,
-      angle: angle,
-      length: length,
       maxLength: maxLength,
-      voice: voice,
-      samplePosts: samplePosts.map(sp => ({
-        content: sp.content,
-        notes: sp.notes,
-      })),
-      rules: rules.map(r => ({
-        rule_type: r.rule_type,
-        content: r.content,
-        priority: r.priority,
-      })),
-      writingStyle: writingStyle ? {
-        tone: writingStyle.tone,
-        avg_length: writingStyle.avg_length,
-        emoji_frequency: writingStyle.emoji_frequency,
-        hashtag_frequency: writingStyle.hashtag_frequency,
-        common_phrases: writingStyle.common_phrases,
-        style_summary: writingStyle.style_summary,
-      } : null,
-      connectedAccount: connected_account ? {
-        username: connected_account.username,
-        platform: connected_account.platform,
-      } : null,
     });
 
     job.updateProgress(80);
@@ -119,30 +88,11 @@ export default async function generatePost(job) {
     let topics = [];
     try {
       console.log(`[Generate Post] Extracting topics from generated content...`);
-      const OpenAI = await import("openai");
-      const openai = new OpenAI.default({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-
-      const topicsResponse = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You extract 1-3 main topics or themes from social media posts. Return as JSON object with 'topics' array."
-          },
-          {
-            role: "user",
-            content: `Extract 1-3 main topics from this post:\n\n"${result.content}"\n\nReturn JSON like: {"topics": ["topic1", "topic2"]}`
-          }
-        ],
-        temperature: 0.3,
-        max_tokens: 100,
-        response_format: { type: "json_object" },
-      });
-
-      const topicsData = JSON.parse(topicsResponse.choices[0].message.content);
-      topics = topicsData.topics || [];
+      const extractedTopics = await AI.extractTopics(
+        [{ content: result.content, engagement_score: 0 }],
+        { limit: 3 }
+      );
+      topics = extractedTopics.map(t => t.topic);
       console.log(`[Generate Post] Extracted topics:`, topics);
     } catch (error) {
       console.warn(`[Generate Post] Failed to extract topics:`, error.message);

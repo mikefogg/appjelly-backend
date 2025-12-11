@@ -57,6 +57,10 @@ export {
   topicTrendingResponseSerializer,
 } from "#src/serializers/topic-serializer.js";
 
+export {
+  feedbackSubmittedSerializer,
+} from "#src/serializers/voice-serializer.js";
+
 // Utility response formatters
 export const successResponse = (data, message = "Success") => {
   return {

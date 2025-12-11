@@ -35,35 +35,58 @@ export const connectionListSerializer = (connection, syncInfo) => ({
 });
 
 /**
+ * Calculate voice confidence from stats
+ * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%), capped at 100%
+ */
+const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount) => {
+  const sampleScore = Math.min(sampleCount * 5, 50);
+  const feedbackScore = Math.min(feedbackCount * 5, 50);
+  const rulesScore = Math.min(rulesCount * 2, 10);
+  return Math.min(sampleScore + feedbackScore + rulesScore, 100);
+};
+
+/**
  * Full connection details (GET /connections/:id)
  */
-export const connectionDetailSerializer = (connection, { recommendations, syncInfo }) => ({
-  id: connection.id,
-  platform: connection.platform,
-  label: connection.label,
-  username: connection.username,
-  display_name: connection.display_name,
-  platform_user_id: connection.platform_user_id,
-  profile_data: connection.profile_data,
-  is_active: connection.is_active,
-  is_default: connection.is_default,
-  is_deletable: connection.is_deletable,
-  is_connected: !!connection.connected_account_auth_id,
-  voice: connection.voice,
-  topics_of_interest: connection.topics_of_interest,
-  preserve_line_breaks: connection.preserve_line_breaks,
-  recommendations,
-  sync_info: syncInfo,
-  writing_style: connection.writing_style ? {
-    tone: connection.writing_style.tone,
-    avg_length: connection.writing_style.avg_length,
-    style_summary: connection.writing_style.style_summary,
-    confidence_score: connection.writing_style.confidence_score,
-    sample_size: connection.writing_style.sample_size,
-  } : null,
-  sample_posts_count: connection.sample_posts?.length || 0,
-  created_at: connection.created_at,
-});
+export const connectionDetailSerializer = (connection, { recommendations, syncInfo, voiceStats }) => {
+  const samplePostsCount = connection.sample_posts?.length || 0;
+  const rulesCount = voiceStats?.rulesCount || 0;
+  const feedbackCount = voiceStats?.feedbackCount || 0;
+  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount);
+
+  return {
+    id: connection.id,
+    platform: connection.platform,
+    label: connection.label,
+    username: connection.username,
+    display_name: connection.display_name,
+    platform_user_id: connection.platform_user_id,
+    profile_data: connection.profile_data,
+    is_active: connection.is_active,
+    is_default: connection.is_default,
+    is_deletable: connection.is_deletable,
+    is_connected: !!connection.connected_account_auth_id,
+    voice: connection.voice,
+    topics_of_interest: connection.topics_of_interest,
+    preserve_line_breaks: connection.preserve_line_breaks,
+    recommendations,
+    sync_info: syncInfo,
+    voice_profile: connection.voiceProfile ? {
+      version: connection.voiceProfile.version,
+      voice_summary: connection.voiceProfile.voice_summary,
+      examples: connection.voiceProfile.examples,
+      created_at: connection.voiceProfile.created_at,
+    } : null,
+    voice_stats: {
+      sample_posts_count: samplePostsCount,
+      rules_count: rulesCount,
+      feedback_count: feedbackCount,
+      confidence: voiceConfidence,
+      is_generating: voiceStats?.isGenerating || false,
+    },
+    created_at: connection.created_at,
+  };
+};
 
 /**
  * Connection update response (PATCH /connections/:id)
@@ -110,7 +133,6 @@ export const ruleSerializer = (rule) => ({
   id: rule.id,
   rule_type: rule.rule_type,
   content: rule.content,
-  feedback_on_suggestion_id: rule.feedback_on_suggestion_id,
   priority: rule.priority,
   is_active: rule.is_active,
   created_at: rule.created_at,

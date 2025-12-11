@@ -5,11 +5,7 @@
 
 import { CuratedTopic, NetworkPost, ConnectedAccount } from "#src/models/index.js";
 import { ghostQueue } from "#src/background/queues/index.js";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import AI from "#src/services/ai/index.js";
 
 export const JOB_SYNC_CURATED_TOPIC = "sync-curated-topic";
 export const JOB_DIGEST_RECENT_TOPICS = "digest-recent-topics";
@@ -84,33 +80,27 @@ async function extractTopicsFromBatch(tweets) {
   if (tweets.length === 0) return [];
 
   try {
-    const prompt = `Extract 2-4 main topics from each of these social media posts. Topics should be specific concepts, projects, events, or themes being discussed (e.g., "DeFi protocol audits", "NFT airdrops", "Monad ecosystem").
+    const postsForAI = tweets.map(t => ({
+      content: t.content,
+      engagement_score: (t.like_count || 0) + (t.retweet_count || 0) * 2,
+    }));
 
-Posts:
-${tweets.map((t, i) => `${i + 1}. ${t.content}`).join('\n')}
+    const topics = await AI.extractTopics(postsForAI, { limit: tweets.length * 3 });
 
-Return ONLY a JSON object with a "topics" array where each element is an array of topic strings:
-{"topics": [["topic1", "topic2"], ["topic3", "topic4"], ...]}`;
+    // Convert from AI format (array of topics with postIndices) to per-post topics
+    const perPostTopics = tweets.map(() => []);
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You extract topics from social media posts. Return only valid JSON."
-        },
-        {
-          role: "user",
-          content: prompt
+    for (const topic of topics) {
+      if (topic.postIndices && Array.isArray(topic.postIndices)) {
+        for (const idx of topic.postIndices) {
+          if (idx >= 0 && idx < perPostTopics.length) {
+            perPostTopics[idx].push(topic.topic);
+          }
         }
-      ],
-      temperature: 0.3,
-      max_tokens: 500,
-    });
+      }
+    }
 
-    const result = JSON.parse(response.choices[0].message.content);
-    return result.topics || [];
+    return perPostTopics;
   } catch (error) {
     console.warn(`[Sync Curated Topic] Failed to extract topics with AI:`, error.message);
     return tweets.map(() => []);
@@ -121,6 +111,14 @@ export default async function syncCuratedTopic(job) {
   const { curatedTopicId } = job.data;
 
   console.log(`[Sync Curated Topic] Starting sync for topic: ${curatedTopicId}`);
+
+  // TEMPORARY: Skip Twitter list syncing (disabled)
+  console.log(`[Sync Curated Topic] Twitter list syncing is temporarily disabled, skipping`);
+  return {
+    success: true,
+    skipped: true,
+    reason: "Twitter list syncing temporarily disabled",
+  };
 
   try {
     // Get curated topic

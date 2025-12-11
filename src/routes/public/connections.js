@@ -1,22 +1,21 @@
 import express from "express";
 import { param, body, query } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference, TrendingTopic } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference, TrendingTopic, VoiceFeedback, VoiceProfile } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
-  connectionListSerializer,
   connectionDetailSerializer,
   connectionUpdateSerializer,
   samplePostSerializer,
   ruleSerializer,
   userTopicSerializer,
-  connectionTrendingSerializer,
   connectionTrendingResponseSerializer,
   rotationSettingsSerializer,
   messageResponse,
+  feedbackSubmittedSerializer,
 } from "#src/serializers/index.js";
-import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
+import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE, JOB_PROCESS_VOICE_FEEDBACK } from "#src/background/queues/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -31,17 +30,20 @@ router.get(
   requireAuth,
   async (req, res) => {
     try {
-      // Fetch connections with all counts in optimized queries (no N+1)
-      const connections = await ConnectedAccount.findWithCountsForList(
+      const connectionsMap = await ConnectedAccount.findAllWithDetails(
         res.locals.account.id,
         res.locals.app.id
       );
 
-      // Compute sync info from pre-loaded data (no additional queries)
-      const data = connections.map(conn => {
-        const syncInfo = conn.computeSyncInfo();
-        return connectionListSerializer(conn, syncInfo);
-      });
+      // Convert map to array, preserving order by created_at desc
+      const connections = Object.values(connectionsMap)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      const data = connections.map(conn => connectionDetailSerializer(conn, {
+        recommendations: conn.recommendations,
+        syncInfo: conn.syncInfo,
+        voiceStats: conn.voiceStats,
+      }));
 
       return res.status(200).json(successResponse(data));
     } catch (error) {
@@ -60,22 +62,23 @@ router.get(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const connection = await ConnectedAccount.query()
-        .findById(req.params.id)
-        .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id)
-        .withGraphFetched("[writing_style, sample_posts, rules]");
+      const connection = await ConnectedAccount.findOneWithDetails(
+        req.params.id,
+        res.locals.account.id,
+        res.locals.app.id
+      );
 
       if (!connection) {
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
-      // Get completeness metrics and sync info
-      const recommendations = await connection.getCompletionRecommendations();
-      const syncInfo = await connection.getSyncInfo();
+      const data = connectionDetailSerializer(connection, {
+        recommendations: connection.recommendations,
+        syncInfo: connection.syncInfo,
+        voiceStats: connection.voiceStats,
+      });
 
-      const data = connectionDetailSerializer(connection, { recommendations, syncInfo });
-
+      console.log("Connection detail:", JSON.stringify(data, null, 2));
       return res.status(200).json(successResponse(data));
     } catch (error) {
       console.error("Get connection error:", error);
@@ -378,6 +381,11 @@ router.post(
         sort_order: sort_order !== undefined ? sort_order : 0,
       });
 
+      // Trigger voice profile regeneration
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: connection.id,
+      });
+
       return res.status(201).json(successResponse(samplePostSerializer(samplePost)));
     } catch (error) {
       console.error("Create sample post error:", error);
@@ -477,6 +485,13 @@ router.patch(
       // Update sample post
       const updated = await samplePost.$query().patchAndFetch(updates);
 
+      // Trigger voice profile regeneration if content changed
+      if (content !== undefined) {
+        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+          connectedAccountId: connection.id,
+        });
+      }
+
       return res.status(200).json(successResponse(samplePostSerializer(updated)));
     } catch (error) {
       console.error("Update sample post error:", error);
@@ -519,6 +534,11 @@ router.delete(
       // Delete sample post
       await samplePost.$query().delete();
 
+      // Trigger voice profile regeneration
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: connection.id,
+      });
+
       return res.status(200).json(successResponse(messageResponse("Sample post deleted successfully")));
     } catch (error) {
       console.error("Delete sample post error:", error);
@@ -527,21 +547,13 @@ router.delete(
   }
 );
 
-// GET /connections/:id/rules - List rules with optional filtering
+// GET /connections/:id/rules - List rules
 router.get(
   "/:id/rules",
   requireAppContext,
   requireAuth,
   [
     ...connectionParamValidators,
-    query("type")
-      .optional()
-      .isIn(["general", "feedback", "all"])
-      .withMessage("Type must be one of: general, feedback, all"),
-    query("suggestion_id")
-      .optional()
-      .isUUID()
-      .withMessage("suggestion_id must be a valid UUID"),
     query("active_only")
       .optional()
       .isBoolean()
@@ -550,7 +562,7 @@ router.get(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { type = "all", suggestion_id, active_only = "true" } = req.query;
+      const { active_only = "true" } = req.query;
       const activeOnlyBool = active_only === "true" || active_only === true;
 
       // Verify connection belongs to user
@@ -563,40 +575,15 @@ router.get(
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
-      let rules;
+      // Get rules
+      const query = Rule.query()
+        .where("connected_account_id", connection.id);
 
-      // Filter based on type
-      if (type === "general") {
-        // Only rules with no feedback_on_suggestion_id
-        rules = await Rule.getGeneralRules(connection.id, activeOnlyBool);
-      } else if (type === "feedback") {
-        // Only rules with feedback_on_suggestion_id
-        rules = await Rule.getFeedbackRules(connection.id, suggestion_id || null, activeOnlyBool);
-      } else {
-        // All rules
-        if (suggestion_id) {
-          // Filter by specific suggestion
-          const query = Rule.query()
-            .where("connected_account_id", connection.id)
-            .where("feedback_on_suggestion_id", suggestion_id);
-
-          if (activeOnlyBool) {
-            query.where("is_active", true);
-          }
-
-          rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
-        } else {
-          // Get all rules
-          const query = Rule.query()
-            .where("connected_account_id", connection.id);
-
-          if (activeOnlyBool) {
-            query.where("is_active", true);
-          }
-
-          rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
-        }
+      if (activeOnlyBool) {
+        query.where("is_active", true);
       }
+
+      const rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
 
       return res.status(200).json(successResponse(rules.map(ruleSerializer)));
     } catch (error) {
@@ -622,10 +609,6 @@ router.post(
       .trim()
       .isLength({ min: 1, max: 2000 })
       .withMessage("Content must be between 1 and 2000 characters"),
-    body("feedback_on_suggestion_id")
-      .optional()
-      .isUUID()
-      .withMessage("feedback_on_suggestion_id must be a valid UUID"),
     body("priority")
       .optional()
       .isInt({ min: 1, max: 10 })
@@ -634,7 +617,7 @@ router.post(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { rule_type, content, feedback_on_suggestion_id, priority } = req.body;
+      const { rule_type, content, priority } = req.body;
 
       // Verify connection belongs to user
       const connection = await ConnectedAccount.query()
@@ -651,9 +634,13 @@ router.post(
         connected_account_id: connection.id,
         rule_type,
         content,
-        feedback_on_suggestion_id: feedback_on_suggestion_id || null,
         priority: priority !== undefined ? priority : 5,
         is_active: true,
+      });
+
+      // Trigger voice profile regeneration
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: connection.id,
       });
 
       return res.status(201).json(successResponse(ruleSerializer(rule)));
@@ -726,6 +713,13 @@ router.patch(
       // Update rule
       const updated = await rule.$query().patchAndFetch(updates);
 
+      // Trigger voice profile regeneration if content or rule_type changed
+      if (content !== undefined || rule_type !== undefined) {
+        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+          connectedAccountId: connection.id,
+        });
+      }
+
       return res.status(200).json(successResponse(ruleSerializer(updated)));
     } catch (error) {
       console.error("Update rule error:", error);
@@ -767,6 +761,11 @@ router.delete(
 
       // Delete rule
       await rule.$query().delete();
+
+      // Trigger voice profile regeneration
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: connection.id,
+      });
 
       return res.status(200).json(successResponse(messageResponse("Rule deleted successfully")));
     } catch (error) {
@@ -959,6 +958,113 @@ router.patch(
     } catch (error) {
       console.error("Update rotation settings error:", error);
       return res.status(500).json(formatError("Failed to update rotation settings"));
+    }
+  }
+);
+
+// POST /connections/:id/feedback - Submit voice feedback
+router.post(
+  "/:id/feedback",
+  requireAppContext,
+  requireAuth,
+  [
+    ...connectionParamValidators,
+    body("feedback")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 1000 })
+      .withMessage("Feedback must be between 1 and 1000 characters"),
+    body("reference_text")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 5000 })
+      .withMessage("Reference text must be under 5000 characters"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { feedback, reference_text } = req.body;
+
+      // Verify connection belongs to user
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id);
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Check if voice profile exists
+      const currentProfile = await VoiceProfile.getCurrentProfile(connection.id);
+      if (!currentProfile) {
+        return res.status(400).json(formatError(
+          "Please add sample posts first to create a voice profile before providing feedback.",
+          400
+        ));
+      }
+
+      // Create feedback record
+      const voiceFeedback = await VoiceFeedback.query().insert({
+        connected_account_id: connection.id,
+        feedback,
+        reference_text: reference_text || null,
+        status: "pending",
+      });
+
+      // Queue processing job immediately
+      await ghostQueue.add(JOB_PROCESS_VOICE_FEEDBACK, {
+        feedbackId: voiceFeedback.id,
+      });
+
+      return res.status(202).json(successResponse(
+        feedbackSubmittedSerializer({
+          feedbackId: voiceFeedback.id,
+          currentVoiceVersion: currentProfile.version,
+        })
+      ));
+    } catch (error) {
+      console.error("Submit feedback error:", error);
+      return res.status(500).json(formatError("Failed to submit feedback"));
+    }
+  }
+);
+
+// GET /connections/:id/voice/status - Lightweight poll for voice generation status
+router.get(
+  "/:id/voice/status",
+  requireAppContext,
+  requireAuth,
+  connectionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const connection = await ConnectedAccount.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .select("id");
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connection not found", 404));
+      }
+
+      // Check both generating profile AND pending/processing feedback
+      const [generatingProfile, pendingFeedback] = await Promise.all([
+        VoiceProfile.getGeneratingProfile(connection.id),
+        VoiceFeedback.query()
+          .where("connected_account_id", connection.id)
+          .whereIn("status", ["pending", "processing"])
+          .first(),
+      ]);
+
+      return res.status(200).json(successResponse({
+        is_generating: !!generatingProfile || !!pendingFeedback,
+      }));
+    } catch (error) {
+      console.error("Get voice status error:", error);
+      return res.status(500).json(formatError("Failed to retrieve voice status"));
     }
   }
 );

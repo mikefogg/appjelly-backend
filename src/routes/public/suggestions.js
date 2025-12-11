@@ -1,7 +1,7 @@
 import express from "express";
 import { param, query, body } from "express-validator";
 import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
-import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, TrendingTopic } from "#src/models/index.js";
+import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, TrendingTopic, VoiceProfile } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
@@ -17,12 +17,7 @@ import {
 } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS, JOB_GENERATE_POST } from "#src/background/queues/index.js";
 import ContentGenerationService from "#src/services/ContentGenerationService.js";
-import { getPlatformSystemPrompt } from "#src/config/platform-rules.js";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import AI from "#src/services/ai/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -471,10 +466,13 @@ router.post(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Fetch trending topic with curated topic details
-      const trendingTopic = await TrendingTopic.query()
-        .findById(trending_topic_id)
-        .withGraphFetched("curated_topic");
+      // Fetch trending topic and voice profile in parallel
+      const [trendingTopic, voiceProfile] = await Promise.all([
+        TrendingTopic.query()
+          .findById(trending_topic_id)
+          .withGraphFetched("curated_topic"),
+        VoiceProfile.getCurrentProfile(connection.id),
+      ]);
 
       if (!trendingTopic) {
         return res.status(404).json(formatError("Trending topic not found", 404));
@@ -492,48 +490,16 @@ router.post(
 
       console.log(`[Suggestions from Topic] Generating for trending topic: ${trendingTopic.topic_name}`);
 
-      // Generate with AI using platform-specific system prompt
-      const systemPrompt = getPlatformSystemPrompt(connection.platform);
+      // Generate with AI service
+      const result = await AI.generatePost({
+        topic: prompt,
+        voiceProfile: voiceProfile?.toPromptFormat(),
+        contentType: selectedContentType,
+        platform: connection.platform,
+        maxLength: 500,
+      });
 
-      let model = 'gpt-5';
-      let response;
-      try {
-        response = await openai.chat.completions.create({
-          model,
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          temperature: 0.7,
-          max_tokens: 500,
-        });
-      } catch (error) {
-        console.warn('gpt-5 failed, falling back to gpt-5-nano:', error);
-        model = 'gpt-5-nano';
-        response = await openai.chat.completions.create({
-          model,
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt
-            },
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          temperature: 0.7,
-          max_tokens: 500,
-        });
-      }
-
-      const generatedContent = response.choices[0].message.content;
+      const generatedContent = result.content;
 
       // Create suggestion
       const suggestion = await PostSuggestion.query().insert({

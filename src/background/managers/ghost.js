@@ -9,6 +9,8 @@ import {
   JOB_GENERATE_SUGGESTIONS,
   JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   JOB_GENERATE_POST,
+  JOB_GENERATE_VOICE_PROFILE,
+  JOB_PROCESS_VOICE_FEEDBACK,
   JOB_DISPATCH_CURATED_TOPICS,
   JOB_SYNC_CURATED_TOPIC,
   JOB_DIGEST_RECENT_TOPICS,
@@ -22,6 +24,8 @@ import analyzeStyle from "#src/background/jobs/ghost/analyze-style.js";
 import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions.js";
 import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
 import generatePost from "#src/background/jobs/ghost/generate-post.js";
+import generateVoiceProfile from "#src/background/jobs/ghost/generate-voice-profile.js";
+import processVoiceFeedback from "#src/background/jobs/ghost/process-voice-feedback.js";
 import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-topics.js";
 import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
@@ -62,6 +66,12 @@ function start(id) {
 
               case JOB_GENERATE_POST:
                 return await generatePost(job);
+
+              case JOB_GENERATE_VOICE_PROFILE:
+                return await generateVoiceProfile(job);
+
+              case JOB_PROCESS_VOICE_FEEDBACK:
+                return await processVoiceFeedback(job);
 
               case JOB_DISPATCH_CURATED_TOPICS:
                 return await dispatchCuratedTopics(job);

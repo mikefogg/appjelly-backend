@@ -27,5 +27,7 @@ export { default as Rule } from "#src/models/Rule.js";
 export { default as CuratedTopic } from "#src/models/CuratedTopic.js";
 export { default as UserTopicPreference } from "#src/models/UserTopicPreference.js";
 export { default as TrendingTopic } from "#src/models/TrendingTopic.js";
+export { default as VoiceProfile } from "#src/models/VoiceProfile.js";
+export { default as VoiceFeedback } from "#src/models/VoiceFeedback.js";
 
 export { knexConnection as knex };

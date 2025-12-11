@@ -1,7 +1,7 @@
 import express from "express";
 import { param, body } from "express-validator";
 import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
-import { Input, Artifact, ConnectedAccount } from "#src/models/index.js";
+import { Input, Artifact, ConnectedAccount, VoiceProfile } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
@@ -15,7 +15,7 @@ import {
   messageResponse,
 } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_POST } from "#src/background/queues/index.js";
-import  aiService from "#src/helpers/ai-service.js";
+import AI from "#src/services/ai/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -364,21 +364,30 @@ router.post(
         return res.status(400).json(formatError("Post has no content to improve", 400));
       }
 
-      // Build AI prompt for improvement
-      const improvementPrompt = instructions
-        ? `Improve this social media post with the following instructions: "${instructions}"\n\nOriginal post:\n${artifact.content}`
-        : `Improve this social media post while keeping the core message and tone:\n\n${artifact.content}`;
+      // Build topic for improvement
+      const improvementTopic = instructions
+        ? `Improve this post with the following instructions: "${instructions}"\n\nOriginal post:\n${artifact.content}`
+        : `Improve this post while keeping the core message and tone:\n\n${artifact.content}`;
+
+      // Get voice profile for this connected account
+      const connection = artifact.connected_account;
+      const voiceProfile = connection
+        ? await VoiceProfile.getCurrentProfile(connection.id)
+        : null;
 
       // Get AI improvement (without saving)
       const startTime = Date.now();
-      const aiResponse = await aiService.generateText(improvementPrompt, {
-        maxTokens: 500,
-        temperature: 0.7,
+      const platform = connection?.platform || "ghost";
+      const result = await AI.generatePost({
+        topic: improvementTopic,
+        voiceProfile: voiceProfile?.toPromptFormat(),
+        platform,
+        maxLength: 500,
       });
       const generationTime = (Date.now() - startTime) / 1000;
 
       return res.status(200).json(successResponse(
-        postImprovementSerializer(artifact, aiResponse.text, instructions, aiResponse, generationTime)
+        postImprovementSerializer(artifact, result.content, instructions, result.metadata, generationTime)
       ));
     } catch (error) {
       console.error("Improve post error:", error);

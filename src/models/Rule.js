@@ -1,6 +1,5 @@
 import BaseModel from "#src/models/BaseModel.js";
 import ConnectedAccount from "#src/models/ConnectedAccount.js";
-import PostSuggestion from "#src/models/PostSuggestion.js";
 
 class Rule extends BaseModel {
   static get tableName() {
@@ -16,7 +15,6 @@ class Rule extends BaseModel {
         connected_account_id: { type: "string", format: "uuid" },
         rule_type: { type: "string", enum: ["never", "always", "prefer", "tone"] },
         content: { type: "string", minLength: 1 },
-        feedback_on_suggestion_id: { type: ["string", "null"], format: "uuid" },
         priority: { type: "integer", minimum: 1, maximum: 10, default: 5 },
         is_active: { type: "boolean", default: true },
       },
@@ -33,14 +31,6 @@ class Rule extends BaseModel {
           to: "connected_accounts.id",
         },
       },
-      suggestion: {
-        relation: BaseModel.BelongsToOneRelation,
-        modelClass: PostSuggestion,
-        join: {
-          from: "rules.feedback_on_suggestion_id",
-          to: "post_suggestions.id",
-        },
-      },
     };
   }
 
@@ -51,38 +41,6 @@ class Rule extends BaseModel {
       .where("is_active", true)
       .orderBy("priority", "desc")
       .orderBy("created_at", "asc");
-  }
-
-  static async getGeneralRules(connectedAccountId, activeOnly = true) {
-    const query = this.query()
-      .where("connected_account_id", connectedAccountId)
-      .whereNull("feedback_on_suggestion_id")
-      .orderBy("priority", "desc")
-      .orderBy("created_at", "asc");
-
-    if (activeOnly) {
-      query.where("is_active", true);
-    }
-
-    return query;
-  }
-
-  static async getFeedbackRules(connectedAccountId, suggestionId = null, activeOnly = true) {
-    const query = this.query()
-      .where("connected_account_id", connectedAccountId)
-      .whereNotNull("feedback_on_suggestion_id");
-
-    if (suggestionId) {
-      query.where("feedback_on_suggestion_id", suggestionId);
-    }
-
-    if (activeOnly) {
-      query.where("is_active", true);
-    }
-
-    return query
-      .orderBy("priority", "desc")
-      .orderBy("created_at", "desc");
   }
 }
 

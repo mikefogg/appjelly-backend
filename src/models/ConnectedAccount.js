@@ -10,6 +10,8 @@ import UserPostHistory from "#src/models/UserPostHistory.js";
 import SamplePost from "#src/models/SamplePost.js";
 import Rule from "#src/models/Rule.js";
 import ConnectedAccountAuth from "#src/models/ConnectedAccountAuth.js";
+import VoiceProfile from "#src/models/VoiceProfile.js";
+import VoiceFeedback from "#src/models/VoiceFeedback.js";
 import { decrypt, encrypt } from "#src/helpers/encryption.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
@@ -309,48 +311,188 @@ class ConnectedAccount extends BaseModel {
   }
 
   /**
-   * Fetch connections with all counts needed for list serialization in a single query.
-   * Avoids N+1 queries by computing sample_posts_count, rules_count, and curated_topics_count
-   * directly in SQL.
+   * Fetch connections with ALL data needed for serialization.
+   * Works for both list and detail views - same data shape.
+   *
+   * @param {string[]} connectionIds - Array of connection IDs to fetch
+   * @param {string} accountId - Account ID for authorization
+   * @param {string} appId - App ID for authorization
+   * @returns {Object} Map of { [connectionId]: connectionWithAllData }
    */
-  static async findWithCountsForList(accountId, appId) {
+  static async findWithDetails(connectionIds, accountId, appId) {
+    if (!connectionIds || connectionIds.length === 0) return {};
+
+    // Query 1: Get connections with counts via subqueries
     const connections = await this.query()
       .select(
         "connected_accounts.*",
-        this.relatedQuery("sample_posts")
-          .count()
-          .as("sample_posts_count"),
-        this.relatedQuery("rules")
-          .where("is_active", true)
-          .count()
-          .as("rules_count")
+        this.relatedQuery("sample_posts").count().as("sample_posts_count"),
+        this.relatedQuery("rules").where("is_active", true).count().as("rules_count")
       )
+      .whereIn("id", connectionIds)
       .where("account_id", accountId)
       .where("app_id", appId)
-      .where("is_active", true)
-      .orderBy("created_at", "desc");
+      .withGraphFetched("[sample_posts, rules]");
 
-    // Batch fetch curated topic counts for all connections in one query
-    if (connections.length > 0) {
-      const connectionIds = connections.map(c => c.id);
-      const topicCounts = await UserTopicPreference.query()
+    if (connections.length === 0) return {};
+
+    const foundIds = connections.map(c => c.id);
+
+    // Query 2: Batch fetch all related data in parallel
+    const [topicCounts, voiceProfiles, generatingProfiles, feedbackCounts, pendingFeedback] = await Promise.all([
+      // Curated topic counts
+      UserTopicPreference.query()
         .select("connected_account_id")
         .count("* as count")
-        .whereIn("connected_account_id", connectionIds)
-        .groupBy("connected_account_id");
+        .whereIn("connected_account_id", foundIds)
+        .groupBy("connected_account_id"),
+      // Current voice profiles
+      VoiceProfile.query()
+        .whereIn("connected_account_id", foundIds)
+        .where("status", "active")
+        .orderBy("version", "desc"),
+      // Generating voice profiles
+      VoiceProfile.query()
+        .whereIn("connected_account_id", foundIds)
+        .where("status", "generating"),
+      // Feedback counts (all statuses)
+      VoiceFeedback.query()
+        .select("connected_account_id")
+        .count("* as count")
+        .whereIn("connected_account_id", foundIds)
+        .groupBy("connected_account_id"),
+      // Pending/processing feedback (means we're effectively generating)
+      VoiceFeedback.query()
+        .select("connected_account_id")
+        .whereIn("connected_account_id", foundIds)
+        .whereIn("status", ["pending", "processing"])
+        .groupBy("connected_account_id"),
+    ]);
 
-      // Create a map for quick lookup
-      const topicCountMap = new Map(
-        topicCounts.map(tc => [tc.connected_account_id, parseInt(tc.count, 10)])
-      );
+    // Build lookup maps
+    const topicCountMap = new Map(topicCounts.map(t => [t.connected_account_id, parseInt(t.count, 10)]));
+    const feedbackCountMap = new Map(feedbackCounts.map(f => [f.connected_account_id, parseInt(f.count, 10)]));
+    const generatingMap = new Map(generatingProfiles.map(p => [p.connected_account_id, true]));
+    const pendingFeedbackMap = new Map(pendingFeedback.map(p => [p.connected_account_id, true]));
 
-      // Attach counts to each connection
-      for (const conn of connections) {
-        conn.curated_topics_count = topicCountMap.get(conn.id) || 0;
+    // Voice profiles: get latest per connection
+    const voiceProfileMap = new Map();
+    for (const profile of voiceProfiles) {
+      if (!voiceProfileMap.has(profile.connected_account_id)) {
+        voiceProfileMap.set(profile.connected_account_id, profile);
       }
     }
 
-    return connections;
+    // Build result map
+    const result = {};
+    for (const conn of connections) {
+      const samplePostsCount = parseInt(conn.sample_posts_count, 10) || 0;
+      const rulesCount = parseInt(conn.rules_count, 10) || 0;
+      const curatedTopicsCount = topicCountMap.get(conn.id) || 0;
+      const feedbackCount = feedbackCountMap.get(conn.id) || 0;
+
+      // Attach voice data
+      conn.voiceProfile = voiceProfileMap.get(conn.id) || null;
+      conn.voiceStats = {
+        rulesCount,
+        feedbackCount,
+        isGenerating: generatingMap.has(conn.id) || pendingFeedbackMap.has(conn.id),
+      };
+
+      // Compute sync info
+      const isGhost = conn.platform === "ghost";
+      const hasCustomTopics = conn.topics_of_interest && conn.topics_of_interest.trim().length > 0;
+      const hasCuratedTopics = curatedTopicsCount > 0;
+      const hasTopics = hasCuratedTopics || hasCustomTopics;
+      const hasVoice = conn.voice && conn.voice.trim().length > 0;
+      const hasSamplePosts = samplePostsCount >= 3;
+      const topicsCount = curatedTopicsCount + (hasCustomTopics ? 1 : 0);
+
+      // Compute completeness score
+      let completenessScore = 0;
+      if (hasTopics || samplePostsCount > 0) {
+        completenessScore = 33;
+        if (hasVoice) {
+          completenessScore = 66;
+          if (hasSamplePosts) {
+            completenessScore = 100;
+          }
+        }
+      }
+
+      conn.syncInfo = {
+        is_ghost: isGhost,
+        sync_status: isGhost ? "ready" : conn.sync_status,
+        last_synced_at: isGhost ? null : conn.last_synced_at,
+        last_analyzed_at: isGhost ? null : conn.last_analyzed_at,
+        needs_sync: isGhost ? false : conn.needsSync(24),
+        needs_analysis: isGhost ? false : conn.needsAnalysis(7),
+        completeness_score: completenessScore,
+        has_topics: hasTopics,
+        has_voice: hasVoice,
+        has_sample_posts: hasSamplePosts,
+        topics_count: topicsCount,
+        sample_posts_count: samplePostsCount,
+        rules_count: rulesCount,
+      };
+
+      // Compute recommendations
+      const recommendations = [];
+      if (completenessScore === 0) {
+        recommendations.push({
+          priority: "critical",
+          action: "select_topics",
+          title: "Select topics of interest",
+          description: "Choose topics you want to write about to start generating posts",
+        });
+      }
+      if (completenessScore < 100) {
+        if (!hasVoice) {
+          recommendations.push({
+            priority: "high",
+            action: "add_voice",
+            title: "Define your voice",
+            description: "Add instructions about how you want to sound to personalize your posts",
+          });
+        }
+        if (samplePostsCount < 3) {
+          recommendations.push({
+            priority: samplePostsCount === 0 ? "high" : "medium",
+            action: "add_samples",
+            title: samplePostsCount === 0 ? "Add sample posts" : `Add ${3 - samplePostsCount} more sample posts`,
+            description: "Sample posts help us understand your writing style",
+          });
+        }
+      }
+      conn.recommendations = recommendations;
+
+      result[conn.id] = conn;
+    }
+
+    return result;
+  }
+
+  /**
+   * Convenience: Fetch all connections for an account
+   */
+  static async findAllWithDetails(accountId, appId) {
+    const connectionIds = await this.query()
+      .select("id")
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("is_active", true)
+      .orderBy("created_at", "desc")
+      .then(rows => rows.map(r => r.id));
+
+    return this.findWithDetails(connectionIds, accountId, appId);
+  }
+
+  /**
+   * Convenience: Fetch single connection by ID
+   */
+  static async findOneWithDetails(connectionId, accountId, appId) {
+    const result = await this.findWithDetails([connectionId], accountId, appId);
+    return result[connectionId] || null;
   }
 
   /**
