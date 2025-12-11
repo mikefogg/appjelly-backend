@@ -36,24 +36,6 @@ router.get("/me", requireAppContext, requireAuth, async (req, res) => {
   try {
     const account = res.locals.account;
 
-    // Get counts for stats
-    const { Actor, Artifact } = await import("#src/models/index.js");
-    let actorsCount = 0;
-    let artifactsCount = 0;
-
-    try {
-      [actorsCount, artifactsCount] = await Promise.all([
-        Actor.query().where("account_id", account.id).resultSize(),
-        Artifact.query().where("account_id", account.id).resultSize(),
-      ]);
-    } catch (error) {
-      console.warn("Failed to get counts for account stats:", error);
-    }
-
-    // Add counts to account for serializer
-    account.actors = { length: actorsCount };
-    account.artifacts = { length: artifactsCount };
-
     const data = currentAccountSerializer(account);
     return res
       .status(200)

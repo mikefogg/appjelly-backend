@@ -1,6 +1,6 @@
 import express from "express";
 import formatError from "#src/helpers/format-error.js";
-import { App } from "#src/models/index.js";
+import { App, WebhookEvent } from "#src/models/index.js";
 import {
   subscriptionQueue,
   JOB_PROCESS_REVENUECAT_WEBHOOK,
@@ -31,6 +31,15 @@ router.post("/:appSlug", async (req, res) => {
       }
     }
 
+    // Log the raw webhook event for replay capability
+    const webhookEvent = await WebhookEvent.logEvent({
+      source: "revenuecat",
+      eventType: webhookData.event?.type,
+      eventId: webhookData.event?.id,
+      payload: webhookData,
+      appId: app.id,
+    });
+
     // Queue background job for comprehensive processing
     // This handles: notifications, analytics, user updates, etc.
     await subscriptionQueue.add(
@@ -39,6 +48,7 @@ router.post("/:appSlug", async (req, res) => {
         event: webhookData.event,
         appId: app.id,
         appSlug: app.slug,
+        webhookEventId: webhookEvent.id,
       },
       {
         priority: getEventPriority(webhookData.event?.type),

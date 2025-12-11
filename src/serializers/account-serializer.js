@@ -32,10 +32,6 @@ export const currentAccountSerializer = (account) => {
       config: account.app.config,
     } : null,
     subscription: subscriptionInfo,
-    stats: {
-      actors_count: account.actors?.length || 0,
-      artifacts_count: account.artifacts?.length || 0,
-    },
   };
 };
 

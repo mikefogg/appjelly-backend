@@ -1,5 +1,5 @@
 import { raw } from "objection";
-import { Account, Subscription } from "#src/models/index.js";
+import { Account, Subscription, WebhookEvent } from "#src/models/index.js";
 import { addDays, addYears } from "date-fns";
 
 const RC_ANON = "$RCAnonymousID";
@@ -18,13 +18,23 @@ const ALLOWED_WEBHOOK_TYPES = [
 ];
 
 const ProcessRevenueCatWebhookWorker = async ({ data }) => {
-  const { event, appId } = data;
+  const { event, appId, webhookEventId } = data;
   const jobKey = "revenuecat-webhook";
+
+  // Get the webhook event record if we have one
+  let webhookEvent = null;
+  if (webhookEventId) {
+    webhookEvent = await WebhookEvent.query().findById(webhookEventId);
+  }
 
   // Validate event type
   if (!ALLOWED_WEBHOOK_TYPES.includes(event.type)) {
     if (process.env.NODE_ENV === "development") {
       console.log(`[${jobKey}] Skipped processing event type: ${event.type}`);
+    }
+    // Mark as processed even if skipped
+    if (webhookEvent) {
+      await webhookEvent.markProcessed();
     }
     return Promise.resolve();
   }
@@ -38,13 +48,26 @@ const ProcessRevenueCatWebhookWorker = async ({ data }) => {
   try {
     // Handle user transfers between accounts
     if (event.type === "TRANSFER") {
-      return await handleTransfer(event, appId, jobKey);
+      await handleTransfer(event, appId, jobKey);
+    } else {
+      // Process regular subscription events
+      await processSubscriptionEvent(event, appId, jobKey);
     }
 
-    // Process regular subscription events
-    return await processSubscriptionEvent(event, appId, jobKey);
+    // Mark webhook event as processed
+    if (webhookEvent) {
+      await webhookEvent.markProcessed();
+    }
+
+    return Promise.resolve();
   } catch (error) {
     console.error(`[${jobKey}] Error processing webhook:`, error);
+
+    // Mark webhook event as failed
+    if (webhookEvent) {
+      await webhookEvent.markFailed(error.message);
+    }
+
     throw error; // Re-throw to trigger job retry
   }
 };
