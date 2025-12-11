@@ -3,6 +3,7 @@ import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import { redisOpts } from "#src/utils/redis.js";
 import {
   QUEUE_GHOST,
+  QUEUE_SUBSCRIPTION_PROCESSING,
   JOB_SYNC_NETWORK,
   JOB_ANALYZE_STYLE,
   JOB_GENERATE_SUGGESTIONS,
@@ -12,6 +13,7 @@ import {
   JOB_SYNC_CURATED_TOPIC,
   JOB_DIGEST_RECENT_TOPICS,
   JOB_SEND_PUSH_NOTIFICATION,
+  JOB_PROCESS_REVENUECAT_WEBHOOK,
 } from "#src/background/queues/index.js";
 
 // Import job processors
@@ -24,6 +26,7 @@ import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-t
 import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
 import sendPushNotificationJob from "#src/background/jobs/ghost/send-push-notification.js";
+import processRevenueCatWebhook from "#src/background/jobs/subscriptions/process-revenuecat-webhook.js";
 
 // Import schedulers
 import * as suggestionScheduler from "#src/background/repeatables/suggestion-scheduler.js";
@@ -133,6 +136,48 @@ function start(id) {
       worker.on("stalled", (jobId) => {
         console.warn(`⚠️ Ghost job ${jobId} stalled`);
       });
+
+      // Subscription worker for RevenueCat webhooks
+      const subscriptionWorker = new WorkerPro(
+        QUEUE_SUBSCRIPTION_PROCESSING,
+        async (job) => {
+          console.log(`Processing subscription job: ${job.name} (ID: ${job.id})`);
+
+          try {
+            switch (job.name) {
+              case JOB_PROCESS_REVENUECAT_WEBHOOK:
+                return await processRevenueCatWebhook(job);
+
+              default:
+                throw new Error(`Unknown subscription job type: ${job.name}`);
+            }
+          } catch (error) {
+            console.error(`Subscription job ${job.name} failed:`, error);
+            throw error;
+          }
+        },
+        {
+          connection: redisOpts,
+          concurrency: 2,
+          removeOnComplete: 10,
+          removeOnFail: 25,
+        }
+      );
+
+      subscriptionWorker.on("completed", (job, result) => {
+        console.log(`✅ Subscription job ${job.name} (ID: ${job.id}) completed successfully`);
+      });
+
+      subscriptionWorker.on("failed", (job, err) => {
+        console.error(`❌ Subscription job ${job?.name} (ID: ${job?.id}) failed:`, err.message);
+      });
+
+      subscriptionWorker.on("error", (err) => {
+        console.error("🚨 Subscription worker error:", err);
+      });
+
+      console.log(`[${key}] Subscription worker started`);
+      console.log(`   - Queue: ${QUEUE_SUBSCRIPTION_PROCESSING}`);
 
       // Set up repeatable jobs
       console.log(`[${key}] Worker ${id} setting up repeatable jobs...`);
