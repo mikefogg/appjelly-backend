@@ -164,40 +164,34 @@ const handleTransfer = async (event, appId, jobKey) => {
 
 const processSubscriptionEvent = async (event, appId, jobKey) => {
   const originalAlias = event.original_app_user_id;
-  const customIds =
-    event.aliases?.filter((alias) => !alias.includes(RC_ANON)) || [];
+  const allAliases = event.aliases || [];
   const appUserId = event.app_user_id;
 
-  // Try to find account by any of the non-anonymous aliases
+  // Filter to non-anonymous aliases for account lookup
+  const nonAnonAliases = allAliases.filter((alias) => !alias.includes(RC_ANON));
+
+  // Also include app_user_id if it's not anonymous
+  if (appUserId && !appUserId.includes(RC_ANON) && !nonAnonAliases.includes(appUserId)) {
+    nonAnonAliases.push(appUserId);
+  }
+
+  console.log(`[${jobKey}] Looking up account by aliases: ${nonAnonAliases.join(", ")}`);
+
+  // Find account by any of the non-anonymous aliases (single query)
   let account = null;
-  let userId = null;
-
-  // First try app_user_id if it's in customIds
-  if (customIds.includes(appUserId)) {
-    account = await Account.query().findOne({ clerk_id: appUserId });
-    if (account) userId = appUserId;
+  if (nonAnonAliases.length > 0) {
+    account = await Account.query()
+      .whereIn("clerk_id", nonAnonAliases)
+      .first();
   }
 
-  // If not found, try each custom ID
-  if (!account && customIds.length > 0) {
-    for (const id of customIds) {
-      account = await Account.query().findOne({ clerk_id: id });
-      if (account) {
-        userId = id;
-        break;
-      }
-    }
-  }
+  // Use the clerk_id we found, or fall back to first non-anon alias
+  const userId = account?.clerk_id || nonAnonAliases[0] || appUserId;
 
-  // Fall back to first customId for userId if account not found
-  if (!userId) {
-    userId = customIds.includes(appUserId) ? appUserId : customIds[0];
-  }
-
-  if (!account && process.env.NODE_ENV === "development") {
-    console.log(
-      `[${jobKey}] No account found for aliases: ${customIds.join(", ")}, creating placeholder subscription`
-    );
+  if (account) {
+    console.log(`[${jobKey}] Found account ${account.id} for clerk_id ${account.clerk_id}`);
+  } else {
+    console.log(`[${jobKey}] No account found for aliases: ${nonAnonAliases.join(", ")}`);
   }
 
   // Find existing subscription (scoped to app if provided)

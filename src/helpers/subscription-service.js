@@ -3,8 +3,10 @@ import { Subscription, Account } from "#src/models/index.js";
 class SubscriptionService {
   constructor() {
     this.revenuecatApiKey = process.env.REVENUECAT_API_KEY;
+    this.revenuecatApiKeyV1 = process.env.REVENUECAT_API_KEY_V1;
     this.revenuecatProjectId = process.env.REVENUECAT_PROJECT_ID;
     this.revenuecatBaseUrl = "https://api.revenuecat.com/v2";
+    this.revenuecatBaseUrlV1 = "https://api.revenuecat.com/v1";
   }
 
   async processRevenueCatWebhook(webhookData) {
@@ -305,17 +307,17 @@ class SubscriptionService {
   }
 
   /**
-   * Get customer subscriptions from RevenueCat API v2
-   * @param {string} customerId - The RC customer ID (app_user_id)
-   * @param {string} environment - 'production' or 'sandbox'
-   * @returns {Array} List of subscriptions
+   * Get subscriber info from RevenueCat API v1
+   * Works with aliases and returns all subscription data for App Store/Play Store
+   * @param {string} appUserId - The RC app_user_id (can be an alias)
+   * @returns {Object} Subscriber object with subscriptions and entitlements
    */
-  async getCustomerSubscriptions(customerId, environment = "production") {
+  async getSubscriberV1(appUserId) {
     const response = await fetch(
-      `${this.revenuecatBaseUrl}/projects/${this.revenuecatProjectId}/customers/${encodeURIComponent(customerId)}/subscriptions?environment=${environment}`,
+      `${this.revenuecatBaseUrlV1}/subscribers/${encodeURIComponent(appUserId)}`,
       {
         headers: {
-          "Authorization": `Bearer ${this.revenuecatApiKey}`,
+          "Authorization": `Bearer ${this.revenuecatApiKeyV1}`,
           "Content-Type": "application/json",
         },
       }
@@ -323,11 +325,10 @@ class SubscriptionService {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`RevenueCat API error: ${response.status} - ${error}`);
+      throw new Error(`RevenueCat V1 API error: ${response.status} - ${error}`);
     }
 
-    const data = await response.json();
-    return data.items || [];
+    return response.json();
   }
 
   /**
@@ -345,117 +346,158 @@ class SubscriptionService {
 
   /**
    * Sync subscription status from RevenueCat for a customer
-   * Fetches current subscriptions from RC and updates our database
-   * Uses same lookup pattern as webhooks: rc_user_id + rc_product_id + rc_platform
-   * @param {string} customerId - The RC customer ID (app_user_id)
-   * @param {string} accountId - Our internal account ID
+   * Uses V1 API which works with aliases and returns App Store/Play Store subscriptions
+   * @param {string} customerId - The RC customer ID (app_user_id or alias)
+   * @param {string} accountId - Our internal account ID (optional - will look up by aliases if not provided)
    * @param {string} appId - Our internal app ID
    * @returns {Object} Sync result
    */
   async syncSubscriptionStatus(customerId, accountId, appId) {
     console.log(`[SubscriptionSync] Syncing for customer: ${customerId}, account: ${accountId}, app: ${appId}`);
 
-    // Fetch subscriptions from RevenueCat
-    const subscriptions = await this.getCustomerSubscriptions(customerId);
-    console.log(`[SubscriptionSync] Found ${subscriptions.length} subscriptions from RC`);
-    console.log(`[SubscriptionSync] Raw RC response:`, JSON.stringify(subscriptions, null, 2));
+    // Use V1 API which works with aliases and returns all subscription types
+    const subscriberData = await this.getSubscriberV1(customerId);
+    console.log(`[SubscriptionSync] V1 subscriber data:`, JSON.stringify(subscriberData, null, 2));
 
-    if (subscriptions.length === 0) {
+    const subscriber = subscriberData.subscriber;
+    if (!subscriber) {
+      return { synced: 0, message: "No subscriber data returned" };
+    }
+
+    // V1 response structure:
+    // subscriber.subscriptions: { "product_id": { expires_date, purchase_date, store, ... } }
+    // subscriber.entitlements: { "entitlement_id": { expires_date, product_identifier, ... } }
+    const subscriptions = subscriber.subscriptions || {};
+    const entitlements = subscriber.entitlements || {};
+    const originalAppUserId = subscriber.original_app_user_id;
+
+    // Build list of possible aliases to look up account
+    // Include: customerId we queried with, original_app_user_id, and filter out anonymous IDs for account lookup
+    const allAliases = [customerId, originalAppUserId].filter(Boolean);
+    const nonAnonAliases = allAliases.filter(id => !id.startsWith("$RCAnonymousID:"));
+
+    console.log(`[SubscriptionSync] Looking up account by aliases: ${nonAnonAliases.join(", ")}`);
+
+    // If accountId not provided, look up by any of the aliases
+    let resolvedAccountId = accountId;
+    if (!resolvedAccountId && nonAnonAliases.length > 0) {
+      const account = await Account.query()
+        .whereIn("clerk_id", nonAnonAliases)
+        .first();
+
+      if (account) {
+        resolvedAccountId = account.id;
+        console.log(`[SubscriptionSync] Found account ${resolvedAccountId} by clerk_id`);
+      }
+    }
+
+    if (!resolvedAccountId) {
+      console.warn(`[SubscriptionSync] No account found for aliases: ${nonAnonAliases.join(", ")}`);
+      return { synced: 0, message: "No account found for any alias" };
+    }
+
+    const productIds = Object.keys(subscriptions);
+    console.log(`[SubscriptionSync] Found ${productIds.length} subscriptions: ${productIds.join(", ")}`);
+
+    if (productIds.length === 0) {
       return { synced: 0, message: "No subscriptions found" };
     }
 
     let synced = 0;
-    for (const rcSub of subscriptions) {
+    for (const productId of productIds) {
+      const rcSub = subscriptions[productId];
+
       console.log(`[SubscriptionSync] Processing subscription:`, {
-        id: rcSub.id,
-        product_id: rcSub.product_id,
+        product_id: productId,
         store: rcSub.store,
-        gives_access: rcSub.gives_access,
-        status: rcSub.status,
-        original_customer_id: rcSub.original_customer_id,
+        expires_date: rcSub.expires_date,
+        unsubscribe_detected_at: rcSub.unsubscribe_detected_at,
+        billing_issues_detected_at: rcSub.billing_issues_detected_at,
       });
 
-      // Only process subscriptions that give access
-      if (!rcSub.gives_access) {
-        console.log(`[SubscriptionSync] Skipping ${rcSub.id} - gives_access is false`);
+      // Check if subscription is expired
+      const expiresDate = rcSub.expires_date ? new Date(rcSub.expires_date) : null;
+      const isExpired = expiresDate && expiresDate < new Date();
+
+      if (isExpired) {
+        console.log(`[SubscriptionSync] Skipping ${productId} - expired on ${rcSub.expires_date}`);
         continue;
       }
 
-      // Map RC status to our status
-      const renewalStatus = this.mapRcStatus(rcSub.status, rcSub.auto_renewal_status);
+      // Map store to platform
       const platform = this.mapStoreToPlatform(rcSub.store);
 
-      // Try to find existing subscription - first by RC subscription ID, then by other identifiers
-      const rcSubId = rcSub.id;
-      const originalCustomerId = rcSub.original_customer_id;
+      // Determine renewal status
+      let renewalStatus = "active";
+      if (rcSub.billing_issues_detected_at) {
+        renewalStatus = "billing_issue";
+      } else if (rcSub.unsubscribe_detected_at) {
+        renewalStatus = "cancelled";
+      }
 
-      console.log(`[SubscriptionSync] Looking for existing sub with:`, {
-        rc_subscription_id: rcSubId,
-        original_customer_id: originalCustomerId,
-        customerId,
-        product_id: rcSub.product_id,
-        platform,
-        app_id: appId,
-      });
+      // Find entitlement for this product
+      const entitlementId = Object.keys(entitlements).find(
+        (eid) => entitlements[eid].product_identifier === productId
+      ) || "pro_access";
 
-      // First try to find by RC subscription ID (most reliable)
+      console.log(`[SubscriptionSync] Looking for existing sub with product: ${productId}, platform: ${platform}`);
+
+      // Try to find existing subscription
       let existingSub = await Subscription.query()
-        .whereRaw("metadata->>'rc_subscription_id' = ?", [rcSubId])
+        .where("rc_product_id", productId)
+        .where("rc_platform", platform)
         .where("app_id", appId)
         .first();
 
-      // If not found, try by original_customer_id + product + platform
-      if (!existingSub && originalCustomerId) {
+      // Also try by rc_user_id
+      if (!existingSub) {
         existingSub = await Subscription.query()
-          .where("rc_user_id", originalCustomerId)
-          .where("rc_product_id", rcSub.product_id)
-          .where("rc_platform", platform)
+          .where("rc_user_id", customerId)
+          .where("rc_product_id", productId)
           .where("app_id", appId)
           .first();
       }
 
-      // If still not found, try by the customerId we're syncing with
-      if (!existingSub) {
+      // Try by original_app_user_id
+      if (!existingSub && originalAppUserId) {
         existingSub = await Subscription.query()
-          .where("rc_user_id", customerId)
-          .where("rc_product_id", rcSub.product_id)
-          .where("rc_platform", platform)
+          .where("rc_user_id", originalAppUserId)
+          .where("rc_product_id", productId)
           .where("app_id", appId)
           .first();
       }
 
       console.log(`[SubscriptionSync] Existing subscription found:`, existingSub?.id || "none");
 
-      // For new subscriptions, use the customerId (clerk_id) as rc_user_id
+      // Use customerId (clerk_id) for new subscriptions
       const rcUserId = existingSub?.rc_user_id || customerId;
 
-      // Add 1 day buffer to expiration (matches webhook behavior)
-      const expiration = rcSub.current_period_ends_at
-        ? new Date(rcSub.current_period_ends_at + 86400000).toISOString() // +1 day in ms
-        : new Date(Date.now() + 100 * 365 * 86400000).toISOString(); // 100 years for lifetime
+      // Add 1 day buffer to expiration
+      const expiration = expiresDate
+        ? new Date(expiresDate.getTime() + 86400000).toISOString()
+        : new Date(Date.now() + 100 * 365 * 86400000).toISOString();
 
       const subData = {
-        account_id: accountId,
+        account_id: resolvedAccountId,
         app_id: appId,
         rc_user_id: rcUserId,
-        rc_entitlement: rcSub.entitlements?.items?.[0]?.entitlement_id || "pro_access",
-        rc_product_id: rcSub.product_id,
-        rc_period_type: rcSub.status === "trialing" ? "trial" : "normal",
+        rc_entitlement: entitlementId,
+        rc_product_id: productId,
+        rc_period_type: rcSub.period_type?.toLowerCase() || "normal",
         rc_renewal_status: renewalStatus,
         rc_platform: platform,
         rc_expiration: expiration,
         metadata: existingSub ? {
           ...existingSub.metadata,
-          rc_subscription_id: rcSub.id,
-          auto_renewal_status: rcSub.auto_renewal_status,
-          gives_access: rcSub.gives_access,
+          original_app_user_id: originalAppUserId,
+          unsubscribe_detected_at: rcSub.unsubscribe_detected_at,
+          billing_issues_detected_at: rcSub.billing_issues_detected_at,
           last_sync_at: new Date().toISOString(),
         } : {
-          original_aliases: [rcUserId],
-          entitlement_ids: rcSub.entitlements?.items?.map(e => e.entitlement_id) || [],
-          rc_subscription_id: rcSub.id,
-          auto_renewal_status: rcSub.auto_renewal_status,
-          gives_access: rcSub.gives_access,
+          original_aliases: [rcUserId, originalAppUserId].filter(Boolean),
+          original_app_user_id: originalAppUserId,
+          entitlement_id: entitlementId,
+          purchase_date: rcSub.purchase_date,
           created_from_sync: true,
           synced_at: new Date().toISOString(),
         },
@@ -468,13 +510,13 @@ class SubscriptionService {
         console.log(`[SubscriptionSync] Updated subscription ${existingSub.id}`);
       } else {
         const newSub = await Subscription.query().insert(subData);
-        console.log(`[SubscriptionSync] Created new subscription ${newSub.id} for product ${rcSub.product_id}`);
+        console.log(`[SubscriptionSync] Created new subscription ${newSub.id} for product ${productId}`);
       }
 
       synced++;
     }
 
-    return { synced, total: subscriptions.length };
+    return { synced, total: productIds.length };
   }
 
   /**
