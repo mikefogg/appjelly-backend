@@ -4,7 +4,7 @@
  * Triggered when samples/rules change, or user requests regeneration
  */
 
-import { ConnectedAccount, SamplePost, Rule, VoiceProfile, Subscription } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import crypto from "crypto";
 
@@ -56,15 +56,19 @@ export default async function generateVoiceProfile(job) {
       };
     }
 
-    // Fetch sample posts and rules
-    const [samplePosts, rules] = await Promise.all([
+    // Fetch sample posts, rules, and any pending feedback
+    const [samplePosts, rules, pendingFeedback] = await Promise.all([
       SamplePost.query()
         .where("connected_account_id", connectedAccountId)
         .orderBy("sort_order", "asc"),
       Rule.getActiveRules(connectedAccountId),
+      VoiceFeedback.query()
+        .where("connected_account_id", connectedAccountId)
+        .where("status", "pending")
+        .orderBy("created_at", "asc"),
     ]);
 
-    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules`);
+    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback`);
 
     // Generate input hash
     const inputHash = generateInputHash(samplePosts, rules);
@@ -89,12 +93,18 @@ export default async function generateVoiceProfile(job) {
 
     job.updateProgress(20);
 
+    // Combine job feedback with any pending feedback from database
+    const allFeedback = [
+      ...(feedback ? [feedback] : []),
+      ...pendingFeedback.map(f => f.feedback),
+    ].join("\n");
+
     // Generate voice profile with AI
     console.log(`[Generate Voice Profile] Calling AI.generateVoiceProfile...`);
     const profileData = await AI.generateVoiceProfile({
       samplePosts: samplePosts.map((p) => ({ content: p.content, notes: p.notes })),
       rules: rules.map((r) => ({ rule_type: r.rule_type, content: r.content })),
-      feedback,
+      feedback: allFeedback || null,
     });
 
     job.updateProgress(80);
@@ -113,6 +123,14 @@ export default async function generateVoiceProfile(job) {
       confidence_reasoning: profileData.confidence_reasoning,
     });
 
+    // Mark any pending feedback as processed
+    if (pendingFeedback.length > 0) {
+      await VoiceFeedback.query()
+        .whereIn("id", pendingFeedback.map(f => f.id))
+        .patch({ status: "processed", processed_at: new Date().toISOString() });
+      console.log(`[Generate Voice Profile] Marked ${pendingFeedback.length} pending feedback as processed`);
+    }
+
     job.updateProgress(100);
 
     console.log(
@@ -128,6 +146,7 @@ export default async function generateVoiceProfile(job) {
       confidence_reasoning: profileData.confidence_reasoning,
       sample_count: samplePosts.length,
       rule_count: rules.length,
+      pending_feedback_processed: pendingFeedback.length,
     };
   } catch (error) {
     console.error(`[Generate Voice Profile] Error:`, error);

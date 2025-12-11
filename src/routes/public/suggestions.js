@@ -34,11 +34,19 @@ router.get(
     query("connected_account_id")
       .isUUID()
       .withMessage("connected_account_id is required"),
+    query("batch_id")
+      .optional()
+      .isUUID()
+      .withMessage("batch_id must be a valid UUID"),
+    query("latest")
+      .optional()
+      .isBoolean()
+      .withMessage("latest must be a boolean"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { connected_account_id } = req.query;
+      const { connected_account_id, batch_id, latest } = req.query;
 
       // Verify connected account belongs to user
       const connection = await ConnectedAccount.query()
@@ -50,19 +58,90 @@ router.get(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Get all suggestions except dismissed ones
-      // Show both pending and used suggestions (used = already copied, still useful to see)
-      // Hide dismissed suggestions (dismissed_at is set, no value in showing)
-      const suggestions = await PostSuggestion.query()
+      // If latest=true, find the most recent batch_id first
+      let latestBatchId = batch_id;
+      if (latest === "true" && !batch_id) {
+        const mostRecent = await PostSuggestion.query()
+          .where("connected_account_id", connected_account_id)
+          .whereNotNull("batch_id")
+          .orderBy("created_at", "desc")
+          .first()
+          .select("batch_id");
+
+        latestBatchId = mostRecent?.batch_id;
+      }
+
+      // Build query
+      let suggestionsQuery = PostSuggestion.query()
         .where("connected_account_id", connected_account_id)
         .whereNull("dismissed_at")
         .withGraphFetched("[source_post.network_profile]")
         .orderBy("created_at", "desc");
 
+      // Filter by batch_id if provided or if fetching latest
+      if (latestBatchId) {
+        suggestionsQuery = suggestionsQuery.where("batch_id", latestBatchId);
+      }
+
+      const suggestions = await suggestionsQuery;
+
       return res.status(200).json(successResponse(suggestions.map(suggestionListSerializer)));
     } catch (error) {
       console.error("Get suggestions error:", error);
       return res.status(500).json(formatError("Failed to retrieve suggestions"));
+    }
+  }
+);
+
+// GET /suggestions/status - Lightweight poll for suggestion generation status
+router.get(
+  "/status",
+  requireAppContext,
+  requireAuth,
+  [
+    query("connected_account_id")
+      .isUUID()
+      .withMessage("connected_account_id is required"),
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { connected_account_id } = req.query;
+
+      // Verify connected account belongs to user (lightweight query)
+      const connection = await ConnectedAccount.query()
+        .findById(connected_account_id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .select("id");
+
+      if (!connection) {
+        return res.status(404).json(formatError("Connected account not found", 404));
+      }
+
+      // Look up job directly by deterministic ID
+      const jobId = `gen-suggestions-${connected_account_id}`;
+      const job = await ghostQueue.getJob(jobId);
+
+      if (job) {
+        const state = await job.getState();
+        // Job exists and is not completed/failed
+        if (state === "waiting" || state === "active" || state === "delayed") {
+          const progress = job.progress;
+          return res.status(200).json(successResponse({
+            is_generating: true,
+            progress: typeof progress === "number" ? progress : 0,
+            state,
+          }));
+        }
+      }
+
+      return res.status(200).json(successResponse({
+        is_generating: false,
+      }));
+    } catch (error) {
+      console.error("Get suggestion status error:", error);
+      return res.status(500).json(formatError("Failed to retrieve suggestion status"));
     }
   }
 );
@@ -402,13 +481,16 @@ router.post(
       // - Network data (if synced for Twitter)
       // The AI will work with whatever data is available
 
-      // Trigger background job
+      // Trigger background job with deterministic jobId for status lookups
       const generationStartedAt = new Date().toISOString();
+      const jobId = `gen-suggestions-${connection.id}`;
 
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
         connectedAccountId: connection.id,
         suggestionCount: 3,
         automated: true, // Set to true for testing push notifications
+      }, {
+        jobId,
       });
 
       return res.status(202).json(successResponse(

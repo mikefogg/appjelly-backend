@@ -38,7 +38,7 @@ export const sendPushNotification = async (accountId, notification) => {
 
     // Target specific user by external user ID (alias)
     notificationBody.include_aliases = {
-      external_id: [accountId]
+      external_id: [accountId],
     };
     notificationBody.target_channel = "push";
 
@@ -56,18 +56,13 @@ export const sendPushNotification = async (accountId, notification) => {
 
     // Check for errors in response (OneSignal returns partial success/errors)
     if (response.errors) {
-      console.warn(`[OneSignal] Notification sent with errors for account ${accountId}:`, response.errors);
-
       // Check if alias is invalid (user hasn't registered with OneSignal yet)
       if (response.errors.invalid_aliases) {
-        throw new Error(`User has not registered with OneSignal yet. Frontend must call OneSignal.login("${accountId}") first.`);
+        throw new Error(
+          `User has not registered with OneSignal yet. Frontend must call OneSignal.login("${accountId}") first.`
+        );
       }
     }
-
-    console.log(`[OneSignal] Sent notification to account ${accountId}:`, {
-      id: response.id,
-      recipients: response.recipients,
-    });
 
     return {
       success: true,
@@ -75,7 +70,6 @@ export const sendPushNotification = async (accountId, notification) => {
       recipients: response.recipients,
     };
   } catch (error) {
-    console.error(`[OneSignal] Failed to send notification:`, error);
     throw new Error(`OneSignal API error: ${error.message}`);
   }
 };
@@ -86,7 +80,10 @@ export const sendPushNotification = async (accountId, notification) => {
  * @param {Object} notification - Notification data
  * @returns {Promise<Object>} OneSignal API response
  */
-export const sendPushNotificationToMultiple = async (accountIds, notification) => {
+export const sendPushNotificationToMultiple = async (
+  accountIds,
+  notification
+) => {
   if (!process.env.ONESIGNAL_APP_ID) {
     throw new Error("ONESIGNAL_APP_ID environment variable is not set");
   }
@@ -107,7 +104,7 @@ export const sendPushNotificationToMultiple = async (accountIds, notification) =
 
     // Target multiple users by external user IDs (aliases)
     notificationBody.include_aliases = {
-      external_id: accountIds
+      external_id: accountIds,
     };
     notificationBody.target_channel = "push";
 
@@ -123,28 +120,12 @@ export const sendPushNotificationToMultiple = async (accountIds, notification) =
     // Send notification
     const response = await client.createNotification(notificationBody);
 
-    // Check for errors in response (OneSignal returns partial success/errors)
-    if (response.errors) {
-      console.warn(`[OneSignal] Notification sent with errors:`, response.errors);
-
-      // Check if some aliases are invalid
-      if (response.errors.invalid_aliases) {
-        console.warn(`[OneSignal] Invalid aliases (users not registered):`, response.errors.invalid_aliases.external_id);
-      }
-    }
-
-    console.log(`[OneSignal] Sent notification to ${accountIds.length} users:`, {
-      id: response.id,
-      recipients: response.recipients,
-    });
-
     return {
       success: true,
       notification_id: response.id,
       recipients: response.recipients,
     };
   } catch (error) {
-    console.error(`[OneSignal] Failed to send notification:`, error);
     throw new Error(`OneSignal API error: ${error.message}`);
   }
 };

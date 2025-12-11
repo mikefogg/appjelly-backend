@@ -78,7 +78,6 @@ router.get(
         voiceStats: connection.voiceStats,
       });
 
-      console.log("Connection detail:", JSON.stringify(data, null, 2));
       return res.status(200).json(successResponse(data));
     } catch (error) {
       console.error("Get connection error:", error);
@@ -996,15 +995,6 @@ router.post(
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
-      // Check if voice profile exists
-      const currentProfile = await VoiceProfile.getCurrentProfile(connection.id);
-      if (!currentProfile) {
-        return res.status(400).json(formatError(
-          "Please add sample posts first to create a voice profile before providing feedback.",
-          400
-        ));
-      }
-
       // Create feedback record
       const voiceFeedback = await VoiceFeedback.query().insert({
         connected_account_id: connection.id,
@@ -1018,10 +1008,13 @@ router.post(
         feedbackId: voiceFeedback.id,
       });
 
+      // Get current voice profile version (if any)
+      const currentProfile = await VoiceProfile.getCurrentProfile(connection.id);
+
       return res.status(202).json(successResponse(
         feedbackSubmittedSerializer({
           feedbackId: voiceFeedback.id,
-          currentVoiceVersion: currentProfile.version,
+          currentVoiceVersion: currentProfile?.version || null,
         })
       ));
     } catch (error) {

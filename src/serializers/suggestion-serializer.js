@@ -57,6 +57,7 @@ export const inspiringPostSerializer = (post) => ({
  */
 export const suggestionListSerializer = (suggestion) => ({
   id: suggestion.id,
+  batch_id: suggestion.batch_id,
   suggestion_type: suggestion.suggestion_type,
   content: suggestion.content,
   reasoning: suggestion.reasoning,
@@ -75,6 +76,7 @@ export const suggestionListSerializer = (suggestion) => ({
  */
 export const suggestionDetailSerializer = (suggestion, inspiringPosts = []) => ({
   id: suggestion.id,
+  batch_id: suggestion.batch_id,
   suggestion_type: suggestion.suggestion_type,
   content: suggestion.content,
   reasoning: suggestion.reasoning,

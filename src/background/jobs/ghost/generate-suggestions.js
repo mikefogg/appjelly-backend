@@ -6,11 +6,14 @@
  * - Content rotation system (story, lesson, question, etc.)
  */
 
-import { ConnectedAccount, NetworkPost, PostSuggestion, UserTopicPreference, TrendingTopic, VoiceProfile, Subscription } from "#src/models/index.js";
+import crypto from "crypto";
+import { ConnectedAccount, NetworkPost, PostSuggestion, UserTopicPreference, TrendingTopic, VoiceProfile, VoiceFeedback, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
+import { ghostQueue } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
+const VOICE_UPDATE_RETRY_DELAY_MS = 10000; // 10 seconds
 
 export default async function generateSuggestions(job) {
   const { connectedAccountId, suggestionCount = 3 } = job.data;
@@ -34,6 +37,27 @@ export default async function generateSuggestions(job) {
         success: false,
         skipped: true,
         reason: "No active subscription",
+      };
+    }
+
+    // Check if voice profile is being updated - if so, delay this job
+    const [generatingProfile, pendingFeedback] = await Promise.all([
+      VoiceProfile.getGeneratingProfile(connectedAccountId),
+      VoiceFeedback.query()
+        .where("connected_account_id", connectedAccountId)
+        .whereIn("status", ["pending", "processing"])
+        .first(),
+    ]);
+
+    if (generatingProfile || pendingFeedback) {
+      console.log(`[Generate Suggestions] Voice update in progress, rescheduling in ${VOICE_UPDATE_RETRY_DELAY_MS}ms`);
+      await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, job.data, {
+        delay: VOICE_UPDATE_RETRY_DELAY_MS,
+      });
+      return {
+        success: true,
+        delayed: true,
+        reason: "Voice update in progress - rescheduled",
       };
     }
 
@@ -118,54 +142,50 @@ async function generateInterestBasedSuggestions(job, connectedAccount, voiceProf
 
   // Get next content types in rotation sequence
   const contentTypeSequence = getContentTypeSequence(connectedAccount.last_content_type, suggestionCount);
+  const contentTypes = contentTypeSequence.map(ct => ct.key);
   console.log(`[Generate Suggestions] Content rotation sequence:`,
     contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')
   );
 
-  // Generate suggestions - one per content type in rotation
-  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
-  const generatedSuggestions = [];
-
   // Build topic string for generation
   const topicString = buildTopicString(topics_of_interest, trendingTopics);
 
-  for (let i = 0; i < suggestionCount; i++) {
-    const contentType = contentTypeSequence[i];
-    console.log(`[Generate Suggestions] [${i + 1}/${suggestionCount}] Generating "${contentType.name}" type...`);
+  // Generate all suggestions in a single batch AI call
+  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions in batch...`);
+  let generatedSuggestions = [];
 
-    try {
-      const result = await AI.generatePost({
-        topic: topicString,
-        voiceProfile: voiceProfile?.toPromptFormat(),
-        contentType: contentType.key,
-        platform: connectedAccount.platform,
-        maxLength: 280,
-      });
+  try {
+    const results = await AI.generatePosts({
+      topic: topicString,
+      voiceProfile: voiceProfile?.toPromptFormat(),
+      contentTypes,
+      platform: connectedAccount.platform,
+      maxLength: 280,
+    });
 
-      generatedSuggestions.push({
-        content: result.content,
-        content_type: contentType.key,
-        reasoning: `Generated as "${contentType.name}" type post (position ${contentType.position} in rotation)`,
-        topics: trendingTopics.slice(0, 3).map(t => t.topic),
-        angle: null,
-        length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
-        metadata: result.metadata,
-      });
+    generatedSuggestions = results.map((result, i) => ({
+      content: result.content,
+      content_type: result.content_type,
+      reasoning: `Generated as "${contentTypeSequence[i]?.name || result.content_type}" type post`,
+      topics: trendingTopics.slice(0, 3).map(t => t.topic),
+      angle: null,
+      length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
+      metadata: result.metadata,
+    }));
 
-      console.log(`[Generate Suggestions]   ✓ Generated (${result.content.length} chars)`);
-
-    } catch (error) {
-      console.error(`[Generate Suggestions]   ✗ Failed to generate ${contentType.name}:`, error.message);
-    }
-
-    job.updateProgress(40 + (i + 1) * (30 / suggestionCount));
+    console.log(`[Generate Suggestions] ✓ Batch generated ${generatedSuggestions.length} suggestions`);
+  } catch (error) {
+    console.error(`[Generate Suggestions] ✗ Batch generation failed:`, error.message);
   }
 
   console.log(`[Generate Suggestions] Generated ${generatedSuggestions.length} suggestions`);
   job.updateProgress(70);
 
+  // Generate batch ID to group these suggestions together
+  const batchId = crypto.randomUUID();
+
   // Save suggestions to database
-  const savedCount = await saveSuggestions(connectedAccount, generatedSuggestions, {
+  const savedCount = await saveSuggestions(connectedAccount, generatedSuggestions, batchId, {
     generation_type: "interest_based_rotation",
     had_curated_topics: hasCuratedTopics,
     curated_topics_count: userTopicIds.length,
@@ -184,6 +204,7 @@ async function generateInterestBasedSuggestions(job, connectedAccount, voiceProf
   return {
     success: true,
     suggestions_generated: savedCount,
+    batch_id: batchId,
     generation_type: "interest_based",
     curated_topics_count: userTopicIds.length,
     trending_topics_count: trendingTopics.length,
@@ -268,53 +289,50 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, voiceProfi
 
   // Get next content types in rotation sequence
   const contentTypeSequence = getContentTypeSequence(connectedAccount.last_content_type, suggestionCount);
+  const contentTypes = contentTypeSequence.map(ct => ct.key);
   console.log(`[Generate Suggestions] Content rotation sequence:`,
     contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')
   );
 
-  // Generate suggestions - one per content type in rotation
-  const generatedSuggestions = [];
-
   // Build topic string for generation
   const topicString = buildTopicString(connectedAccount.topics_of_interest, trendingTopics);
 
-  for (let i = 0; i < suggestionCount; i++) {
-    const contentType = contentTypeSequence[i];
-    console.log(`[Generate Suggestions] [${i + 1}/${suggestionCount}] Generating "${contentType.name}" type...`);
+  // Generate all suggestions in a single batch AI call
+  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions in batch...`);
+  let generatedSuggestions = [];
 
-    try {
-      const result = await AI.generatePost({
-        topic: topicString,
-        voiceProfile: voiceProfile?.toPromptFormat(),
-        contentType: contentType.key,
-        platform: connectedAccount.platform,
-        maxLength: 280,
-      });
+  try {
+    const results = await AI.generatePosts({
+      topic: topicString,
+      voiceProfile: voiceProfile?.toPromptFormat(),
+      contentTypes,
+      platform: connectedAccount.platform,
+      maxLength: 280,
+    });
 
-      generatedSuggestions.push({
-        content: result.content,
-        content_type: contentType.key,
-        reasoning: `Generated as "${contentType.name}" type post (position ${contentType.position} in rotation)`,
-        topics: trendingTopics.slice(0, 3).map(t => t.topic),
-        angle: null,
-        length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
-        metadata: result.metadata,
-      });
+    generatedSuggestions = results.map((result, i) => ({
+      content: result.content,
+      content_type: result.content_type,
+      reasoning: `Generated as "${contentTypeSequence[i]?.name || result.content_type}" type post`,
+      topics: trendingTopics.slice(0, 3).map(t => t.topic),
+      angle: null,
+      length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
+      metadata: result.metadata,
+    }));
 
-      console.log(`[Generate Suggestions]   ✓ Generated (${result.content.length} chars)`);
-
-    } catch (error) {
-      console.error(`[Generate Suggestions]   ✗ Failed to generate ${contentType.name}:`, error.message);
-    }
-
-    job.updateProgress(45 + (i + 1) * (25 / suggestionCount));
+    console.log(`[Generate Suggestions] ✓ Batch generated ${generatedSuggestions.length} suggestions`);
+  } catch (error) {
+    console.error(`[Generate Suggestions] ✗ Batch generation failed:`, error.message);
   }
 
   console.log(`[Generate Suggestions] Generated ${generatedSuggestions.length} suggestions`);
   job.updateProgress(70);
 
+  // Generate batch ID to group these suggestions together
+  const batchId = crypto.randomUUID();
+
   // Save suggestions to database
-  const savedCount = await saveSuggestions(connectedAccount, generatedSuggestions, {
+  const savedCount = await saveSuggestions(connectedAccount, generatedSuggestions, batchId, {
     generation_type: "network_based_rotation",
     trending_topics_count: trendingTopics.length,
     trending_posts_count: trendingPosts.length,
@@ -330,6 +348,7 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, voiceProfi
   return {
     success: true,
     suggestions_generated: savedCount,
+    batch_id: batchId,
     generation_type: "network_based",
     trending_topics: trendingTopics.length,
     trending_posts: trendingPosts.length,
@@ -365,8 +384,8 @@ function buildTopicString(topicsOfInterest, trendingTopics) {
 /**
  * Save suggestions to database
  */
-async function saveSuggestions(connectedAccount, suggestions, baseMetadata) {
-  console.log(`[Generate Suggestions] Saving ${suggestions.length} suggestions...`);
+async function saveSuggestions(connectedAccount, suggestions, batchId, baseMetadata) {
+  console.log(`[Generate Suggestions] Saving ${suggestions.length} suggestions with batch_id: ${batchId}...`);
   let savedCount = 0;
 
   for (const suggestion of suggestions) {
@@ -395,6 +414,7 @@ async function saveSuggestions(connectedAccount, suggestions, baseMetadata) {
         character_count: suggestion.content.length,
         expires_at: expiresAt.toISOString(),
         status: "pending",
+        batch_id: batchId,
         metadata,
       });
 

@@ -115,6 +115,7 @@ class VoiceProfile extends BaseModel {
       tone_markers: this.tone_markers,
       formatting_habits: this.formatting_habits,
       hard_rules: this.hard_rules || [],
+      examples: this.examples || {},
     };
   }
 }

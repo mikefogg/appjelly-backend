@@ -5,6 +5,7 @@
 
 import { VoiceFeedback, VoiceProfile, SamplePost, ConnectedAccount, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
+import { ghostQueue, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
 
 export const JOB_PROCESS_VOICE_FEEDBACK = "process-voice-feedback";
 
@@ -55,12 +56,18 @@ export default async function processVoiceFeedback(job) {
     const currentProfile = await VoiceProfile.getCurrentProfile(feedback.connected_account_id);
 
     if (!currentProfile) {
-      // No existing profile - create one first
-      console.log(`[Process Voice Feedback] No voice profile exists, creating base profile first`);
-      await feedback.markFailed("No voice profile exists. Please add sample posts first.");
+      // No existing profile - trigger voice generation (it will pick up this pending feedback)
+      console.log(`[Process Voice Feedback] No voice profile exists, triggering generation`);
+      await feedback.$query().patch({ status: "pending" });
+
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: feedback.connected_account_id,
+      });
+
       return {
-        success: false,
-        reason: "No voice profile exists",
+        success: true,
+        triggered_generation: true,
+        reason: "No voice profile yet - triggered generation with feedback",
       };
     }
 

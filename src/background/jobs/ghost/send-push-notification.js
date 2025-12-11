@@ -15,13 +15,10 @@ export default async function sendPushNotificationJob(job) {
   const { account_id, notification } = job.data;
 
   try {
-    console.log(`[Send Push Notification] Processing notification for account ${account_id}`);
-
     // Look up account to check notification preferences
     const account = await Account.query().findById(account_id);
 
     if (!account) {
-      console.warn(`[Send Push Notification] Account ${account_id} not found`);
       return {
         success: false,
         error: "Account not found",
@@ -30,7 +27,6 @@ export default async function sendPushNotificationJob(job) {
 
     // Check if notifications are enabled
     if (!account.notifications_enabled) {
-      console.log(`[Send Push Notification] Notifications disabled for account ${account_id}`);
       return {
         success: false,
         skipped: true,
@@ -41,18 +37,12 @@ export default async function sendPushNotificationJob(job) {
     // Send the push notification using account ID as external user ID
     const result = await sendPushNotification(account_id, notification);
 
-    console.log(`[Send Push Notification] Successfully sent notification to account ${account_id}:`, {
-      notification_id: result.notification_id,
-      recipients: result.recipients,
-    });
-
     return {
       success: true,
       notification_id: result.notification_id,
       recipients: result.recipients,
     };
   } catch (error) {
-    console.error(`[Send Push Notification] Failed to send notification for account ${account_id}:`, error);
     throw error; // Let BullMQ handle retries
   }
 }

@@ -20,7 +20,7 @@ class Subscription extends BaseModel {
         rc_product_id: { type: "string" },
         rc_period_type: { type: "string", enum: ["normal", "trial", "intro"] },
         rc_renewal_status: { type: "string" },
-        rc_platform: { type: "string", enum: ["ios", "android", "web", "amazon", "unknown"] },
+        rc_platform: { type: "string", enum: ["ios", "android", "web", "amazon", "manual", "unknown"] },
         rc_expiration: { type: "string", format: "date-time" },
         metadata: { type: "object" },
       },
@@ -55,6 +55,69 @@ class Subscription extends BaseModel {
       .where("rc_expiration", ">", new Date().toISOString())
       .orderBy("rc_expiration", "desc")
       .first();
+  }
+
+  /**
+   * Grant manual subscription access to an account
+   * @param {string} accountId - Account ID
+   * @param {string} appId - App ID
+   * @param {Date|string} expiresAt - Expiration date
+   * @param {string} reason - Reason for granting (e.g., "development", "beta_tester")
+   */
+  static async grantManualAccess(accountId, appId, expiresAt, reason = "manual_grant") {
+    const expiration = new Date(expiresAt).toISOString();
+
+    // Check for existing manual subscription
+    const existing = await this.query()
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("rc_platform", "manual")
+      .first();
+
+    if (existing) {
+      // Update existing
+      return existing.$query().patchAndFetch({
+        rc_renewal_status: "active",
+        rc_expiration: expiration,
+        metadata: {
+          ...existing.metadata,
+          reason,
+          updated_at: new Date().toISOString(),
+        },
+      });
+    }
+
+    // Create new manual subscription
+    return this.query().insert({
+      account_id: accountId,
+      app_id: appId,
+      rc_user_id: `manual_${accountId}`,
+      rc_entitlement: "ghost_pro",
+      rc_product_id: "manual_grant",
+      rc_period_type: "normal",
+      rc_renewal_status: "active",
+      rc_platform: "manual",
+      rc_expiration: expiration,
+      metadata: {
+        manual: true,
+        reason,
+        granted_at: new Date().toISOString(),
+      },
+    });
+  }
+
+  /**
+   * Revoke manual subscription access
+   */
+  static async revokeManualAccess(accountId, appId) {
+    return this.query()
+      .where("account_id", accountId)
+      .where("app_id", appId)
+      .where("rc_platform", "manual")
+      .patch({
+        rc_renewal_status: "revoked",
+        metadata: this.raw("metadata || ?", { revoked_at: new Date().toISOString() }),
+      });
   }
 
   static async findByRevenueCatUserId(rcUserId) {

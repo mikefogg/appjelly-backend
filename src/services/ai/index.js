@@ -50,7 +50,18 @@ function buildStyleSection(voiceProfile) {
     prompt += `\n\n❌ NEVER:\n${hardRules.map((r) => `- ${r}`).join("\n")}`;
   }
 
-  prompt += `\n\n⚠️ CRITICAL: If the formatting mentions line breaks between segments/ideas, you MUST use actual line breaks in your output. Do NOT substitute dashes, semicolons, or other characters for line breaks.`;
+  // Add examples - these are critical for the AI to understand the actual style
+  const examples = voiceProfile.examples || {};
+  if (Object.keys(examples).length > 0) {
+    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match this style exactly):`;
+    for (const [type, example] of Object.entries(examples)) {
+      if (example?.output) {
+        prompt += `\n\n[${type}]:\n${example.output}`;
+      }
+    }
+  }
+
+  prompt += `\n\n⚠️ CRITICAL: Match the examples above. Use the same sentence length, line breaks, and formatting style. If the examples use short punchy fragments with line breaks, do the same. Do NOT write long flowing paragraphs if the examples don't.`;
 
   prompt += `\n\nThis voice is non-negotiable. Every word must reflect this style.`;
 
@@ -142,7 +153,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     userPrompt += `\n\nMax ${maxLength} characters. Return ONLY the post text, no quotes or explanation.`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -156,12 +167,87 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     return {
       content,
       metadata: {
-        model: "gpt-4o",
+        model: "gpt-4o-mini",
         tokens: response.usage?.total_tokens || 0,
         platform,
         contentType,
       },
     };
+  },
+
+  /**
+   * 2b. BATCH POST GENERATION
+   * Generate multiple posts in a single AI call, each with a different content type
+   *
+   * @param {Object} options
+   * @param {string} options.topic - Topic/context to write about
+   * @param {Object} options.voiceProfile - Voice profile object from VoiceProfile.toPromptFormat()
+   * @param {Array<string>} options.contentTypes - Array of content types (story, hot_take, insight, etc.)
+   * @param {string} options.platform - twitter/linkedin/threads/ghost
+   * @param {number} options.maxLength - Character limit per post (default 280)
+   * @returns {Array<Object>} [{ content: string, content_type: string, metadata: Object }]
+   */
+  async generatePosts({
+    topic,
+    voiceProfile = null,
+    contentTypes = ["story", "hot_take", "insight"],
+    platform = "twitter",
+    maxLength = 280,
+  }) {
+    // Build voice context
+    const voiceContext = voiceProfile ? `VOICE:
+${voiceProfile.voice_summary || ""}
+${voiceProfile.sentence_patterns || ""}
+${voiceProfile.formatting_habits || ""}
+` : "";
+
+    // Get examples from voice profile
+    const examples = voiceProfile?.examples || {};
+    const exampleOutputs = Object.entries(examples)
+      .map(([type, ex]) => ex?.output)
+      .filter(Boolean)
+      .slice(0, 3);
+
+    const examplesSection = exampleOutputs.length > 0
+      ? `EXAMPLES:\n${exampleOutputs.map((ex, i) => `---\n${ex}\n---`).join("\n\n")}\n\n`
+      : "";
+
+    const hardRules = voiceProfile?.hard_rules || [];
+    const rulesSection = hardRules.length > 0
+      ? `NEVER: ${hardRules.join(", ")}\n\n`
+      : "";
+
+    const userPrompt = `${voiceContext}
+${examplesSection}${rulesSection}Write ${contentTypes.length} posts about: ${topic}
+
+Max ${maxLength} chars each. Match the voice and examples exactly. Don't make up accomplishments.
+
+Return JSON: { "posts": [{ "content_type": "${contentTypes.join('", "')}", "content": "text" }] }`;
+
+    console.log(`[AI.generatePosts] Prompt:\n${userPrompt}`);
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4.1",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+      max_tokens: 1500,
+    });
+
+    const result = JSON.parse(response.choices[0].message.content);
+    const posts = result.posts || [];
+
+    return posts.map((post) => ({
+      content: post.content,
+      content_type: post.content_type,
+      metadata: {
+        model: "gpt-4o-mini",
+        tokens: Math.round((response.usage?.total_tokens || 0) / posts.length),
+        platform,
+      },
+    }));
   },
 
   /**
@@ -332,7 +418,7 @@ Analyze and return JSON with these fields:
 Be specific and actionable. Another AI will use this to write in their voice.`;
 
     const analysisResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
         {
@@ -487,7 +573,7 @@ Return JSON with COMPLETE updated values:
 IMPORTANT: Return FULL TEXT for each field, not placeholders. Copy unchanged fields verbatim.`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
         {
