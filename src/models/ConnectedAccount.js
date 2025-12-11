@@ -53,6 +53,7 @@ class ConnectedAccount extends BaseModel {
         is_ghost_account: { type: "boolean", default: false },
         voice: { type: ["string", "null"] },
         topics_of_interest: { type: ["string", "null"] },
+        bio: { type: "object" }, // Structured Q&A: { what_you_do, audience, perspective, differentiator }
         last_content_type: { type: ["string", "null"] },
         last_posted_at: { type: ["string", "null"], format: "date-time" },
         content_rotation_enabled: { type: "boolean", default: true },

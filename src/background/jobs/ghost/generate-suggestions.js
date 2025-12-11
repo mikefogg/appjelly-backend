@@ -158,6 +158,7 @@ async function generateInterestBasedSuggestions(job, connectedAccount, voiceProf
     const results = await AI.generatePosts({
       topic: topicString,
       voiceProfile: voiceProfile?.toPromptFormat(),
+      bio: connectedAccount.bio,
       contentTypes,
       platform: connectedAccount.platform,
       maxLength: 280,
@@ -305,6 +306,7 @@ async function generateNetworkBasedSuggestions(job, connectedAccount, voiceProfi
     const results = await AI.generatePosts({
       topic: topicString,
       voiceProfile: voiceProfile?.toPromptFormat(),
+      bio: connectedAccount.bio,
       contentTypes,
       platform: connectedAccount.platform,
       maxLength: 280,

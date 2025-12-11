@@ -264,6 +264,30 @@ router.patch(
       .trim()
       .isLength({ max: 2000 })
       .withMessage("Topics of interest must be under 2000 characters"),
+    body("bio")
+      .optional()
+      .isObject()
+      .withMessage("Bio must be an object"),
+    body("bio.what_you_do")
+      .optional()
+      .isString()
+      .isLength({ max: 500 })
+      .withMessage("What you do must be under 500 characters"),
+    body("bio.audience")
+      .optional()
+      .isString()
+      .isLength({ max: 500 })
+      .withMessage("Audience must be under 500 characters"),
+    body("bio.perspective")
+      .optional()
+      .isString()
+      .isLength({ max: 500 })
+      .withMessage("Perspective must be under 500 characters"),
+    body("bio.differentiator")
+      .optional()
+      .isString()
+      .isLength({ max: 500 })
+      .withMessage("Differentiator must be under 500 characters"),
     body("preserve_line_breaks")
       .optional()
       .isBoolean()
@@ -272,7 +296,7 @@ router.patch(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, preserve_line_breaks } = req.body;
+      const { label, voice, topics_of_interest, bio, preserve_line_breaks } = req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(req.params.id)
@@ -288,9 +312,24 @@ router.patch(
       if (label !== undefined) updates.label = label;
       if (voice !== undefined) updates.voice = voice;
       if (topics_of_interest !== undefined) updates.topics_of_interest = topics_of_interest;
+      if (bio !== undefined) {
+        // Merge with existing bio to allow partial updates
+        updates.bio = { ...(connection.bio || {}), ...bio };
+      }
       if (preserve_line_breaks !== undefined) updates.preserve_line_breaks = preserve_line_breaks;
 
       const updated = await connection.$query().patchAndFetch(updates);
+
+      // If bio or topics were updated, regenerate voice profile
+      const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+      const hasTopics = topics_of_interest && topics_of_interest.trim();
+      if (hasBio || hasTopics) {
+        console.log(`[Connection Update] Bio/topics updated, triggering voice profile regeneration`);
+        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+          connectedAccountId: connection.id,
+          force: true, // Regenerate even if hash hasn't changed (bio isn't in hash)
+        });
+      }
 
       return res.status(200).json(successResponse(connectionUpdateSerializer(updated)));
     } catch (error) {

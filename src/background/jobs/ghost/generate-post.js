@@ -92,6 +92,7 @@ export default async function generatePost(job) {
     const result = await AI.generatePost({
       topic: prompt,
       voiceProfile: voiceProfile?.toPromptFormat(),
+      bio: connected_account?.bio,
       contentType: angle || "post",
       platform: platform,
       maxLength: maxLength,

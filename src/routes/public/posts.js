@@ -352,6 +352,7 @@ router.post(
       const result = await AI.generatePost({
         topic: improvementTopic,
         voiceProfile: voiceProfile?.toPromptFormat(),
+        bio: connection?.bio,
         platform,
         maxLength: 500,
       });

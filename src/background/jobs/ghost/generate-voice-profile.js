@@ -68,7 +68,11 @@ export default async function generateVoiceProfile(job) {
         .orderBy("created_at", "asc"),
     ]);
 
-    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback`);
+    // Get topics and bio from connected account for starter profile if no samples
+    const topics = connectedAccount.topics_of_interest;
+    const bio = connectedAccount.bio;
+
+    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback, topics: ${topics ? "yes" : "no"}, bio: ${bio && Object.keys(bio).length > 0 ? "yes" : "no"}`);
 
     // Generate input hash
     const inputHash = generateInputHash(samplePosts, rules);
@@ -105,6 +109,8 @@ export default async function generateVoiceProfile(job) {
       samplePosts: samplePosts.map((p) => ({ content: p.content, notes: p.notes })),
       rules: rules.map((r) => ({ rule_type: r.rule_type, content: r.content })),
       feedback: allFeedback || null,
+      topics, // Pass topics for starter profile if no samples
+      bio, // Pass bio for context in voice analysis
     });
 
     job.updateProgress(80);

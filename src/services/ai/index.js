@@ -128,6 +128,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
    * @param {Object} options
    * @param {string} options.topic - What to write about
    * @param {Object} options.voiceProfile - VoiceProfile object (from VoiceProfile.toPromptFormat())
+   * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
    * @param {string} options.contentType - story/lesson/question/proof/opinion/personal/vision/cta
    * @param {string} options.platform - twitter/linkedin/threads/ghost
    * @param {number} options.maxLength - Character limit (default 280)
@@ -136,14 +137,25 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
   async generatePost({
     topic,
     voiceProfile = null,
+    bio = null,
     contentType = null,
     platform = "twitter",
     maxLength = 280,
   }) {
+    // Build bio context section
+    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+    const bioSection = hasBio ? `
+ABOUT THE WRITER:
+${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
+${bio.audience ? `- Their audience: ${bio.audience}` : ""}
+${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
+${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
+` : "";
+
     // Build system prompt: platform rules + voice style
     const platformPrompt = getPlatformSystemPrompt(platform);
     const styleSection = buildStyleSection(voiceProfile);
-    const systemPrompt = platformPrompt + styleSection;
+    const systemPrompt = platformPrompt + bioSection + styleSection;
 
     // Build user prompt
     let userPrompt = `Write a ${platform} post about: ${topic}`;
@@ -182,6 +194,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
    * @param {Object} options
    * @param {string} options.topic - Topic/context to write about
    * @param {Object} options.voiceProfile - Voice profile object from VoiceProfile.toPromptFormat()
+   * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
    * @param {Array<string>} options.contentTypes - Array of content types (story, hot_take, insight, etc.)
    * @param {string} options.platform - twitter/linkedin/threads/ghost
    * @param {number} options.maxLength - Character limit per post (default 280)
@@ -190,10 +203,21 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
   async generatePosts({
     topic,
     voiceProfile = null,
+    bio = null,
     contentTypes = ["story", "hot_take", "insight"],
     platform = "twitter",
     maxLength = 280,
   }) {
+    // Build bio context section
+    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+    const bioContext = hasBio ? `ABOUT THE WRITER:
+${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
+${bio.audience ? `- Their audience: ${bio.audience}` : ""}
+${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
+${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
+
+` : "";
+
     // Build voice context
     const voiceContext = voiceProfile ? `VOICE:
 ${voiceProfile.voice_summary || ""}
@@ -217,7 +241,7 @@ ${voiceProfile.formatting_habits || ""}
       ? `NEVER: ${hardRules.join(", ")}\n\n`
       : "";
 
-    const userPrompt = `${voiceContext}
+    const userPrompt = `${bioContext}${voiceContext}
 ${examplesSection}${rulesSection}Write ${contentTypes.length} posts from someone in the world of: ${topic}
 
 These are their interests, not a checklist. Write natural thoughts they'd share, not one post per topic.
@@ -363,21 +387,29 @@ Return JSON:
    * @param {Array<Object>} options.samplePosts - Array of { content, notes }
    * @param {Array<Object>} options.rules - User's rules { rule_type, content }
    * @param {string} options.feedback - Optional user feedback on previous profile
+   * @param {string} options.topics - User's topics of interest
+   * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
    * @returns {Object} Complete voice profile
    */
-  async generateVoiceProfile({ samplePosts = [], rules = [], feedback = null }) {
+  async generateVoiceProfile({ samplePosts = [], rules = [], feedback = null, topics = null, bio = null }) {
+    // If no sample posts but we have topics or bio, generate a starter profile
     if (samplePosts.length === 0) {
-      return {
-        voice_summary: null,
-        sentence_patterns: null,
-        vocabulary_notes: null,
-        tone_markers: null,
-        formatting_habits: null,
-        hard_rules: [],
-        examples: {},
-        confidence: 0,
-        confidence_reasoning: "No sample posts provided.",
-      };
+      if (!topics && !bio) {
+        return {
+          voice_summary: null,
+          sentence_patterns: null,
+          vocabulary_notes: null,
+          tone_markers: null,
+          formatting_habits: null,
+          hard_rules: [],
+          examples: {},
+          confidence: 0,
+          confidence_reasoning: "No sample posts, topics, or bio provided.",
+        };
+      }
+
+      // Generate a starter profile based on topics/bio only
+      return await this.generateStarterVoiceProfile({ topics, bio, rules, feedback });
     }
 
     // Step 1: Analyze voice characteristics
@@ -390,8 +422,17 @@ Return JSON:
       return post;
     }).join("\n\n");
 
-    const analysisPrompt = `Analyze these ${samplePosts.length} social media posts to understand the writer's voice.
+    // Build bio context section
+    const bioSection = bio && Object.values(bio).some(v => v && v.trim()) ? `
+ABOUT THE WRITER:
+${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
+${bio.audience ? `- Their audience: ${bio.audience}` : ""}
+${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
+${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
+` : "";
 
+    const analysisPrompt = `Analyze these ${samplePosts.length} social media posts to understand the writer's voice.
+${bioSection}
 IMPORTANT: Pay close attention to the EXACT formatting of each post, including:
 - Line breaks between sentences or segments
 - Paragraph structure
@@ -457,6 +498,94 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
       examples,
       confidence: profile.confidence,
       confidence_reasoning: profile.confidence_reasoning,
+    };
+  },
+
+  /**
+   * 5b. GENERATE STARTER VOICE PROFILE (topics/bio only)
+   * Creates a basic voice profile when user only has topics or bio, no samples
+   * Lower confidence but gives us something to work with
+   *
+   * @param {Object} options
+   * @param {string} options.topics - User's topics of interest
+   * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
+   * @param {Array<Object>} options.rules - User's rules { rule_type, content }
+   * @param {string} options.feedback - Optional user feedback
+   * @returns {Object} Starter voice profile
+   */
+  async generateStarterVoiceProfile({ topics, bio = null, rules = [], feedback = null }) {
+    const rulesSection = rules.length > 0
+      ? `\nUser's explicit rules:\n${rules.map((r) => `- ${r.rule_type.toUpperCase()}: ${r.content}`).join("\n")}`
+      : "";
+
+    const feedbackSection = feedback
+      ? `\nUser feedback: "${feedback}"`
+      : "";
+
+    // Build bio context section
+    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+    const bioSection = hasBio ? `
+ABOUT THE USER:
+${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
+${bio.audience ? `- Their audience: ${bio.audience}` : ""}
+${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
+${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
+` : "";
+
+    const topicsSection = topics ? `Topics they want to post about: ${topics}` : "";
+
+    const prompt = `A user wants to create social media content. Here's what we know about them:
+${bioSection}
+${topicsSection}
+${rulesSection}${feedbackSection}
+
+Since we don't have sample posts from them yet, create a voice profile that:
+- Is conversational and authentic (not corporate)
+- Works well for social media
+- Reflects their background and perspective${hasBio ? " based on the bio info above" : ""}
+- Can be refined later when they provide samples
+
+Return JSON:
+{
+  "voice_summary": "Brief description of their voice based on their background and topics",
+  "sentence_patterns": "Mix of short punchy sentences and longer flowing ones",
+  "vocabulary_notes": "Casual but smart, no jargon, accessible to everyone",
+  "tone_markers": "Conversational, relatable, not preachy",
+  "formatting_habits": "Uses line breaks between thoughts for readability",
+  "hard_rules": ["array of things to avoid based on user rules or general best practices"],
+  "confidence": ${hasBio ? "0.4" : "0.3"},
+  "confidence_reasoning": "Starter profile based on ${hasBio ? "bio and topics" : "topics only"} - will improve with sample posts"
+}`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You create starter voice profiles for social media writers. Keep it neutral but engaging - something that can be refined as we learn more about how they actually write.",
+        },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.5,
+      max_tokens: 800,
+    });
+
+    const profile = JSON.parse(response.choices[0].message.content);
+
+    // Generate example posts with this starter profile
+    const examples = await this.generateExamples(profile, []);
+
+    return {
+      voice_summary: profile.voice_summary,
+      sentence_patterns: profile.sentence_patterns,
+      vocabulary_notes: profile.vocabulary_notes,
+      tone_markers: profile.tone_markers,
+      formatting_habits: profile.formatting_habits,
+      hard_rules: profile.hard_rules || [],
+      examples,
+      confidence: hasBio ? 0.4 : 0.3, // Slightly higher confidence if we have bio info
+      confidence_reasoning: profile.confidence_reasoning || `Starter profile based on ${hasBio ? "bio and topics" : "topics only"} - add sample posts to improve accuracy`,
     };
   },
 
