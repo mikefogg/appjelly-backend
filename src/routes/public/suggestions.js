@@ -272,8 +272,8 @@ router.post(
     body("angle")
       .optional()
       .isString()
-      .isIn(["hot_take", "roast", "hype", "story", "teach", "question"])
-      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question"),
+      .isIn(["hot_take", "roast", "hype", "story", "teach", "question", "clean_up"])
+      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question, clean_up"),
     body("length")
       .optional()
       .isString()

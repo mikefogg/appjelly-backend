@@ -99,7 +99,7 @@ export const postUpdateSerializer = (artifact, content) => ({
 /**
  * Post improvement response (POST /posts/:id/improve)
  */
-export const postImprovementSerializer = (original, improved, instructions, aiResponse, generationTime) => ({
+export const postImprovementSerializer = (original, improved, instructions, metadata, generationTime) => ({
   original: {
     content: original.content,
     character_count: original.content.length,
@@ -110,10 +110,9 @@ export const postImprovementSerializer = (original, improved, instructions, aiRe
   },
   instructions: instructions || null,
   generation_info: {
-    total_tokens: aiResponse.usage.totalTokens,
-    cost_usd: aiResponse.cost,
+    total_tokens: metadata?.tokens || 0,
     generation_time_seconds: generationTime,
-    ai_model: aiResponse.model,
+    ai_model: metadata?.model || "gpt-4o-mini",
   },
   message: "AI improvement generated. Use PATCH /posts/:id to save if you like it.",
 });

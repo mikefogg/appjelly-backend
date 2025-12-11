@@ -85,12 +85,12 @@ router.post(
     body("prompt")
       .isString()
       .trim()
-      .isLength({ min: 1, max: 500 })
-      .withMessage("Prompt must be between 1 and 500 characters"),
+      .isLength({ min: 1, max: 5000 })
+      .withMessage("Prompt must be between 1 and 5000 characters"),
     body("angle")
       .isString()
-      .isIn(["hot_take", "roast", "hype", "story", "teach", "question"])
-      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question"),
+      .isIn(["hot_take", "roast", "hype", "story", "teach", "question", "clean_up"])
+      .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question, clean_up"),
     body("length")
       .isString()
       .isIn(["short", "medium", "long"])
@@ -312,8 +312,8 @@ router.post(
       .optional()
       .isString()
       .trim()
-      .isLength({ min: 1, max: 200 })
-      .withMessage("Instructions must be between 1 and 200 characters"),
+      .isLength({ min: 1, max: 5000 })
+      .withMessage("Instructions must be between 1 and 5000 characters"),
   ],
   handleValidationErrors,
   async (req, res) => {

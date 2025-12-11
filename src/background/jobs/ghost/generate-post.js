@@ -88,12 +88,17 @@ export default async function generatePost(job) {
       console.log(`[Generate Post] No voice profile found`);
     }
 
+    // For clean_up angle, the prompt is the content to polish - build a special topic
+    const topic = angle === "clean_up"
+      ? `Polish and refine this draft into a better post while preserving the core message. Keep a similar length. Here's the draft:\n\n${prompt}`
+      : prompt;
+
     // Generate post using AI service
     const result = await AI.generatePost({
-      topic: prompt,
+      topic,
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connected_account?.bio,
-      contentType: angle || "post",
+      contentType: angle === "clean_up" ? "post" : (angle || "post"),
       platform: platform,
       maxLength: maxLength,
     });
