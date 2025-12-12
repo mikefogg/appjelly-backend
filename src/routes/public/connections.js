@@ -1,7 +1,20 @@
 import express from "express";
 import { param, body, query } from "express-validator";
-import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { ConnectedAccount, SamplePost, Rule, CuratedTopic, UserTopicPreference, TrendingTopic, VoiceFeedback, VoiceProfile } from "#src/models/index.js";
+import {
+  requireAuth,
+  requireAppContext,
+  handleValidationErrors,
+} from "#src/middleware/index.js";
+import {
+  ConnectedAccount,
+  SamplePost,
+  Rule,
+  CuratedTopic,
+  UserTopicPreference,
+  TrendingTopic,
+  VoiceFeedback,
+  VoiceProfile,
+} from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
@@ -15,7 +28,13 @@ import {
   messageResponse,
   feedbackSubmittedSerializer,
 } from "#src/serializers/index.js";
-import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE, JOB_PROCESS_VOICE_FEEDBACK } from "#src/background/queues/index.js";
+import {
+  ghostQueue,
+  JOB_SYNC_NETWORK,
+  JOB_ANALYZE_STYLE,
+  JOB_GENERATE_VOICE_PROFILE,
+  JOB_PROCESS_VOICE_FEEDBACK,
+} from "#src/background/queues/index.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -24,34 +43,32 @@ const connectionParamValidators = [
 ];
 
 // GET /connections - List all connected accounts for user
-router.get(
-  "/",
-  requireAppContext,
-  requireAuth,
-  async (req, res) => {
-    try {
-      const connectionsMap = await ConnectedAccount.findAllWithDetails(
-        res.locals.account.id,
-        res.locals.app.id
-      );
+router.get("/", requireAppContext, requireAuth, async (req, res) => {
+  try {
+    const connectionsMap = await ConnectedAccount.findAllWithDetails(
+      res.locals.account.id,
+      res.locals.app.id
+    );
 
-      // Convert map to array, preserving order by created_at desc
-      const connections = Object.values(connectionsMap)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Convert map to array, preserving order by created_at desc
+    const connections = Object.values(connectionsMap).sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    );
 
-      const data = connections.map(conn => connectionDetailSerializer(conn, {
+    const data = connections.map((conn) =>
+      connectionDetailSerializer(conn, {
         recommendations: conn.recommendations,
         syncInfo: conn.syncInfo,
         voiceStats: conn.voiceStats,
-      }));
+      })
+    );
 
-      return res.status(200).json(successResponse(data));
-    } catch (error) {
-      console.error("Get connections error:", error);
-      return res.status(500).json(formatError("Failed to retrieve connections"));
-    }
+    return res.status(200).json(successResponse(data));
+  } catch (error) {
+    console.error("Get connections error:", error);
+    return res.status(500).json(formatError("Failed to retrieve connections"));
   }
-);
+});
 
 // GET /connections/:id - Get specific connection
 router.get(
@@ -77,6 +94,8 @@ router.get(
         syncInfo: connection.syncInfo,
         voiceStats: connection.voiceStats,
       });
+
+      console.log({ data: successResponse(data) });
 
       return res.status(200).json(successResponse(data));
     } catch (error) {
@@ -112,10 +131,14 @@ router.get(
         error: connection.metadata?.last_error || null,
       };
 
+      console.log({ status: successResponse(data) });
+
       return res.status(200).json(successResponse(data));
     } catch (error) {
       console.error("Get connection status error:", error);
-      return res.status(500).json(formatError("Failed to retrieve connection status"));
+      return res
+        .status(500)
+        .json(formatError("Failed to retrieve connection status"));
     }
   }
 );
@@ -144,22 +167,32 @@ router.patch(
       // Trigger background jobs to sync network and analyze style in parallel
       // Use connection ID as job ID to prevent duplicates
       await Promise.all([
-        ghostQueue.add(JOB_SYNC_NETWORK, {
-          connectedAccountId: connection.id,
-        }, {
-          jobId: `sync-network-${connection.id}`,
-        }),
-        ghostQueue.add(JOB_ANALYZE_STYLE, {
-          connectedAccountId: connection.id,
-        }, {
-          jobId: `analyze-style-${connection.id}`,
-        }),
+        ghostQueue.add(
+          JOB_SYNC_NETWORK,
+          {
+            connectedAccountId: connection.id,
+          },
+          {
+            jobId: `sync-network-${connection.id}`,
+          }
+        ),
+        ghostQueue.add(
+          JOB_ANALYZE_STYLE,
+          {
+            connectedAccountId: connection.id,
+          },
+          {
+            jobId: `analyze-style-${connection.id}`,
+          }
+        ),
       ]);
 
-      return res.status(200).json(successResponse({
-        message: "Sync initiated",
-        sync_status: "syncing",
-      }));
+      return res.status(200).json(
+        successResponse({
+          message: "Sync initiated",
+          sync_status: "syncing",
+        })
+      );
     } catch (error) {
       console.error("Sync connection error:", error);
       return res.status(500).json(formatError("Failed to sync connection"));
@@ -186,16 +219,22 @@ router.patch(
       }
 
       // Trigger sync-network job (use connection ID as job ID to prevent duplicates)
-      const job = await ghostQueue.add(JOB_SYNC_NETWORK, {
-        connectedAccountId: connection.id,
-      }, {
-        jobId: `sync-network-${connection.id}`,
-      });
+      const job = await ghostQueue.add(
+        JOB_SYNC_NETWORK,
+        {
+          connectedAccountId: connection.id,
+        },
+        {
+          jobId: `sync-network-${connection.id}`,
+        }
+      );
 
-      return res.status(200).json(successResponse({
-        message: "Network sync initiated",
-        job_id: job.id,
-      }));
+      return res.status(200).json(
+        successResponse({
+          message: "Network sync initiated",
+          job_id: job.id,
+        })
+      );
     } catch (error) {
       console.error("Sync network error:", error);
       return res.status(500).json(formatError("Failed to sync network"));
@@ -222,16 +261,22 @@ router.patch(
       }
 
       // Trigger analyze-style job (use connection ID as job ID to prevent duplicates)
-      const job = await ghostQueue.add(JOB_ANALYZE_STYLE, {
-        connectedAccountId: connection.id,
-      }, {
-        jobId: `analyze-style-${connection.id}`,
-      });
+      const job = await ghostQueue.add(
+        JOB_ANALYZE_STYLE,
+        {
+          connectedAccountId: connection.id,
+        },
+        {
+          jobId: `analyze-style-${connection.id}`,
+        }
+      );
 
-      return res.status(200).json(successResponse({
-        message: "Style analysis initiated",
-        job_id: job.id,
-      }));
+      return res.status(200).json(
+        successResponse({
+          message: "Style analysis initiated",
+          job_id: job.id,
+        })
+      );
     } catch (error) {
       console.error("Analyze style error:", error);
       return res.status(500).json(formatError("Failed to analyze style"));
@@ -264,10 +309,7 @@ router.patch(
       .trim()
       .isLength({ max: 2000 })
       .withMessage("Topics of interest must be under 2000 characters"),
-    body("bio")
-      .optional()
-      .isObject()
-      .withMessage("Bio must be an object"),
+    body("bio").optional().isObject().withMessage("Bio must be an object"),
     body("bio.what_you_do")
       .optional()
       .isString()
@@ -316,7 +358,8 @@ router.patch(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, bio, content_preferences } = req.body;
+      const { label, voice, topics_of_interest, bio, content_preferences } =
+        req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(req.params.id)
@@ -331,23 +374,29 @@ router.patch(
       const updates = {};
       if (label !== undefined) updates.label = label;
       if (voice !== undefined) updates.voice = voice;
-      if (topics_of_interest !== undefined) updates.topics_of_interest = topics_of_interest;
+      if (topics_of_interest !== undefined)
+        updates.topics_of_interest = topics_of_interest;
       if (bio !== undefined) {
         // Merge with existing bio to allow partial updates
         updates.bio = { ...(connection.bio || {}), ...bio };
       }
       if (content_preferences !== undefined) {
         // Merge with existing content_preferences to allow partial updates
-        updates.content_preferences = { ...(connection.content_preferences || {}), ...content_preferences };
+        updates.content_preferences = {
+          ...(connection.content_preferences || {}),
+          ...content_preferences,
+        };
       }
 
       const updated = await connection.$query().patchAndFetch(updates);
 
       // If bio or topics were updated, regenerate voice profile
-      const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+      const hasBio = bio && Object.values(bio).some((v) => v && v.trim());
       const hasTopics = topics_of_interest && topics_of_interest.trim();
       if (hasBio || hasTopics) {
-        console.log(`[Connection Update] Bio/topics updated, triggering voice profile regeneration`);
+        console.log(
+          `[Connection Update] Bio/topics updated, triggering voice profile regeneration`
+        );
         await updated.markVoiceUpdateStarted();
         await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
           connectedAccountId: connection.id,
@@ -355,7 +404,9 @@ router.patch(
         });
       }
 
-      return res.status(200).json(successResponse(connectionUpdateSerializer(updated)));
+      return res
+        .status(200)
+        .json(successResponse(connectionUpdateSerializer(updated)));
     } catch (error) {
       console.error("Update connection error:", error);
       return res.status(500).json(formatError("Failed to update connection"));
@@ -383,13 +434,21 @@ router.delete(
 
       // Prevent deletion of default ghost account
       if (!connection.is_deletable) {
-        return res.status(403).json(formatError("This account cannot be deleted", 403));
+        return res
+          .status(403)
+          .json(formatError("This account cannot be deleted", 403));
       }
 
       // Soft delete by marking as inactive
       await connection.$query().patch({ is_active: false });
 
-      return res.status(200).json(successResponse(messageResponse("Connection disconnected successfully")));
+      return res
+        .status(200)
+        .json(
+          successResponse(
+            messageResponse("Connection disconnected successfully")
+          )
+        );
     } catch (error) {
       console.error("Delete connection error:", error);
       return res.status(500).json(formatError("Failed to disconnect account"));
@@ -449,7 +508,9 @@ router.post(
         connectedAccountId: connection.id,
       });
 
-      return res.status(201).json(successResponse(samplePostSerializer(samplePost)));
+      return res
+        .status(201)
+        .json(successResponse(samplePostSerializer(samplePost)));
     } catch (error) {
       console.error("Create sample post error:", error);
       return res.status(500).json(formatError("Failed to create sample post"));
@@ -482,10 +543,14 @@ router.get(
         .orderBy("sort_order", "asc")
         .orderBy("created_at", "asc");
 
-      return res.status(200).json(successResponse(samplePosts.map(samplePostSerializer)));
+      return res
+        .status(200)
+        .json(successResponse(samplePosts.map(samplePostSerializer)));
     } catch (error) {
       console.error("Get sample posts error:", error);
-      return res.status(500).json(formatError("Failed to retrieve sample posts"));
+      return res
+        .status(500)
+        .json(formatError("Failed to retrieve sample posts"));
     }
   }
 );
@@ -556,7 +621,9 @@ router.patch(
         });
       }
 
-      return res.status(200).json(successResponse(samplePostSerializer(updated)));
+      return res
+        .status(200)
+        .json(successResponse(samplePostSerializer(updated)));
     } catch (error) {
       console.error("Update sample post error:", error);
       return res.status(500).json(formatError("Failed to update sample post"));
@@ -604,9 +671,11 @@ router.delete(
         connectedAccountId: connection.id,
       });
 
-      return res.status(200).json(successResponse({
-        message: "Sample post deleted successfully",
-      }));
+      return res.status(200).json(
+        successResponse({
+          message: "Sample post deleted successfully",
+        })
+      );
     } catch (error) {
       console.error("Delete sample post error:", error);
       return res.status(500).json(formatError("Failed to delete sample post"));
@@ -643,14 +712,15 @@ router.get(
       }
 
       // Get rules
-      const query = Rule.query()
-        .where("connected_account_id", connection.id);
+      const query = Rule.query().where("connected_account_id", connection.id);
 
       if (activeOnlyBool) {
         query.where("is_active", true);
       }
 
-      const rules = await query.orderBy("priority", "desc").orderBy("created_at", "desc");
+      const rules = await query
+        .orderBy("priority", "desc")
+        .orderBy("created_at", "desc");
 
       return res.status(200).json(successResponse(rules.map(ruleSerializer)));
     } catch (error) {
@@ -837,7 +907,9 @@ router.delete(
         connectedAccountId: connection.id,
       });
 
-      return res.status(200).json(successResponse(messageResponse("Rule deleted successfully")));
+      return res
+        .status(200)
+        .json(successResponse(messageResponse("Rule deleted successfully")));
     } catch (error) {
       console.error("Delete rule error:", error);
       return res.status(500).json(formatError("Failed to delete rule"));
@@ -865,12 +937,18 @@ router.get(
       }
 
       // Get user's topic preferences
-      const preferences = await UserTopicPreference.getUserTopics(req.params.id);
+      const preferences = await UserTopicPreference.getUserTopics(
+        req.params.id
+      );
 
-      return res.status(200).json(successResponse(preferences.map(userTopicSerializer)));
+      return res
+        .status(200)
+        .json(successResponse(preferences.map(userTopicSerializer)));
     } catch (error) {
       console.error("Get user topics error:", error);
-      return res.status(500).json(formatError("Failed to retrieve user topics"));
+      return res
+        .status(500)
+        .json(formatError("Failed to retrieve user topics"));
     }
   }
 );
@@ -882,9 +960,7 @@ router.put(
   requireAuth,
   [
     ...connectionParamValidators,
-    body("topic_ids")
-      .isArray()
-      .withMessage("topic_ids must be an array"),
+    body("topic_ids").isArray().withMessage("topic_ids must be an array"),
     body("topic_ids.*")
       .isUUID()
       .withMessage("Each topic_id must be a valid UUID"),
@@ -911,7 +987,9 @@ router.put(
           .where("is_active", true);
 
         if (topics.length !== topic_ids.length) {
-          return res.status(400).json(formatError("One or more invalid topic IDs", 400));
+          return res
+            .status(400)
+            .json(formatError("One or more invalid topic IDs", 400));
         }
       }
 
@@ -919,9 +997,13 @@ router.put(
       await UserTopicPreference.setUserTopics(req.params.id, topic_ids);
 
       // Fetch updated preferences
-      const preferences = await UserTopicPreference.getUserTopics(req.params.id);
+      const preferences = await UserTopicPreference.getUserTopics(
+        req.params.id
+      );
 
-      return res.status(200).json(successResponse(preferences.map(userTopicSerializer)));
+      return res
+        .status(200)
+        .json(successResponse(preferences.map(userTopicSerializer)));
     } catch (error) {
       console.error("Update user topics error:", error);
       return res.status(500).json(formatError("Failed to update user topics"));
@@ -952,27 +1034,46 @@ router.get(
       const topicIds = await UserTopicPreference.getUserTopicIds(req.params.id);
 
       if (topicIds.length === 0) {
-        const recommendedContentType = await connection.getNextRecommendedContentType();
-        return res.status(200).json(successResponse(
-          connectionTrendingResponseSerializer(connection, { recommendedContentType, trendingTopics: [] })
-        ));
+        const recommendedContentType =
+          await connection.getNextRecommendedContentType();
+        return res
+          .status(200)
+          .json(
+            successResponse(
+              connectionTrendingResponseSerializer(connection, {
+                recommendedContentType,
+                trendingTopics: [],
+              })
+            )
+          );
       }
 
       // Get mixed trending topics (realtime + evergreen)
-      const { realtime, evergreen } = await TrendingTopic.getMixedTrendingForTopics(topicIds, 5, 5);
+      const { realtime, evergreen } =
+        await TrendingTopic.getMixedTrendingForTopics(topicIds, 5, 5);
 
       // Merge all trending topics
       const trendingTopics = [...realtime, ...evergreen];
 
       // Get rotation context
-      const recommendedContentType = await connection.getNextRecommendedContentType();
+      const recommendedContentType =
+        await connection.getNextRecommendedContentType();
 
-      return res.status(200).json(successResponse(
-        connectionTrendingResponseSerializer(connection, { recommendedContentType, trendingTopics })
-      ));
+      return res
+        .status(200)
+        .json(
+          successResponse(
+            connectionTrendingResponseSerializer(connection, {
+              recommendedContentType,
+              trendingTopics,
+            })
+          )
+        );
     } catch (error) {
       console.error("Get trending topics for connection error:", error);
-      return res.status(500).json(formatError("Failed to retrieve trending topics"));
+      return res
+        .status(500)
+        .json(formatError("Failed to retrieve trending topics"));
     }
   }
 );
@@ -1014,7 +1115,7 @@ router.patch(
       }
 
       // Update rotation enabled setting via content_preferences
-      if (typeof rotation_enabled === 'boolean') {
+      if (typeof rotation_enabled === "boolean") {
         const currentPrefs = connection.content_preferences || {};
         await connection.$query().patch({
           content_preferences: { ...currentPrefs, rotation_enabled },
@@ -1025,10 +1126,16 @@ router.patch(
       const updated = await ConnectedAccount.query().findById(req.params.id);
       const nextRecommended = await updated.getNextRecommendedContentType();
 
-      return res.status(200).json(successResponse(rotationSettingsSerializer(updated, nextRecommended)));
+      return res
+        .status(200)
+        .json(
+          successResponse(rotationSettingsSerializer(updated, nextRecommended))
+        );
     } catch (error) {
       console.error("Update rotation settings error:", error);
-      return res.status(500).json(formatError("Failed to update rotation settings"));
+      return res
+        .status(500)
+        .json(formatError("Failed to update rotation settings"));
     }
   }
 );
@@ -1081,14 +1188,18 @@ router.post(
       });
 
       // Get current voice profile version (if any)
-      const currentProfile = await VoiceProfile.getCurrentProfile(connection.id);
+      const currentProfile = await VoiceProfile.getCurrentProfile(
+        connection.id
+      );
 
-      return res.status(202).json(successResponse(
-        feedbackSubmittedSerializer({
-          feedbackId: voiceFeedback.id,
-          currentVoiceVersion: currentProfile?.version || null,
-        })
-      ));
+      return res.status(202).json(
+        successResponse(
+          feedbackSubmittedSerializer({
+            feedbackId: voiceFeedback.id,
+            currentVoiceVersion: currentProfile?.version || null,
+          })
+        )
+      );
     } catch (error) {
       console.error("Submit feedback error:", error);
       return res.status(500).json(formatError("Failed to submit feedback"));
@@ -1120,12 +1231,22 @@ router.get(
         .findById(connection.id)
         .select("id", "voice_update_started_at");
 
-      return res.status(200).json(successResponse({
-        is_generating: fullConnection.isVoiceGenerating(),
-      }));
+      console.log({
+        status: {
+          is_generating: fullConnection.isVoiceGenerating(),
+        },
+      });
+
+      return res.status(200).json(
+        successResponse({
+          is_generating: fullConnection.isVoiceGenerating(),
+        })
+      );
     } catch (error) {
       console.error("Get voice status error:", error);
-      return res.status(500).json(formatError("Failed to retrieve voice status"));
+      return res
+        .status(500)
+        .json(formatError("Failed to retrieve voice status"));
     }
   }
 );

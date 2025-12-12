@@ -144,6 +144,7 @@ export default async function generateVoiceProfile(job) {
     const suggestionCount = parseInt(existingSuggestions?.count || 0, 10);
     if (suggestionCount === 0) {
       console.log(`[Generate Voice Profile] No suggestions exist - queueing initial generation`);
+      await connectedAccount.markSuggestionsUpdateStarted();
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
         connectedAccountId,
         suggestionCount: 3,

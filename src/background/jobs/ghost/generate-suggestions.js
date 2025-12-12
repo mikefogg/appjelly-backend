@@ -34,6 +34,7 @@ export default async function generateSuggestions(job) {
     const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
     if (!activeSubscription) {
       console.log(`[Generate Suggestions] No active subscription for account ${connectedAccount.account_id} - skipping`);
+      await connectedAccount.markSuggestionsUpdateCompleted();
       return {
         success: false,
         skipped: true,
@@ -52,6 +53,7 @@ export default async function generateSuggestions(job) {
 
     if (generatingProfile || pendingFeedback) {
       console.log(`[Generate Suggestions] Voice update in progress, rescheduling in ${VOICE_UPDATE_RETRY_DELAY_MS}ms`);
+      // Don't clear the flag - we're rescheduling, not skipping
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, job.data, {
         delay: VOICE_UPDATE_RETRY_DELAY_MS,
       });
@@ -79,6 +81,8 @@ export default async function generateSuggestions(job) {
 
     if (!hasPersona && !hasBio) {
       console.log(`[Generate Suggestions] No persona or bio available - cannot generate`);
+      // Clear the generating flag since we're not actually generating
+      await connectedAccount.markSuggestionsUpdateCompleted();
       return {
         success: false,
         message: "Please complete your bio to generate post suggestions.",

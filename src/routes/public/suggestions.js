@@ -476,22 +476,24 @@ router.post(
     try {
       const { connected_account_id } = req.body;
 
-      // Verify connected account belongs to user
+      // Verify connected account belongs to user and load sample posts count
       const connection = await ConnectedAccount.query()
         .findById(connected_account_id)
         .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id);
+        .where("app_id", res.locals.app.id)
+        .select(
+          "connected_accounts.*",
+          ConnectedAccount.relatedQuery("sample_posts").count().as("sample_posts_count")
+        );
 
       if (!connection) {
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // No strict requirements - users can generate suggestions with any combination of:
-      // - Topics of interest
-      // - Sample posts
-      // - Voice/rules
-      // - Network data (if synced for Twitter)
-      // The AI will work with whatever data is available
+      // Check if connection has enough context for generation
+      if (!connection.isReadyForGeneration()) {
+        return res.status(400).json(formatError(connection.getNotReadyReason(), 400));
+      }
 
       // Mark generation started and trigger background job
       await connection.markSuggestionsUpdateStarted();

@@ -942,6 +942,28 @@ class ConnectedAccount extends BaseModel {
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     return new Date(this.suggestions_update_started_at) > fiveMinutesAgo;
   }
+
+  /**
+   * Check if connection has enough context for AI generation
+   * Requires either: bio (at least one field) OR 1+ sample posts
+   */
+  isReadyForGeneration() {
+    // Check if bio has at least one filled field
+    const hasBio = this.bio && Object.values(this.bio).some(v => v && v.trim());
+
+    // Check if has sample posts (need to be loaded via withGraphFetched or sample_posts_count)
+    const hasSamplePosts = (this.sample_posts?.length > 0) || (parseInt(this.sample_posts_count, 10) > 0);
+
+    return hasBio || hasSamplePosts;
+  }
+
+  /**
+   * Get reason why connection is not ready for generation
+   */
+  getNotReadyReason() {
+    if (this.isReadyForGeneration()) return null;
+    return "Please add a bio or sample posts to enable AI generation.";
+  }
 }
 
 export default ConnectedAccount;
