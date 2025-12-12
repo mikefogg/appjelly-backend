@@ -37,13 +37,19 @@ export const connectionListSerializer = (connection, syncInfo) => ({
 
 /**
  * Calculate voice confidence from stats
- * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%), capped at 100%
+ * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%), 5% per bio field (max 20%), capped at 100%
  */
-const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount) => {
+const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount, bio = {}) => {
   const sampleScore = Math.min(sampleCount * 5, 50);
   const feedbackScore = Math.min(feedbackCount * 5, 50);
   const rulesScore = Math.min(rulesCount * 2, 10);
-  return Math.min(sampleScore + feedbackScore + rulesScore, 100);
+
+  // Count filled bio fields (what_you_do, audience, perspective, differentiator)
+  const bioFields = ['what_you_do', 'audience', 'perspective', 'differentiator'];
+  const filledBioCount = bioFields.filter(field => bio[field] && bio[field].trim()).length;
+  const bioScore = filledBioCount * 5; // 5% per field, max 20%
+
+  return Math.min(sampleScore + feedbackScore + rulesScore + bioScore, 100);
 };
 
 /**
@@ -53,7 +59,8 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
   const samplePostsCount = connection.sample_posts?.length || 0;
   const rulesCount = voiceStats?.rulesCount || 0;
   const feedbackCount = voiceStats?.feedbackCount || 0;
-  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount);
+  const bio = connection.bio || {};
+  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount, bio);
 
   return {
     id: connection.id,

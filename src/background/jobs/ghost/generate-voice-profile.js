@@ -4,9 +4,10 @@
  * Triggered when samples/rules change, or user requests regeneration
  */
 
-import { ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, Subscription } from "#src/models/index.js";
+import { ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, Subscription, PostSuggestion } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import crypto from "crypto";
+import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_VOICE_PROFILE = "generate-voice-profile";
 
@@ -119,6 +120,7 @@ export default async function generateVoiceProfile(job) {
     await newProfile.$query().patch({
       status: "active",
       voice_summary: profileData.voice_summary,
+      persona_summary: profileData.persona_summary,
       sentence_patterns: profileData.sentence_patterns,
       vocabulary_notes: profileData.vocabulary_notes,
       tone_markers: profileData.tone_markers,
@@ -128,6 +130,27 @@ export default async function generateVoiceProfile(job) {
       confidence: profileData.confidence,
       confidence_reasoning: profileData.confidence_reasoning,
     });
+
+    if (profileData.persona_summary) {
+      console.log(`[Generate Voice Profile] Persona: ${profileData.persona_summary.substring(0, 100)}...`);
+    }
+
+    // Check if user has ANY suggestions ever - if not, generate some immediately
+    const existingSuggestions = await PostSuggestion.query()
+      .where("connected_account_id", connectedAccountId)
+      .count("id as count")
+      .first();
+
+    const suggestionCount = parseInt(existingSuggestions?.count || 0, 10);
+    if (suggestionCount === 0) {
+      console.log(`[Generate Voice Profile] No suggestions exist - queueing initial generation`);
+      await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
+        connectedAccountId,
+        suggestionCount: 3,
+      });
+    } else {
+      console.log(`[Generate Voice Profile] User has ${suggestionCount} suggestions - skipping auto-generation`);
+    }
 
     // Mark any pending feedback as processed
     if (pendingFeedback.length > 0) {

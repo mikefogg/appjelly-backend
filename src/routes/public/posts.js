@@ -369,8 +369,15 @@ router.post(
 
       // Build topic for improvement
       const improvementTopic = instructions
-        ? `Improve this post with the following instructions: "${instructions}"\n\nOriginal post:\n${artifact.content}`
-        : `Improve this post while keeping the core message and tone:\n\n${artifact.content}`;
+        ? `Improve this post with the following instructions: "${instructions}"
+
+IMPORTANT: Keep the same approximate length unless the instructions specifically ask for a different length.
+
+Original post:
+${artifact.content}`
+        : `Improve this post while keeping the core message, tone, and similar length:
+
+${artifact.content}`;
 
       // Get voice profile for this connected account
       const connection = artifact.connected_account;

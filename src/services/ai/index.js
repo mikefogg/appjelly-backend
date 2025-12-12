@@ -189,41 +189,51 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
 
   /**
    * 2b. BATCH POST GENERATION
-   * Generate multiple posts in a single AI call, each with a different content type
+   * Generate multiple posts in a single AI call based on persona
+   * Posts are generated based on WHO they are (persona), not specific topics
    *
    * @param {Object} options
-   * @param {string} options.topic - Topic/context to write about
    * @param {Object} options.voiceProfile - Voice profile object from VoiceProfile.toPromptFormat()
    * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
    * @param {Array<string>} options.contentTypes - Array of content types (story, hot_take, insight, etc.)
    * @param {string} options.platform - twitter/linkedin/threads/ghost
    * @param {number} options.maxLength - Character limit per post (default 280)
+   * @param {number} options.count - Number of posts to generate (default 3)
    * @returns {Array<Object>} [{ content: string, content_type: string, metadata: Object }]
    */
   async generatePosts({
-    topic,
     voiceProfile = null,
     bio = null,
     contentTypes = ["story", "hot_take", "insight"],
     platform = "twitter",
     maxLength = 280,
+    count = 3,
   }) {
-    // Build bio context section
-    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
-    const bioContext = hasBio ? `ABOUT THE WRITER:
-${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
-${bio.audience ? `- Their audience: ${bio.audience}` : ""}
-${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
-${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
+    // Get persona summary - this is the key context
+    const personaSummary = voiceProfile?.persona_summary;
 
-` : "";
+    // Fallback: build persona from bio if no persona_summary exists
+    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+    let personaContext;
+
+    if (personaSummary) {
+      personaContext = `WHO YOU ARE:\n${personaSummary}`;
+    } else if (hasBio) {
+      personaContext = `WHO YOU ARE:
+You are someone who ${bio.what_you_do || "creates content"}.
+${bio.audience ? `Your audience: ${bio.audience}` : ""}
+${bio.perspective ? `Your perspective: ${bio.perspective}` : ""}
+${bio.differentiator ? `What makes you different: ${bio.differentiator}` : ""}`;
+    } else {
+      personaContext = "WHO YOU ARE:\nA thoughtful professional sharing insights with your audience.";
+    }
 
     // Build voice context
-    const voiceContext = voiceProfile ? `VOICE:
-${voiceProfile.voice_summary || ""}
-${voiceProfile.sentence_patterns || ""}
-${voiceProfile.formatting_habits || ""}
-` : "";
+    const voiceContext = voiceProfile ? `
+HOW YOU WRITE:
+${voiceProfile.voice_summary || "Conversational and authentic."}
+${voiceProfile.sentence_patterns ? `Sentence style: ${voiceProfile.sentence_patterns}` : ""}
+${voiceProfile.formatting_habits ? `Formatting: ${voiceProfile.formatting_habits}` : ""}` : "";
 
     // Get examples from voice profile
     const examples = voiceProfile?.examples || {};
@@ -233,22 +243,35 @@ ${voiceProfile.formatting_habits || ""}
       .slice(0, 3);
 
     const examplesSection = exampleOutputs.length > 0
-      ? `EXAMPLES:\n${exampleOutputs.map((ex, i) => `---\n${ex}\n---`).join("\n\n")}\n\n`
+      ? `\nEXAMPLE POSTS IN YOUR VOICE:\n${exampleOutputs.map((ex, i) => `---\n${ex}\n---`).join("\n\n")}`
       : "";
 
     const hardRules = voiceProfile?.hard_rules || [];
     const rulesSection = hardRules.length > 0
-      ? `NEVER: ${hardRules.join(", ")}\n\n`
+      ? `\nNEVER: ${hardRules.join(", ")}`
       : "";
 
-    const userPrompt = `${bioContext}${voiceContext}
-${examplesSection}${rulesSection}Write ${contentTypes.length} posts from someone in the world of: ${topic}
+    const userPrompt = `${personaContext}
+${voiceContext}
+${examplesSection}
+${rulesSection}
 
-These are their interests, not a checklist. Write natural thoughts they'd share, not one post per topic.
+Write ${count} social media posts that this person would naturally share. Think about:
+- What insights from their work would resonate with their audience?
+- What opinions or hot takes would they have?
+- What stories or experiences might they share?
+- What would their followers find valuable?
 
-Max ${maxLength} chars each. Match the voice and examples exactly. Don't make up accomplishments.
+Content types to include: ${contentTypes.join(", ")}
 
-Return JSON: { "posts": [{ "content_type": "${contentTypes.join('", "')}", "content": "text" }] }`;
+IMPORTANT:
+- Write posts RELEVANT to their work and audience (not generic marketing advice)
+- Each post should feel like something THIS person would actually say
+- Max ${maxLength} chars each
+- Match the voice examples exactly
+- Don't make up specific accomplishments or numbers
+
+Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "content": "the post text" }] }`;
 
     console.log(`[AI.generatePosts] Prompt:\n${userPrompt}`);
 
@@ -258,7 +281,7 @@ Return JSON: { "posts": [{ "content_type": "${contentTypes.join('", "')}", "cont
       messages: [
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.7,
+      temperature: 0.8,
       max_tokens: 1500,
     });
 
@@ -269,7 +292,7 @@ Return JSON: { "posts": [{ "content_type": "${contentTypes.join('", "')}", "cont
       content: post.content,
       content_type: post.content_type,
       metadata: {
-        model: "gpt-4o-mini",
+        model: "gpt-4.1",
         tokens: Math.round((response.usage?.total_tokens || 0) / posts.length),
         platform,
       },
@@ -397,6 +420,7 @@ Return JSON:
       if (!topics && !bio) {
         return {
           voice_summary: null,
+          persona_summary: null,
           sentence_patterns: null,
           vocabulary_notes: null,
           tone_markers: null,
@@ -449,6 +473,7 @@ Analyze and return JSON with these fields:
 
 {
   "voice_summary": "2-3 sentences capturing the overall vibe, personality, and feel of this writer",
+  "persona_summary": "A 1-2 sentence description of WHO this person is based on their bio - their work, audience, perspective, and what makes them unique. Write it as a prompt that starts with 'You are...' Example: 'You are a custom jewelry maker who creates simple gold pieces for teenage girls. You believe less is more, and you ship globally to make beautiful jewelry accessible to everyone.'",
   "sentence_patterns": "How they structure sentences - length, rhythm, fragments, lists, flow",
   "vocabulary_notes": "Words/phrases they love, words they avoid, formality level, jargon use",
   "tone_markers": "Attitude, humor style, confidence level, how they relate to readers",
@@ -490,6 +515,7 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
 
     return {
       voice_summary: profile.voice_summary,
+      persona_summary: profile.persona_summary,
       sentence_patterns: profile.sentence_patterns,
       vocabulary_notes: profile.vocabulary_notes,
       tone_markers: profile.tone_markers,
@@ -548,6 +574,7 @@ Since we don't have sample posts from them yet, create a voice profile that:
 Return JSON:
 {
   "voice_summary": "Brief description of their voice based on their background and topics",
+  "persona_summary": "A 1-2 sentence description of WHO this person is based on their bio. Write it as a prompt that starts with 'You are...' Example: 'You are a custom jewelry maker who creates simple gold pieces for teenage girls. You believe less is more, and you ship globally to make beautiful jewelry accessible to everyone.'",
   "sentence_patterns": "Mix of short punchy sentences and longer flowing ones",
   "vocabulary_notes": "Casual but smart, no jargon, accessible to everyone",
   "tone_markers": "Conversational, relatable, not preachy",
@@ -578,6 +605,7 @@ Return JSON:
 
     return {
       voice_summary: profile.voice_summary,
+      persona_summary: profile.persona_summary,
       sentence_patterns: profile.sentence_patterns,
       vocabulary_notes: profile.vocabulary_notes,
       tone_markers: profile.tone_markers,

@@ -14,7 +14,7 @@ import {
   messageResponse,
 } from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
-import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE } from "#src/background/queues/index.js";
+import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
 import linkedinOAuth from "#src/services/oauth/LinkedInOAuthService.js";
@@ -580,7 +580,7 @@ router.post(
   requireAuth,
   async (req, res) => {
     try {
-      const { platform, label, username } = req.body;
+      const { platform, label, username, bio } = req.body;
 
       // Validate required fields
       if (!label || label.trim().length === 0) {
@@ -597,6 +597,13 @@ router.post(
         );
       }
 
+      // Validate bio structure if provided
+      if (bio && typeof bio !== "object") {
+        return res.status(400).json(
+          formatError("bio must be an object", 400)
+        );
+      }
+
       // Create manual account
       const account = await ConnectedAccount.query().insert({
         account_id: res.locals.account.id,
@@ -604,6 +611,7 @@ router.post(
         platform: platform || "custom",
         label: label.trim(),
         username: username?.trim() || null,
+        bio: bio || {},
         connected_account_auth_id: null, // Manual account - no OAuth
         sync_status: "ready", // Manual accounts are always "ready"
         is_active: true,
@@ -612,6 +620,16 @@ router.post(
           created_at: new Date().toISOString(),
         },
       });
+
+      // If bio has any content, kick off voice profile generation
+      // This will create a persona from the bio and then auto-generate suggestions
+      const bioFields = ["what_you_do", "audience", "perspective", "differentiator"];
+      const hasBioContent = bio && bioFields.some(field => bio[field] && bio[field].trim());
+      if (hasBioContent) {
+        ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+          connectedAccountId: account.id,
+        }).catch(err => console.error("Failed to queue voice profile job:", err));
+      }
 
       return res.status(201).json(successResponse(connectionOAuthSerializer(account)));
     } catch (error) {

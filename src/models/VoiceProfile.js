@@ -17,6 +17,7 @@ class VoiceProfile extends BaseModel {
         status: { type: "string", enum: ["generating", "active"] },
 
         voice_summary: { type: ["string", "null"] },
+        persona_summary: { type: ["string", "null"] },
         sentence_patterns: { type: ["string", "null"] },
         vocabulary_notes: { type: ["string", "null"] },
         tone_markers: { type: ["string", "null"] },
@@ -110,6 +111,7 @@ class VoiceProfile extends BaseModel {
   toPromptFormat() {
     return {
       voice_summary: this.voice_summary,
+      persona_summary: this.persona_summary,
       sentence_patterns: this.sentence_patterns,
       vocabulary_notes: this.vocabulary_notes,
       tone_markers: this.tone_markers,
