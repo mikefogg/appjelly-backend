@@ -43,11 +43,13 @@ export const postListSerializer = (artifact) => ({
 /**
  * Post detail (GET /posts/:id)
  */
-export const postDetailSerializer = (artifact) => ({
+export const postDetailSerializer = (artifact, { totalVersions } = {}) => ({
   id: artifact.id,
   status: artifact.status,
   content: artifact.content,
   character_count: artifact.content?.length || 0,
+  current_version: artifact.current_version_number || 1,
+  total_versions: totalVersions ?? artifact.current_version_number ?? 1,
   angle: artifact.input?.metadata?.angle || artifact.metadata?.angle || null,
   length: artifact.input?.metadata?.length || artifact.metadata?.length || null,
   topics: artifact.metadata?.topics || [],
@@ -98,21 +100,84 @@ export const postUpdateSerializer = (artifact, content) => ({
 
 /**
  * Post improvement response (POST /posts/:id/improve)
+ * Now auto-saves and creates a new version
  */
-export const postImprovementSerializer = (original, improved, instructions, metadata, generationTime) => ({
+export const postImprovementSerializer = (artifact, improved, instructions, metadata, generationTime, versionInfo) => ({
+  id: artifact.id,
   original: {
-    content: original.content,
-    character_count: original.content.length,
+    content: artifact.content,
+    character_count: artifact.content.length,
   },
   improved: {
     content: improved,
     character_count: improved.length,
   },
   instructions: instructions || null,
+  version_info: versionInfo ? {
+    version_number: versionInfo.version_number,
+    source_type: versionInfo.source_type,
+    previous_version: (versionInfo.version_number || 1) - 1,
+  } : null,
   generation_info: {
     total_tokens: metadata?.tokens || 0,
     generation_time_seconds: generationTime,
     ai_model: metadata?.model || "gpt-4o-mini",
   },
-  message: "AI improvement generated. Use PATCH /posts/:id to save if you like it.",
+  message: versionInfo
+    ? `AI improvement saved as version ${versionInfo.version_number}`
+    : "AI improvement generated",
+});
+
+/**
+ * Version list item (GET /posts/:id/versions)
+ */
+export const versionListItemSerializer = (version, currentVersionNumber) => ({
+  version_number: version.version_number,
+  source_type: version.source_type,
+  source_metadata: version.source_metadata || null,
+  content_preview: version.content?.substring(0, 100) + (version.content?.length > 100 ? "..." : ""),
+  character_count: version.content?.length || 0,
+  is_current: version.version_number === currentVersionNumber,
+  created_at: version.created_at,
+});
+
+/**
+ * Version list response (GET /posts/:id/versions)
+ */
+export const versionListSerializer = (postId, currentVersionNumber, versions) => ({
+  post_id: postId,
+  current_version: currentVersionNumber,
+  versions: versions.map(v => versionListItemSerializer(v, currentVersionNumber)),
+});
+
+/**
+ * Version detail (GET /posts/:id/versions/:version_number)
+ */
+export const versionDetailSerializer = (version, currentVersionNumber) => ({
+  version_number: version.version_number,
+  source_type: version.source_type,
+  source_metadata: version.source_metadata || null,
+  content: version.content,
+  character_count: version.content?.length || 0,
+  is_current: version.version_number === currentVersionNumber,
+  created_at: version.created_at,
+});
+
+/**
+ * Rollback response (POST /posts/:id/versions/:version_number/rollback)
+ */
+export const rollbackSerializer = (artifact, version, rolledBackFrom) => ({
+  id: artifact.id,
+  content: artifact.content,
+  character_count: artifact.content?.length || 0,
+  current_version: version.version_number,
+  version_info: {
+    version_number: version.version_number,
+    source_type: "rollback",
+    source_metadata: {
+      rolled_back_from: rolledBackFrom,
+    },
+    created_at: version.created_at,
+  },
+  message: `Rolled back to version ${rolledBackFrom}`,
 });

@@ -125,6 +125,7 @@ export default async function generatePost(job) {
     await artifact.$query().patch({
       status: "completed",
       content: result.content,
+      current_version_number: 1,
       total_tokens: result.metadata.total_tokens,
       prompt_tokens: result.metadata.prompt_tokens,
       completion_tokens: result.metadata.completion_tokens,
@@ -136,6 +137,14 @@ export default async function generatePost(job) {
         ...artifact.metadata,
         topics,
       },
+    });
+
+    // Create initial version (refetch to get updated content)
+    const updatedArtifact = await Artifact.query().findById(artifact.id);
+    await updatedArtifact.createInitialVersion("generation", {
+      prompt,
+      angle,
+      length,
     });
 
     job.updateProgress(100);

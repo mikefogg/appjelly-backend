@@ -3,6 +3,7 @@ import Input from "#src/models/Input.js";
 import Account from "#src/models/Account.js";
 import App from "#src/models/App.js";
 import ConnectedAccount from "#src/models/ConnectedAccount.js";
+import ArtifactVersion from "#src/models/ArtifactVersion.js";
 
 class Artifact extends BaseModel {
   static get tableName() {
@@ -28,6 +29,7 @@ class Artifact extends BaseModel {
         title: { type: ["string", "null"] },
         content: { type: ["string", "null"] },
         metadata: { type: "object" },
+        current_version_number: { type: ["integer", "null"], minimum: 1, default: 1 },
 
         // AI generation tracking
         total_tokens: { type: ["integer", "null"], minimum: 0 },
@@ -73,6 +75,14 @@ class Artifact extends BaseModel {
         join: {
           from: "artifacts.connected_account_id",
           to: "connected_accounts.id",
+        },
+      },
+      versions: {
+        relation: BaseModel.HasManyRelation,
+        modelClass: ArtifactVersion,
+        join: {
+          from: "artifacts.id",
+          to: "artifact_versions.artifact_id",
         },
       },
     };
@@ -153,6 +163,89 @@ class Artifact extends BaseModel {
   // Check if artifact is AI-generated (has input_id)
   isGenerated() {
     return !!this.input_id;
+  }
+
+  /**
+   * Create the initial version when artifact is created
+   */
+  async createInitialVersion(sourceType, sourceMetadata = {}) {
+    if (!this.content) return null;
+
+    const version = await ArtifactVersion.createInitialVersion(
+      this.id,
+      this.content,
+      sourceType,
+      sourceMetadata
+    );
+
+    await this.$query().patch({ current_version_number: 1 });
+    return version;
+  }
+
+  /**
+   * Create a new version (for improvements, rollbacks)
+   */
+  async createVersion(content, sourceType, sourceMetadata = {}) {
+    const version = await ArtifactVersion.createVersion(
+      this.id,
+      content,
+      sourceType,
+      sourceMetadata
+    );
+
+    // Update artifact content and version number
+    await this.$query().patch({
+      content,
+      current_version_number: version.version_number,
+    });
+
+    return version;
+  }
+
+  /**
+   * Update content and sync to current version
+   */
+  async updateContentWithVersion(content) {
+    // Update artifact content
+    await this.$query().patch({ content });
+
+    // Update current version's content
+    await ArtifactVersion.updateCurrentVersionContent(this.id, content);
+  }
+
+  /**
+   * Get all versions
+   */
+  async getVersions() {
+    return ArtifactVersion.getVersions(this.id);
+  }
+
+  /**
+   * Get a specific version
+   */
+  async getVersion(versionNumber) {
+    return ArtifactVersion.getVersion(this.id, versionNumber);
+  }
+
+  /**
+   * Get total version count
+   */
+  async getVersionCount() {
+    return ArtifactVersion.getVersionCount(this.id);
+  }
+
+  /**
+   * Rollback to a specific version
+   */
+  async rollbackToVersion(versionNumber) {
+    const targetVersion = await this.getVersion(versionNumber);
+    if (!targetVersion) {
+      throw new Error(`Version ${versionNumber} not found`);
+    }
+
+    return this.createVersion(targetVersion.content, "rollback", {
+      rolled_back_from: versionNumber,
+    });
   }
 
   static get modifiers() {

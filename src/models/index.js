@@ -11,6 +11,7 @@ export { default as Account } from "#src/models/Account.js";
 export { default as Media } from "#src/models/Media.js";
 export { default as Input } from "#src/models/Input.js";
 export { default as Artifact } from "#src/models/Artifact.js";
+export { default as ArtifactVersion } from "#src/models/ArtifactVersion.js";
 export { default as Subscription } from "#src/models/Subscription.js";
 export { default as WebhookEvent } from "#src/models/WebhookEvent.js";
 

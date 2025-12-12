@@ -34,6 +34,9 @@ export {
   postGeneratePendingSerializer,
   postUpdateSerializer,
   postImprovementSerializer,
+  versionListSerializer,
+  versionDetailSerializer,
+  rollbackSerializer,
 } from "#src/serializers/post-serializer.js";
 
 export {

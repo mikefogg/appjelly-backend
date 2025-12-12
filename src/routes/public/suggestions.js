@@ -5,6 +5,7 @@ import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, Trendin
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
+  paginatedResponse,
   suggestionListSerializer,
   suggestionDetailSerializer,
   suggestionUseSerializer,
@@ -42,11 +43,24 @@ router.get(
       .optional()
       .isBoolean()
       .withMessage("latest must be a boolean"),
+    query("page")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("page must be a positive integer"),
+    query("per_page")
+      .optional()
+      .isInt({ min: 1, max: 50 })
+      .withMessage("per_page must be between 1 and 50"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { connected_account_id, batch_id, latest } = req.query;
+
+      const pagination = {
+        page: parseInt(req.query.page) || 1,
+        per_page: Math.min(parseInt(req.query.per_page) || 20, 50),
+      };
 
       // Verify connected account belongs to user
       const connection = await ConnectedAccount.query()
@@ -71,21 +85,36 @@ router.get(
         latestBatchId = mostRecent?.batch_id;
       }
 
-      // Build query
-      let suggestionsQuery = PostSuggestion.query()
+      // Build base query
+      let baseQuery = PostSuggestion.query()
         .where("connected_account_id", connected_account_id)
-        .whereNull("dismissed_at")
-        .withGraphFetched("[source_post.network_profile]")
-        .orderBy("created_at", "desc");
+        .whereNull("dismissed_at");
 
       // Filter by batch_id if provided or if fetching latest
       if (latestBatchId) {
-        suggestionsQuery = suggestionsQuery.where("batch_id", latestBatchId);
+        baseQuery = baseQuery.where("batch_id", latestBatchId);
       }
 
-      const suggestions = await suggestionsQuery;
+      // Get total count
+      const totalResult = await baseQuery.clone().count("id as count").first();
+      const total = parseInt(totalResult?.count || 0, 10);
 
-      return res.status(200).json(successResponse(suggestions.map(suggestionListSerializer)));
+      // Get paginated results
+      const suggestions = await baseQuery
+        .withGraphFetched("[source_post.network_profile]")
+        .orderBy("created_at", "desc")
+        .limit(pagination.per_page)
+        .offset((pagination.page - 1) * pagination.per_page);
+
+      return res.status(200).json(paginatedResponse(
+        suggestions.map(suggestionListSerializer),
+        {
+          page: pagination.page,
+          per_page: pagination.per_page,
+          total,
+          has_more: pagination.page * pagination.per_page < total,
+        }
+      ));
     } catch (error) {
       console.error("Get suggestions error:", error);
       return res.status(500).json(formatError("Failed to retrieve suggestions"));

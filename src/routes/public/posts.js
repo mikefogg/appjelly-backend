@@ -1,7 +1,7 @@
 import express from "express";
 import { param, body } from "express-validator";
 import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
-import { Input, Artifact, ConnectedAccount, VoiceProfile } from "#src/models/index.js";
+import { Input, Artifact, ConnectedAccount, VoiceProfile, ArtifactVersion } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
@@ -12,6 +12,9 @@ import {
   postGeneratePendingSerializer,
   postUpdateSerializer,
   postImprovementSerializer,
+  versionListSerializer,
+  versionDetailSerializer,
+  rollbackSerializer,
   messageResponse,
 } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_POST } from "#src/background/queues/index.js";
@@ -21,6 +24,11 @@ const router = express.Router({ mergeParams: true });
 
 const postParamValidators = [
   param("id").isUUID().withMessage("Invalid post ID"),
+];
+
+const versionParamValidators = [
+  param("id").isUUID().withMessage("Invalid post ID"),
+  param("version_number").isInt({ min: 1 }).withMessage("Version number must be a positive integer"),
 ];
 
 // POST /posts/drafts - Create a user-written draft
@@ -60,12 +68,16 @@ router.post(
         artifact_type: "social_post",
         status: "draft",
         content,
+        current_version_number: 1,
         metadata: {
           platform: connection.platform,
           source: "user",
           mode: connection.platform === "ghost" ? "standalone" : "connected",
         },
       });
+
+      // Create initial version
+      await artifact.createInitialVersion("creation");
 
       return res.status(201).json(successResponse(draftCreateSerializer(artifact, connection)));
     } catch (error) {
@@ -255,7 +267,7 @@ router.get(
   }
 );
 
-// PATCH /posts/:id - Edit post content
+// PATCH /posts/:id - Edit post content (updates current version in place)
 router.patch(
   "/:id",
   requireAppContext,
@@ -283,8 +295,18 @@ router.patch(
         return res.status(404).json(formatError("Post not found", 404));
       }
 
+      // Check if artifact has any versions yet (for pre-existing drafts)
+      const versionCount = await artifact.getVersionCount();
+      if (versionCount === 0 && artifact.content) {
+        // Create v1 from current content before updating
+        await artifact.createInitialVersion(artifact.input_id ? "generation" : "creation");
+      }
+
+      // Update artifact content and sync to current version
+      await artifact.updateContentWithVersion(content);
+
+      // Update metadata
       await artifact.$query().patch({
-        content,
         metadata: {
           ...artifact.metadata,
           edited: true,
@@ -300,7 +322,7 @@ router.patch(
   }
 );
 
-// POST /posts/:id/improve - Get AI improvement suggestions (preview-only)
+// POST /posts/:id/improve - AI improvement that creates a new version
 router.post(
   "/:id/improve",
   requireAppContext,
@@ -335,6 +357,16 @@ router.post(
         return res.status(400).json(formatError("Post has no content to improve", 400));
       }
 
+      // Check if artifact has any versions yet (for pre-existing drafts)
+      const versionCount = await artifact.getVersionCount();
+      if (versionCount === 0) {
+        // Create v1 from current content before improving
+        await artifact.createInitialVersion(artifact.input_id ? "generation" : "creation");
+      }
+
+      // Store original content for response
+      const originalContent = artifact.content;
+
       // Build topic for improvement
       const improvementTopic = instructions
         ? `Improve this post with the following instructions: "${instructions}"\n\nOriginal post:\n${artifact.content}`
@@ -346,7 +378,7 @@ router.post(
         ? await VoiceProfile.getCurrentProfile(connection.id)
         : null;
 
-      // Get AI improvement (without saving)
+      // Get AI improvement
       const startTime = Date.now();
       const platform = connection?.platform || "ghost";
       const result = await AI.generatePost({
@@ -354,12 +386,24 @@ router.post(
         voiceProfile: voiceProfile?.toPromptFormat(),
         bio: connection?.bio,
         platform,
-        maxLength: 500,
+        maxLength: 5000,
       });
       const generationTime = (Date.now() - startTime) / 1000;
 
+      // Create new version with improved content
+      const newVersion = await artifact.createVersion(result.content, "improvement", {
+        instructions: instructions || "General improvement",
+      });
+
       return res.status(200).json(successResponse(
-        postImprovementSerializer(artifact, result.content, instructions, result.metadata, generationTime)
+        postImprovementSerializer(
+          { ...artifact, content: originalContent }, // Pass original content
+          result.content,
+          instructions,
+          result.metadata,
+          generationTime,
+          newVersion
+        )
       ));
     } catch (error) {
       console.error("Improve post error:", error);
@@ -428,6 +472,116 @@ router.delete(
     } catch (error) {
       console.error("Delete post error:", error);
       return res.status(500).json(formatError("Failed to delete post"));
+    }
+  }
+);
+
+// GET /posts/:id/versions - List all versions for a post
+router.get(
+  "/:id/versions",
+  requireAppContext,
+  requireAuth,
+  postParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const artifact = await Artifact.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .where("artifact_type", "social_post");
+
+      if (!artifact) {
+        return res.status(404).json(formatError("Post not found", 404));
+      }
+
+      const versions = await artifact.getVersions();
+
+      return res.status(200).json(successResponse(
+        versionListSerializer(artifact.id, artifact.current_version_number || 1, versions)
+      ));
+    } catch (error) {
+      console.error("List versions error:", error);
+      return res.status(500).json(formatError("Failed to list versions"));
+    }
+  }
+);
+
+// GET /posts/:id/versions/:version_number - Get a specific version
+router.get(
+  "/:id/versions/:version_number",
+  requireAppContext,
+  requireAuth,
+  versionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const artifact = await Artifact.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .where("artifact_type", "social_post");
+
+      if (!artifact) {
+        return res.status(404).json(formatError("Post not found", 404));
+      }
+
+      const versionNumber = parseInt(req.params.version_number, 10);
+      const version = await artifact.getVersion(versionNumber);
+
+      if (!version) {
+        return res.status(404).json(formatError(`Version ${versionNumber} not found`, 404));
+      }
+
+      return res.status(200).json(successResponse(
+        versionDetailSerializer(version, artifact.current_version_number || 1)
+      ));
+    } catch (error) {
+      console.error("Get version error:", error);
+      return res.status(500).json(formatError("Failed to get version"));
+    }
+  }
+);
+
+// POST /posts/:id/versions/:version_number/rollback - Rollback to a specific version
+router.post(
+  "/:id/versions/:version_number/rollback",
+  requireAppContext,
+  requireAuth,
+  versionParamValidators,
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const artifact = await Artifact.query()
+        .findById(req.params.id)
+        .where("account_id", res.locals.account.id)
+        .where("app_id", res.locals.app.id)
+        .where("artifact_type", "social_post");
+
+      if (!artifact) {
+        return res.status(404).json(formatError("Post not found", 404));
+      }
+
+      const versionNumber = parseInt(req.params.version_number, 10);
+
+      // Check if target version exists
+      const targetVersion = await artifact.getVersion(versionNumber);
+      if (!targetVersion) {
+        return res.status(404).json(formatError(`Version ${versionNumber} not found`, 404));
+      }
+
+      // Rollback creates a new version with the old content
+      const newVersion = await artifact.rollbackToVersion(versionNumber);
+
+      // Refetch artifact with updated content
+      const updatedArtifact = await Artifact.query().findById(artifact.id);
+
+      return res.status(200).json(successResponse(
+        rollbackSerializer(updatedArtifact, newVersion, versionNumber)
+      ));
+    } catch (error) {
+      console.error("Rollback error:", error);
+      return res.status(500).json(formatError("Failed to rollback to version"));
     }
   }
 );
