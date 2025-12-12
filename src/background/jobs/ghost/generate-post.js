@@ -49,9 +49,10 @@ export default async function generatePost(job) {
       throw new Error(`No prompt found in input`);
     }
 
-    // Extract angle and length from metadata
+    // Extract angle, length, and formatting from metadata
     const angle = input.metadata?.angle || artifact.metadata?.angle;
     const length = input.metadata?.length || artifact.metadata?.length;
+    const formatting = input.metadata?.formatting || artifact.metadata?.formatting;
     const platform = connected_account?.platform || "ghost";
 
     // Calculate character limit based on platform and length
@@ -101,6 +102,7 @@ export default async function generatePost(job) {
       contentType: angle === "clean_up" ? "post" : (angle || "post"),
       platform: platform,
       maxLength: maxLength,
+      formatting,
     });
 
     job.updateProgress(80);

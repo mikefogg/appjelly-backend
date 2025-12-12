@@ -56,10 +56,48 @@ class ConnectedAccount extends BaseModel {
         bio: { type: "object" }, // Structured Q&A: { what_you_do, audience, perspective, differentiator }
         last_content_type: { type: ["string", "null"] },
         last_posted_at: { type: ["string", "null"], format: "date-time" },
-        content_rotation_enabled: { type: "boolean", default: true },
-        preserve_line_breaks: { type: "boolean", default: false },
+        content_preferences: {
+          type: "object",
+          properties: {
+            default_length: { type: "string", enum: ["short", "medium", "long"] },
+            line_breaks: { type: "string", enum: ["minimal", "moderate", "frequent"] },
+            emojis: { type: "string", enum: ["none", "sparse", "moderate", "heavy"] },
+            hashtags: { type: "string", enum: ["none", "minimal", "moderate"] },
+            rotation_enabled: { type: "boolean" },
+          },
+        },
         metadata: { type: "object" },
       },
+    };
+  }
+
+  static get jsonAttributes() {
+    return ["profile_data", "bio", "content_preferences", "metadata"];
+  }
+
+  /**
+   * Platform-specific default content preferences
+   */
+  static getDefaultContentPreferences(platform) {
+    const defaults = {
+      twitter: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+      linkedin: { default_length: "medium", line_breaks: "moderate", emojis: "none", hashtags: "none", rotation_enabled: true },
+      threads: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+      facebook: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+      ghost: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+      custom: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+    };
+    return defaults[platform] || defaults.custom;
+  }
+
+  /**
+   * Get content preferences with defaults filled in
+   */
+  getContentPreferences() {
+    const defaults = ConnectedAccount.getDefaultContentPreferences(this.platform);
+    return {
+      ...defaults,
+      ...(this.content_preferences || {}),
     };
   }
 
@@ -860,6 +898,49 @@ class ConnectedAccount extends BaseModel {
       last_content_type: null,
       last_posted_at: null,
     });
+  }
+
+  // Generation status methods
+  async markVoiceUpdateStarted() {
+    return this.$query().patch({
+      voice_update_started_at: new Date().toISOString(),
+    });
+  }
+
+  async markVoiceUpdateCompleted() {
+    return this.$query().patch({
+      voice_update_started_at: null,
+    });
+  }
+
+  async markSuggestionsUpdateStarted() {
+    return this.$query().patch({
+      suggestions_update_started_at: new Date().toISOString(),
+    });
+  }
+
+  async markSuggestionsUpdateCompleted() {
+    return this.$query().patch({
+      suggestions_update_started_at: null,
+    });
+  }
+
+  /**
+   * Check if voice is currently generating (started within last 5 minutes)
+   */
+  isVoiceGenerating() {
+    if (!this.voice_update_started_at) return false;
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return new Date(this.voice_update_started_at) > fiveMinutesAgo;
+  }
+
+  /**
+   * Check if suggestions are currently generating (started within last 5 minutes)
+   */
+  isSuggestionsGenerating() {
+    if (!this.suggestions_update_started_at) return false;
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    return new Date(this.suggestions_update_started_at) > fiveMinutesAgo;
   }
 }
 

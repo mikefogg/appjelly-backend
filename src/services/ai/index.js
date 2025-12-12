@@ -22,6 +22,41 @@ function getModelParams(model, { tokens, temperature }) {
 }
 
 /**
+ * Build formatting instructions from content preferences
+ */
+function buildFormattingInstructions(formatting) {
+  if (!formatting) return "";
+
+  const instructions = [];
+
+  // Line breaks
+  if (formatting.line_breaks === "minimal") {
+    instructions.push("Use minimal line breaks - keep content flowing in paragraphs");
+  } else if (formatting.line_breaks === "frequent") {
+    instructions.push("Use frequent line breaks - separate each thought/sentence onto its own line for emphasis");
+  }
+  // "moderate" is default, no explicit instruction needed
+
+  // Emojis
+  if (formatting.emojis === "none") {
+    instructions.push("Do NOT use any emojis");
+  } else if (formatting.emojis === "sparse") {
+    instructions.push("Use emojis sparingly - at most 1-2 if they feel natural");
+  } else if (formatting.emojis === "moderate") {
+    instructions.push("Use emojis moderately throughout the post");
+  } else if (formatting.emojis === "heavy") {
+    instructions.push("Use emojis liberally to add personality and visual interest");
+  }
+
+  // Hashtags - always none for now (removed from UI)
+  instructions.push("Do NOT use any hashtags");
+
+  if (instructions.length === 0) return "";
+
+  return `\n\n📋 FORMATTING REQUIREMENTS:\n${instructions.map(i => `- ${i}`).join("\n")}`;
+}
+
+/**
  * Build style section from a VoiceProfile object
  */
 function buildStyleSection(voiceProfile) {
@@ -42,7 +77,7 @@ function buildStyleSection(voiceProfile) {
     prompt += `\n\n**Tone:** ${voiceProfile.tone_markers}`;
   }
   if (voiceProfile.formatting_habits) {
-    prompt += `\n\n**Formatting:** ${voiceProfile.formatting_habits}`;
+    prompt += `\n\n**Style Quirks:** ${voiceProfile.formatting_habits}`;
   }
 
   const hardRules = voiceProfile.hard_rules || [];
@@ -53,7 +88,7 @@ function buildStyleSection(voiceProfile) {
   // Add examples - these are critical for the AI to understand the actual style
   const examples = voiceProfile.examples || {};
   if (Object.keys(examples).length > 0) {
-    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match this style exactly):`;
+    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match the tone and word choice):`;
     for (const [type, example] of Object.entries(examples)) {
       if (example?.output) {
         prompt += `\n\n[${type}]:\n${example.output}`;
@@ -61,7 +96,7 @@ function buildStyleSection(voiceProfile) {
     }
   }
 
-  prompt += `\n\n⚠️ CRITICAL: Match the examples above. Use the same sentence length, line breaks, and formatting style. If the examples use short punchy fragments with line breaks, do the same. Do NOT write long flowing paragraphs if the examples don't.`;
+  prompt += `\n\n⚠️ CRITICAL: Match the tone, vocabulary, and sentence rhythm from the examples. The FORMATTING REQUIREMENTS section (if present) takes precedence for line breaks and emoji usage.`;
 
   prompt += `\n\nThis voice is non-negotiable. Every word must reflect this style.`;
 
@@ -132,6 +167,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
    * @param {string} options.contentType - story/lesson/question/proof/opinion/personal/vision/cta
    * @param {string} options.platform - twitter/linkedin/threads/ghost
    * @param {number} options.maxLength - Character limit (default 280)
+   * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis, hashtags }
    * @returns {Object} { content: string, metadata: Object }
    */
   async generatePost({
@@ -141,6 +177,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     contentType = null,
     platform = "twitter",
     maxLength = 280,
+    formatting = null,
   }) {
     // Build bio context section
     const hasBio = bio && Object.values(bio).some(v => v && v.trim());
@@ -152,10 +189,11 @@ ${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
 ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
 ` : "";
 
-    // Build system prompt: platform rules + voice style
+    // Build system prompt: platform rules + voice style + formatting
     const platformPrompt = getPlatformSystemPrompt(platform);
     const styleSection = buildStyleSection(voiceProfile);
-    const systemPrompt = platformPrompt + bioSection + styleSection;
+    const formattingSection = buildFormattingInstructions(formatting);
+    const systemPrompt = platformPrompt + bioSection + styleSection + formattingSection;
 
     // Build user prompt
     let userPrompt = `Write a ${platform} post about: ${topic}`;
@@ -164,6 +202,10 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     }
     userPrompt += `\n\nMax ${maxLength} characters. Return ONLY the post text, no quotes or explanation.`;
 
+    // Scale max_tokens based on target length (roughly 4 chars per token + buffer)
+    const estimatedTokens = Math.ceil(maxLength / 3) + 100;
+    const maxTokens = Math.min(Math.max(estimatedTokens, 500), 4000);
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -171,7 +213,7 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
         { role: "user", content: userPrompt },
       ],
       temperature: 0.8,
-      max_tokens: 500,
+      max_tokens: maxTokens,
     });
 
     const content = response.choices[0].message.content.trim();
@@ -199,6 +241,7 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
    * @param {string} options.platform - twitter/linkedin/threads/ghost
    * @param {number} options.maxLength - Character limit per post (default 280)
    * @param {number} options.count - Number of posts to generate (default 3)
+   * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
    * @returns {Array<Object>} [{ content: string, content_type: string, metadata: Object }]
    */
   async generatePosts({
@@ -208,6 +251,7 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     platform = "twitter",
     maxLength = 280,
     count = 3,
+    formatting = null,
   }) {
     // Get persona summary - this is the key context
     const personaSummary = voiceProfile?.persona_summary;
@@ -251,10 +295,14 @@ ${voiceProfile.formatting_habits ? `Formatting: ${voiceProfile.formatting_habits
       ? `\nNEVER: ${hardRules.join(", ")}`
       : "";
 
+    // Build formatting section
+    const formattingSection = buildFormattingInstructions(formatting);
+
     const userPrompt = `${personaContext}
 ${voiceContext}
 ${examplesSection}
 ${rulesSection}
+${formattingSection}
 
 Write ${count} social media posts that this person would naturally share. Think about:
 - What insights from their work would resonate with their audience?
@@ -457,12 +505,13 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
 
     const analysisPrompt = `Analyze these ${samplePosts.length} social media posts to understand the writer's voice.
 ${bioSection}
-IMPORTANT: Pay close attention to the EXACT formatting of each post, including:
-- Line breaks between sentences or segments
-- Paragraph structure
-- Use of whitespace for emphasis or pacing
+IMPORTANT: Focus on their writing STYLE, not formatting choices like line breaks or emoji usage (those are configured separately). Pay attention to:
+- Sentence structure and rhythm
+- Word choice and vocabulary
+- Tone and attitude
+- Punctuation quirks (em-dashes, caps, ellipses)
 
-Posts (formatting preserved exactly as written):
+Posts:
 
 ${formattedPosts}
 
@@ -477,7 +526,7 @@ Analyze and return JSON with these fields:
   "sentence_patterns": "How they structure sentences - length, rhythm, fragments, lists, flow",
   "vocabulary_notes": "Words/phrases they love, words they avoid, formality level, jargon use",
   "tone_markers": "Attitude, humor style, confidence level, how they relate to readers",
-  "formatting_habits": "BE VERY SPECIFIC about: line breaks between segments/thoughts, paragraph breaks, punctuation quirks (em-dashes, caps, ellipses), emoji use. If they use line breaks to separate ideas, note this explicitly.",
+  "formatting_habits": "Punctuation quirks (em-dashes, caps for emphasis, ellipses), list/bullet usage, paragraph structure. Do NOT mention line break frequency or emoji usage here - those are configured separately.",
   "hard_rules": ["Never use emojis", "Avoid corporate jargon", "Don't start with questions"],
   "confidence": 0.0-1.0,
   "confidence_reasoning": "Why confidence is at this level, what would improve it"
@@ -578,7 +627,7 @@ Return JSON:
   "sentence_patterns": "Mix of short punchy sentences and longer flowing ones",
   "vocabulary_notes": "Casual but smart, no jargon, accessible to everyone",
   "tone_markers": "Conversational, relatable, not preachy",
-  "formatting_habits": "Uses line breaks between thoughts for readability",
+  "formatting_habits": "Standard punctuation, occasional lists",
   "hard_rules": ["array of things to avoid based on user rules or general best practices"],
   "confidence": ${hasBio ? "0.4" : "0.3"},
   "confidence_reasoning": "Starter profile based on ${hasBio ? "bio and topics" : "topics only"} - will improve with sample posts"

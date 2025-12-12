@@ -110,11 +110,19 @@ router.post(
     body("connected_account_id")
       .isUUID()
       .withMessage("connected_account_id is required and must be a valid UUID"),
+    body("line_breaks")
+      .optional()
+      .isIn(["minimal", "moderate", "frequent"])
+      .withMessage("line_breaks must be 'minimal', 'moderate', or 'frequent'"),
+    body("emojis")
+      .optional()
+      .isIn(["none", "sparse", "moderate", "heavy"])
+      .withMessage("emojis must be 'none', 'sparse', 'moderate', or 'heavy'"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { prompt, angle, length, connected_account_id } = req.body;
+      const { prompt, angle, length, connected_account_id, line_breaks, emojis } = req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(connected_account_id)
@@ -132,6 +140,13 @@ router.post(
 
       const platform = connection.platform;
 
+      // Determine formatting (use overrides if provided, else connection defaults)
+      const contentPrefs = connection.getContentPreferences();
+      const formatting = {
+        line_breaks: line_breaks || contentPrefs.line_breaks,
+        emojis: emojis || contentPrefs.emojis,
+      };
+
       // Create input
       const input = await Input.query().insert({
         account_id: res.locals.account.id,
@@ -143,6 +158,7 @@ router.post(
           mode: platform === "ghost" ? "standalone" : "connected",
           angle,
           length,
+          formatting,
         },
       });
 
@@ -159,6 +175,7 @@ router.post(
           prompt,
           angle,
           length,
+          formatting,
           mode: platform === "ghost" ? "standalone" : "connected",
         },
       });
@@ -336,11 +353,31 @@ router.post(
       .trim()
       .isLength({ min: 1, max: 5000 })
       .withMessage("Instructions must be between 1 and 5000 characters"),
+    body("adjust_length")
+      .optional()
+      .isIn(["shrink", "expand"])
+      .withMessage("adjust_length must be 'shrink' or 'expand'"),
+    body("length")
+      .optional()
+      .isIn(["short", "medium", "long"])
+      .withMessage("length must be 'short', 'medium', or 'long'"),
+    body("line_breaks")
+      .optional()
+      .isIn(["minimal", "moderate", "frequent"])
+      .withMessage("line_breaks must be 'minimal', 'moderate', or 'frequent'"),
+    body("emojis")
+      .optional()
+      .isIn(["none", "sparse", "moderate", "heavy"])
+      .withMessage("emojis must be 'none', 'sparse', 'moderate', or 'heavy'"),
+    body("hashtags")
+      .optional()
+      .isIn(["none", "minimal", "moderate"])
+      .withMessage("hashtags must be 'none', 'minimal', or 'moderate'"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { instructions } = req.body;
+      const { instructions, adjust_length, length, line_breaks, emojis, hashtags } = req.body;
 
       const artifact = await Artifact.query()
         .findById(req.params.id)
@@ -367,39 +404,96 @@ router.post(
       // Store original content for response
       const originalContent = artifact.content;
 
-      // Build topic for improvement
-      const improvementTopic = instructions
-        ? `Improve this post with the following instructions: "${instructions}"
+      // Get platform and connection
+      const connection = artifact.connected_account;
+      const platform = connection?.platform || "ghost";
 
-IMPORTANT: Keep the same approximate length unless the instructions specifically ask for a different length.
+      // Determine target length
+      const {
+        getLengthBucket,
+        getNextBucketUp,
+        getNextBucketDown,
+        getTargetLength,
+      } = await import("#src/config/platform-lengths.js");
+
+      let targetLength = null;
+      let targetBucket = null;
+
+      if (length) {
+        // Absolute length specified
+        targetBucket = length;
+        targetLength = getTargetLength(platform, length);
+      } else if (adjust_length) {
+        // Relative adjustment
+        const currentBucket = getLengthBucket(platform, artifact.content.length);
+        targetBucket = adjust_length === "expand"
+          ? getNextBucketUp(currentBucket)
+          : getNextBucketDown(currentBucket);
+
+        if (targetBucket) {
+          targetLength = getTargetLength(platform, targetBucket);
+        }
+        // If null (already at min/max), we'll just improve without length change
+      }
+
+      // Build length instruction for AI
+      let lengthInstruction = "";
+      if (targetLength && targetBucket) {
+        if (targetBucket === "long" && platform === "twitter") {
+          lengthInstruction = `\n\nTARGET LENGTH: Expand to approximately ${targetLength} characters. Keep a compelling hook in the first 280 characters to encourage readers to click "Show more".`;
+        } else if (targetBucket === "long" && platform === "linkedin") {
+          lengthInstruction = `\n\nTARGET LENGTH: Expand to approximately ${targetLength} characters. Keep the first 150 characters as a strong hook before the "See more" cutoff.`;
+        } else if (artifact.content.length > targetLength) {
+          lengthInstruction = `\n\nTARGET LENGTH: Condense to approximately ${targetLength} characters while preserving the core message.`;
+        } else {
+          lengthInstruction = `\n\nTARGET LENGTH: Expand to approximately ${targetLength} characters with more detail and depth.`;
+        }
+      }
+
+      // Build topic for improvement
+      let improvementTopic;
+      if (instructions || lengthInstruction) {
+        improvementTopic = `Improve this post${instructions ? ` with the following instructions: "${instructions}"` : ""}.${lengthInstruction}${!lengthInstruction ? "\n\nIMPORTANT: Keep the same approximate length unless otherwise specified." : ""}
 
 Original post:
-${artifact.content}`
-        : `Improve this post while keeping the core message, tone, and similar length:
+${artifact.content}`;
+      } else {
+        improvementTopic = `Improve this post while keeping the core message, tone, and similar length:
 
 ${artifact.content}`;
+      }
 
       // Get voice profile for this connected account
-      const connection = artifact.connected_account;
       const voiceProfile = connection
         ? await VoiceProfile.getCurrentProfile(connection.id)
         : null;
 
+      // Determine formatting preferences (use overrides if provided, else connection defaults)
+      const contentPrefs = connection?.getContentPreferences() || {};
+      const formattingOverrides = {
+        line_breaks: line_breaks || contentPrefs.line_breaks,
+        emojis: emojis || contentPrefs.emojis,
+        hashtags: hashtags || contentPrefs.hashtags,
+      };
+
       // Get AI improvement
       const startTime = Date.now();
-      const platform = connection?.platform || "ghost";
       const result = await AI.generatePost({
         topic: improvementTopic,
         voiceProfile: voiceProfile?.toPromptFormat(),
         bio: connection?.bio,
         platform,
-        maxLength: 5000,
+        maxLength: targetLength || 5000,
+        formatting: formattingOverrides,
       });
       const generationTime = (Date.now() - startTime) / 1000;
 
       // Create new version with improved content
       const newVersion = await artifact.createVersion(result.content, "improvement", {
-        instructions: instructions || "General improvement",
+        instructions: instructions || null,
+        adjust_length: adjust_length || null,
+        target_length: targetBucket || null,
+        formatting: formattingOverrides,
       });
 
       return res.status(200).json(successResponse(

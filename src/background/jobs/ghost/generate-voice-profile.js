@@ -147,6 +147,8 @@ export default async function generateVoiceProfile(job) {
       await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
         connectedAccountId,
         suggestionCount: 3,
+      }, {
+        jobId: `gen-suggestions-${connectedAccountId}`,
       });
     } else {
       console.log(`[Generate Voice Profile] User has ${suggestionCount} suggestions - skipping auto-generation`);
@@ -159,6 +161,9 @@ export default async function generateVoiceProfile(job) {
         .patch({ status: "processed", processed_at: new Date().toISOString() });
       console.log(`[Generate Voice Profile] Marked ${pendingFeedback.length} pending feedback as processed`);
     }
+
+    // Clear the voice update started timestamp
+    await connectedAccount.markVoiceUpdateCompleted();
 
     job.updateProgress(100);
 

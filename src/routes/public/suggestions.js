@@ -137,36 +137,19 @@ router.get(
     try {
       const { connected_account_id } = req.query;
 
-      // Verify connected account belongs to user (lightweight query)
+      // Verify connected account belongs to user and get timestamp
       const connection = await ConnectedAccount.query()
         .findById(connected_account_id)
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
-        .select("id");
+        .select("id", "suggestions_update_started_at");
 
       if (!connection) {
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Look up job directly by deterministic ID
-      const jobId = `gen-suggestions-${connected_account_id}`;
-      const job = await ghostQueue.getJob(jobId);
-
-      if (job) {
-        const state = await job.getState();
-        // Job exists and is not completed/failed
-        if (state === "waiting" || state === "active" || state === "delayed") {
-          const progress = job.progress;
-          return res.status(200).json(successResponse({
-            is_generating: true,
-            progress: typeof progress === "number" ? progress : 0,
-            state,
-          }));
-        }
-      }
-
       return res.status(200).json(successResponse({
-        is_generating: false,
+        is_generating: connection.isSuggestionsGenerating(),
       }));
     } catch (error) {
       console.error("Get suggestion status error:", error);
@@ -510,7 +493,8 @@ router.post(
       // - Network data (if synced for Twitter)
       // The AI will work with whatever data is available
 
-      // Trigger background job with deterministic jobId for status lookups
+      // Mark generation started and trigger background job
+      await connection.markSuggestionsUpdateStarted();
       const generationStartedAt = new Date().toISOString();
       const jobId = `gen-suggestions-${connection.id}`;
 
@@ -601,6 +585,13 @@ router.post(
 
       console.log(`[Suggestions from Topic] Generating for trending topic: ${trendingTopic.topic_name}`);
 
+      // Get formatting preferences from connection
+      const contentPrefs = connection.getContentPreferences();
+      const formatting = {
+        line_breaks: contentPrefs.line_breaks,
+        emojis: contentPrefs.emojis,
+      };
+
       // Generate with AI service
       const result = await AI.generatePost({
         topic: prompt,
@@ -609,6 +600,7 @@ router.post(
         contentType: selectedContentType,
         platform: connection.platform,
         maxLength: 500,
+        formatting,
       });
 
       const generatedContent = result.content;

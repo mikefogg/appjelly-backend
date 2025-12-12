@@ -10,6 +10,7 @@ import crypto from "crypto";
 import { ConnectedAccount, PostSuggestion, VoiceProfile, VoiceFeedback, Subscription } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
+import { getTargetLength } from "#src/config/platform-lengths.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
@@ -122,13 +123,27 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
   let generatedSuggestions = [];
 
   try {
+    // Use connection's preferred default length from content_preferences
+    const platform = connectedAccount.platform || "ghost";
+    const contentPrefs = connectedAccount.getContentPreferences();
+    const defaultLength = contentPrefs.default_length || "short";
+    const targetLength = getTargetLength(platform, defaultLength);
+    console.log(`[Generate Suggestions] Using length: ${defaultLength} (${targetLength} chars) for platform: ${platform}`);
+
+    // Get formatting preferences
+    const formatting = {
+      line_breaks: contentPrefs.line_breaks,
+      emojis: contentPrefs.emojis,
+    };
+
     const results = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connectedAccount.bio,
       contentTypes,
-      platform: connectedAccount.platform,
-      maxLength: 280,
+      platform,
+      maxLength: targetLength,
       count: generateCount,
+      formatting,
     });
 
     // Rank suggestions by quality signals
@@ -162,15 +177,19 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
     console.log(`[Generate Suggestions] Ranking: ${rankedResults.map(r => `[${r.index}:${r.score}]`).join(' ')}`);
     console.log(`[Generate Suggestions] Selected indices: ${topResults.map(r => r.index).join(', ')}`);
 
-    generatedSuggestions = topResults.map((result, i) => ({
-      content: result.content,
-      content_type: result.content_type,
-      reasoning: `Generated as "${contentTypeSequence[i]?.name || result.content_type}" type post based on your persona`,
-      topics: [],
-      angle: null,
-      length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
-      metadata: { ...result.metadata, quality_score: result.score },
-    }));
+    generatedSuggestions = topResults.map((result, i) => {
+      // Use our requested content type, not what AI returned (may not match our enum)
+      const contentType = contentTypeSequence[i]?.key || 'story';
+      return {
+        content: result.content,
+        content_type: contentType,
+        reasoning: `Generated as "${contentTypeSequence[i]?.name || contentType}" type post based on your persona`,
+        topics: [],
+        angle: null,
+        length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
+        metadata: { ...result.metadata, quality_score: result.score, ai_content_type: result.content_type },
+      };
+    });
 
     console.log(`[Generate Suggestions] ✓ Selected ${generatedSuggestions.length} best suggestions from ${results.length} generated`);
   } catch (error) {
@@ -189,6 +208,9 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
     voice_profile_version: voiceProfile?.version || null,
     has_persona: !!voiceProfile?.persona_summary,
   });
+
+  // Clear the suggestions update started timestamp
+  await connectedAccount.markSuggestionsUpdateCompleted();
 
   job.updateProgress(100);
 

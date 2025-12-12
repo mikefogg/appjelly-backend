@@ -288,15 +288,35 @@ router.patch(
       .isString()
       .isLength({ max: 500 })
       .withMessage("Differentiator must be under 500 characters"),
-    body("preserve_line_breaks")
+    body("content_preferences")
+      .optional()
+      .isObject()
+      .withMessage("content_preferences must be an object"),
+    body("content_preferences.default_length")
+      .optional()
+      .isIn(["short", "medium", "long"])
+      .withMessage("default_length must be one of: short, medium, long"),
+    body("content_preferences.line_breaks")
+      .optional()
+      .isIn(["minimal", "moderate", "frequent"])
+      .withMessage("line_breaks must be one of: minimal, moderate, frequent"),
+    body("content_preferences.emojis")
+      .optional()
+      .isIn(["none", "sparse", "moderate", "heavy"])
+      .withMessage("emojis must be one of: none, sparse, moderate, heavy"),
+    body("content_preferences.hashtags")
+      .optional()
+      .isIn(["none", "minimal", "moderate"])
+      .withMessage("hashtags must be one of: none, minimal, moderate"),
+    body("content_preferences.rotation_enabled")
       .optional()
       .isBoolean()
-      .withMessage("preserve_line_breaks must be a boolean"),
+      .withMessage("rotation_enabled must be a boolean"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, bio, preserve_line_breaks } = req.body;
+      const { label, voice, topics_of_interest, bio, content_preferences } = req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(req.params.id)
@@ -316,7 +336,10 @@ router.patch(
         // Merge with existing bio to allow partial updates
         updates.bio = { ...(connection.bio || {}), ...bio };
       }
-      if (preserve_line_breaks !== undefined) updates.preserve_line_breaks = preserve_line_breaks;
+      if (content_preferences !== undefined) {
+        // Merge with existing content_preferences to allow partial updates
+        updates.content_preferences = { ...(connection.content_preferences || {}), ...content_preferences };
+      }
 
       const updated = await connection.$query().patchAndFetch(updates);
 
@@ -325,6 +348,7 @@ router.patch(
       const hasTopics = topics_of_interest && topics_of_interest.trim();
       if (hasBio || hasTopics) {
         console.log(`[Connection Update] Bio/topics updated, triggering voice profile regeneration`);
+        await updated.markVoiceUpdateStarted();
         await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
           connectedAccountId: connection.id,
           force: true, // Regenerate even if hash hasn't changed (bio isn't in hash)
@@ -420,6 +444,7 @@ router.post(
       });
 
       // Trigger voice profile regeneration
+      await connection.markVoiceUpdateStarted();
       await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
         connectedAccountId: connection.id,
       });
@@ -525,6 +550,7 @@ router.patch(
 
       // Trigger voice profile regeneration if content changed
       if (content !== undefined) {
+        await connection.markVoiceUpdateStarted();
         await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
           connectedAccountId: connection.id,
         });
@@ -573,11 +599,14 @@ router.delete(
       await samplePost.$query().delete();
 
       // Trigger voice profile regeneration
+      await connection.markVoiceUpdateStarted();
       await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
         connectedAccountId: connection.id,
       });
 
-      return res.status(200).json(successResponse(messageResponse("Sample post deleted successfully")));
+      return res.status(200).json(successResponse({
+        message: "Sample post deleted successfully",
+      }));
     } catch (error) {
       console.error("Delete sample post error:", error);
       return res.status(500).json(formatError("Failed to delete sample post"));
@@ -677,6 +706,7 @@ router.post(
       });
 
       // Trigger voice profile regeneration
+      await connection.markVoiceUpdateStarted();
       await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
         connectedAccountId: connection.id,
       });
@@ -753,6 +783,7 @@ router.patch(
 
       // Trigger voice profile regeneration if content or rule_type changed
       if (content !== undefined || rule_type !== undefined) {
+        await connection.markVoiceUpdateStarted();
         await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
           connectedAccountId: connection.id,
         });
@@ -801,6 +832,7 @@ router.delete(
       await rule.$query().delete();
 
       // Trigger voice profile regeneration
+      await connection.markVoiceUpdateStarted();
       await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
         connectedAccountId: connection.id,
       });
@@ -981,10 +1013,11 @@ router.patch(
         await connection.resetRotation();
       }
 
-      // Update rotation enabled setting
+      // Update rotation enabled setting via content_preferences
       if (typeof rotation_enabled === 'boolean') {
+        const currentPrefs = connection.content_preferences || {};
         await connection.$query().patch({
-          content_rotation_enabled: rotation_enabled,
+          content_preferences: { ...currentPrefs, rotation_enabled },
         });
       }
 
@@ -1082,17 +1115,13 @@ router.get(
         return res.status(404).json(formatError("Connection not found", 404));
       }
 
-      // Check both generating profile AND pending/processing feedback
-      const [generatingProfile, pendingFeedback] = await Promise.all([
-        VoiceProfile.getGeneratingProfile(connection.id),
-        VoiceFeedback.query()
-          .where("connected_account_id", connection.id)
-          .whereIn("status", ["pending", "processing"])
-          .first(),
-      ]);
+      // Check if voice is generating using the timestamp flag
+      const fullConnection = await ConnectedAccount.query()
+        .findById(connection.id)
+        .select("id", "voice_update_started_at");
 
       return res.status(200).json(successResponse({
-        is_generating: !!generatingProfile || !!pendingFeedback,
+        is_generating: fullConnection.isVoiceGenerating(),
       }));
     } catch (error) {
       console.error("Get voice status error:", error);

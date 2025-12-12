@@ -30,8 +30,10 @@ export const connectionListSerializer = (connection, syncInfo) => ({
   voice: connection.voice,
   topics_of_interest: connection.topics_of_interest,
   bio: connection.bio || {},
-  preserve_line_breaks: connection.preserve_line_breaks,
+  content_preferences: connection.getContentPreferences(),
   sync_info: syncInfo,
+  is_generating_voice: connection.isVoiceGenerating(),
+  is_generating_suggestions: connection.isSuggestionsGenerating(),
   created_at: connection.created_at,
 });
 
@@ -77,7 +79,7 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
     voice: connection.voice,
     topics_of_interest: connection.topics_of_interest,
     bio: connection.bio || {},
-    preserve_line_breaks: connection.preserve_line_breaks,
+    content_preferences: connection.getContentPreferences(),
     recommendations,
     sync_info: syncInfo,
     voice_profile: connection.voiceProfile ? {
@@ -91,8 +93,9 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
       rules_count: rulesCount,
       feedback_count: feedbackCount,
       confidence: voiceConfidence,
-      is_generating: voiceStats?.isGenerating || false,
     },
+    is_generating_voice: connection.isVoiceGenerating(),
+    is_generating_suggestions: connection.isSuggestionsGenerating(),
     created_at: connection.created_at,
   };
 };
@@ -105,7 +108,7 @@ export const connectionUpdateSerializer = (connection) => ({
   label: connection.label,
   voice: connection.voice,
   topics_of_interest: connection.topics_of_interest,
-  preserve_line_breaks: connection.preserve_line_breaks,
+  content_preferences: connection.getContentPreferences(),
   message: "Connection updated successfully",
 });
 
@@ -189,7 +192,7 @@ export const connectionTrendingResponseSerializer = (connection, { recommendedCo
       content_type: connection.last_content_type,
       posted_at: connection.last_posted_at,
     } : null,
-    rotation_enabled: connection.content_rotation_enabled,
+    rotation_enabled: connection.getContentPreferences().rotation_enabled,
   },
   trending_topics: trendingTopics.map(connectionTrendingSerializer),
 });
@@ -198,7 +201,7 @@ export const connectionTrendingResponseSerializer = (connection, { recommendedCo
  * Rotation settings response
  */
 export const rotationSettingsSerializer = (connection, nextRecommended) => ({
-  rotation_enabled: connection.content_rotation_enabled,
+  rotation_enabled: connection.getContentPreferences().rotation_enabled,
   last_content_type: connection.last_content_type,
   last_posted_at: connection.last_posted_at,
   next_recommended: nextRecommended,

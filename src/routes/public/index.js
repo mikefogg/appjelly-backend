@@ -8,6 +8,7 @@ import connectionsRoutes from "#src/routes/public/connections.js";
 import suggestionsRoutes from "#src/routes/public/suggestions.js";
 import postsRoutes from "#src/routes/public/posts.js";
 import topicsRoutes from "#src/routes/public/topics.js";
+import configRoutes from "#src/routes/public/config.js";
 
 const router = express.Router();
 
@@ -23,6 +24,7 @@ router.use("/connections", connectionsRoutes);
 router.use("/suggestions", suggestionsRoutes);
 router.use("/posts", postsRoutes);
 router.use("/topics", topicsRoutes);
+router.use("/config", configRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({
