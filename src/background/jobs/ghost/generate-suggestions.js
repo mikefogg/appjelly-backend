@@ -121,9 +121,8 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
 
   job.updateProgress(40);
 
-  // Generate more than needed, then pick the best ones
-  const generateCount = Math.max(suggestionCount + 2, 5); // Generate at least 5, or suggestionCount + 2
-  console.log(`[Generate Suggestions] Generating ${generateCount} suggestions, will pick top ${suggestionCount}...`);
+  // Generate exactly the requested count (we'll accept fewer if AI returns less)
+  console.log(`[Generate Suggestions] Generating ${suggestionCount} suggestions...`);
   let generatedSuggestions = [];
 
   try {
@@ -146,43 +145,12 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
       contentTypes,
       platform,
       maxLength: targetLength,
-      count: generateCount,
+      count: suggestionCount,
       formatting,
     });
 
-    // Rank suggestions by quality signals
-    const rankedResults = results.map((result, i) => {
-      let score = 0;
-      const content = result.content;
-
-      // Prefer posts that aren't too short
-      if (content.length >= 100) score += 2;
-      if (content.length >= 150) score += 1;
-
-      // Prefer posts with good hooks (start with question, bold statement, or story)
-      if (content.match(/^[A-Z][^.!?]*\?/)) score += 2; // Starts with question
-      if (content.match(/^(I |My |We |Our )/)) score += 1; // Personal/story opener
-
-      // Penalize generic marketing speak
-      const genericPhrases = ['build your', 'grow your', 'scale your', 'leverage', 'optimize', 'strategy'];
-      if (genericPhrases.some(phrase => content.toLowerCase().includes(phrase))) score -= 2;
-
-      // Penalize too many emojis
-      const emojiCount = (content.match(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]/gu) || []).length;
-      if (emojiCount > 2) score -= 1;
-
-      return { ...result, score, index: i };
-    });
-
-    // Sort by score descending and take top N
-    rankedResults.sort((a, b) => b.score - a.score);
-    const topResults = rankedResults.slice(0, suggestionCount);
-
-    console.log(`[Generate Suggestions] Ranking: ${rankedResults.map(r => `[${r.index}:${r.score}]`).join(' ')}`);
-    console.log(`[Generate Suggestions] Selected indices: ${topResults.map(r => r.index).join(', ')}`);
-
-    generatedSuggestions = topResults.map((result, i) => {
-      // Use our requested content type, not what AI returned (may not match our enum)
+    // Map results to suggestions (accept whatever AI returns, even if fewer than requested)
+    generatedSuggestions = results.map((result, i) => {
       const contentType = contentTypeSequence[i]?.key || 'story';
       return {
         content: result.content,
@@ -191,11 +159,11 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
         topics: [],
         angle: null,
         length: result.content.length <= 100 ? 'short' : result.content.length <= 200 ? 'medium' : 'long',
-        metadata: { ...result.metadata, quality_score: result.score, ai_content_type: result.content_type },
+        metadata: { ...result.metadata, ai_content_type: result.content_type },
       };
     });
 
-    console.log(`[Generate Suggestions] ✓ Selected ${generatedSuggestions.length} best suggestions from ${results.length} generated`);
+    console.log(`[Generate Suggestions] ✓ Generated ${generatedSuggestions.length} suggestions`);
   } catch (error) {
     console.error(`[Generate Suggestions] ✗ Generation failed:`, error.message);
     throw error;

@@ -316,13 +316,17 @@ Content types to include: ${contentTypes.join(", ")}
 IMPORTANT:
 - Write posts RELEVANT to their work and audience (not generic marketing advice)
 - Each post should feel like something THIS person would actually say
-- Max ${maxLength} chars each
+- Target length: ~${maxLength} characters each (this is the GOAL, not just a limit - write substantive posts that reach this length)
 - Match the voice examples exactly
 - Don't make up specific accomplishments or numbers
 
 Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "content": "the post text" }] }`;
 
     console.log(`[AI.generatePosts] Prompt:\n${userPrompt}`);
+
+    // Scale max_tokens based on target length and count (roughly 4 chars per token + JSON overhead)
+    const estimatedTokens = Math.ceil((maxLength * count) / 3) + 200;
+    const maxTokens = Math.min(Math.max(estimatedTokens, 1500), 8000);
 
     const response = await openai.chat.completions.create({
       model: "gpt-4.1",
@@ -331,7 +335,7 @@ Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "conten
         { role: "user", content: userPrompt },
       ],
       temperature: 0.8,
-      max_tokens: 1500,
+      max_tokens: maxTokens,
     });
 
     const result = JSON.parse(response.choices[0].message.content);
