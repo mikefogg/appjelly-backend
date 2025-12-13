@@ -25,7 +25,8 @@
     "sync-network": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/sync-network.js",
     "analyze-style": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/analyze-style.js",
     "regenerate-voice": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/regenerate-voice.js",
-    "grant-access": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/grant-access.js"
+    "grant-access": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/grant-access.js",
+    "sync-revenuecat": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/sync-revenuecat.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.842.0",

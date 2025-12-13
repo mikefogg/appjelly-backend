@@ -29,13 +29,14 @@ function buildFormattingInstructions(formatting) {
 
   const instructions = [];
 
-  // Line breaks
+  // Paragraph breaks (double line breaks)
   if (formatting.line_breaks === "minimal") {
-    instructions.push("Use minimal line breaks - keep content flowing in paragraphs");
+    instructions.push("Use minimal paragraph breaks - write in flowing prose with few or no blank lines between sentences");
   } else if (formatting.line_breaks === "frequent") {
-    instructions.push("Use frequent line breaks - separate each thought/sentence onto its own line for emphasis");
+    instructions.push("Use frequent paragraph breaks - put blank lines between thoughts/sentences for visual impact and emphasis (like social media style posts)");
+  } else if (formatting.line_breaks === "moderate") {
+    instructions.push("Use moderate paragraph breaks - group related sentences together with occasional blank lines between ideas");
   }
-  // "moderate" is default, no explicit instruction needed
 
   // Emojis
   if (formatting.emojis === "none") {
