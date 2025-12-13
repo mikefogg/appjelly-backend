@@ -287,7 +287,8 @@ router.get(
 
       // Filter by type
       if (type === "draft" || type === "completed") {
-        query = query.where("status", "completed");
+        // Return ready-to-use posts (both user-written drafts and completed AI generations)
+        query = query.whereIn("status", ["draft", "completed"]);
       } else if (type === "used") {
         query = query.whereRaw("metadata->>'copied' = 'true'");
       }
