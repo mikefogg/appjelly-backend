@@ -93,6 +93,7 @@ export const JOB_PROCESS_VOICE_FEEDBACK = "process-voice-feedback";
 export const JOB_DISPATCH_CURATED_TOPICS = "dispatch-curated-topics";
 export const JOB_SYNC_CURATED_TOPIC = "sync-curated-topic";
 export const JOB_DIGEST_RECENT_TOPICS = "digest-recent-topics";
+export const JOB_GENERATE_EVERGREEN_TOPICS = "generate-evergreen-topics";
 
 // Organized job objects for backward compatibility
 export const SUBSCRIPTION_JOBS = {
@@ -161,6 +162,7 @@ export const GHOST_JOBS = {
   DISPATCH_CURATED_TOPICS: JOB_DISPATCH_CURATED_TOPICS,
   SYNC_CURATED_TOPIC: JOB_SYNC_CURATED_TOPIC,
   DIGEST_RECENT_TOPICS: JOB_DIGEST_RECENT_TOPICS,
+  GENERATE_EVERGREEN_TOPICS: JOB_GENERATE_EVERGREEN_TOPICS,
 };
 
 // Queue health check utility

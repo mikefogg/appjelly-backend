@@ -150,6 +150,49 @@ class TrendingTopic extends BaseModel {
 
     return { realtime, evergreen };
   }
+
+  // Get paginated trending topics for user's selected categories
+  // Shows ALL evergreen topics (not rotation-filtered) + recent realtime topics
+  static async getPaginatedForTopics(topicIds, { page = 1, perPage = 20 } = {}) {
+    const cutoffTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const offset = (page - 1) * perPage;
+
+    // Build base query for browsable topics (all evergreen + recent realtime)
+    const baseQuery = () => this.query()
+      .whereIn("curated_topic_id", topicIds)
+      .where(function() {
+        // Realtime: recent and not expired
+        this.where(function() {
+          this.where("topic_type", "realtime")
+            .where("detected_at", ">", cutoffTime.toISOString())
+            .where(function() {
+              this.whereNull("expires_at")
+                .orWhere("expires_at", ">", new Date().toISOString());
+            });
+        })
+        // OR all evergreen topics (no rotation filter - show everything for browsing)
+        .orWhere("topic_type", "evergreen");
+      });
+
+    // Get total count
+    const totalResult = await baseQuery().count("id as count").first();
+    const total = parseInt(totalResult?.count || 0, 10);
+
+    // Get paginated results - newest first so new topics appear at top
+    const topics = await baseQuery()
+      .orderBy("created_at", "desc")
+      .limit(perPage)
+      .offset(offset)
+      .withGraphFetched("curated_topic");
+
+    return {
+      topics,
+      total,
+      page,
+      perPage,
+      hasMore: page * perPage < total,
+    };
+  }
 }
 
 export default TrendingTopic;

@@ -58,7 +58,7 @@ const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount, bio = 
 /**
  * Full connection details (GET /connections/:id)
  */
-export const connectionDetailSerializer = (connection, { recommendations, syncInfo, voiceStats }) => {
+export const connectionDetailSerializer = (connection, { recommendations, syncInfo, voiceStats, account }) => {
   const samplePostsCount = connection.sample_posts?.length || 0;
   const rulesCount = voiceStats?.rulesCount || 0;
   const feedbackCount = voiceStats?.feedbackCount || 0;
@@ -98,6 +98,8 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
     is_ready_for_generation: connection.isReadyForGeneration(),
     is_generating_voice: connection.isVoiceGenerating(),
     is_generating_suggestions: connection.isSuggestionsGenerating(),
+    generation_time: connection.generation_time,
+    next_batch_at: connection.getNextBatchAt?.(account) || null,
     created_at: connection.created_at,
   };
 };

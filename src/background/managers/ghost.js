@@ -14,6 +14,7 @@ import {
   JOB_DISPATCH_CURATED_TOPICS,
   JOB_SYNC_CURATED_TOPIC,
   JOB_DIGEST_RECENT_TOPICS,
+  JOB_GENERATE_EVERGREEN_TOPICS,
   JOB_SEND_PUSH_NOTIFICATION,
   JOB_PROCESS_REVENUECAT_WEBHOOK,
   JOB_SYNC_SUBSCRIPTION_STATUS,
@@ -30,6 +31,7 @@ import processVoiceFeedback from "#src/background/jobs/ghost/process-voice-feedb
 import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-topics.js";
 import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
 import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
+import generateEvergreenTopics from "#src/background/jobs/ghost/generate-evergreen-topics.js";
 import sendPushNotificationJob from "#src/background/jobs/ghost/send-push-notification.js";
 import processRevenueCatWebhook from "#src/background/jobs/subscriptions/process-revenuecat-webhook.js";
 import syncSubscriptionStatus from "#src/background/jobs/subscriptions/sync-subscription-status.js";
@@ -83,6 +85,9 @@ function start(id) {
 
               case JOB_DIGEST_RECENT_TOPICS:
                 return await digestRecentTopics(job);
+
+              case JOB_GENERATE_EVERGREEN_TOPICS:
+                return await generateEvergreenTopics(job);
 
               case JOB_SEND_PUSH_NOTIFICATION:
                 return await sendPushNotificationJob(job);

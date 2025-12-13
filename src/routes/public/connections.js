@@ -18,12 +18,14 @@ import {
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
+  paginatedResponse,
   connectionDetailSerializer,
   connectionUpdateSerializer,
   samplePostSerializer,
   ruleSerializer,
   userTopicSerializer,
   connectionTrendingResponseSerializer,
+  connectionTrendingSerializer,
   rotationSettingsSerializer,
   messageResponse,
   feedbackSubmittedSerializer,
@@ -60,6 +62,7 @@ router.get("/", requireAppContext, requireAuth, async (req, res) => {
         recommendations: conn.recommendations,
         syncInfo: conn.syncInfo,
         voiceStats: conn.voiceStats,
+        account: res.locals.account,
       })
     );
 
@@ -93,9 +96,8 @@ router.get(
         recommendations: connection.recommendations,
         syncInfo: connection.syncInfo,
         voiceStats: connection.voiceStats,
+        account: res.locals.account,
       });
-
-      console.log({ data: successResponse(data) });
 
       return res.status(200).json(successResponse(data));
     } catch (error) {
@@ -354,11 +356,19 @@ router.patch(
       .optional()
       .isBoolean()
       .withMessage("rotation_enabled must be a boolean"),
+    body("generation_time")
+      .optional({ nullable: true })
+      .custom((value) => {
+        if (value === null) return true;
+        const num = parseInt(value, 10);
+        return Number.isInteger(num) && num >= 0 && num <= 23;
+      })
+      .withMessage("generation_time must be null or an integer between 0 and 23"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, bio, content_preferences } =
+      const { label, voice, topics_of_interest, bio, content_preferences, generation_time } =
         req.body;
 
       const connection = await ConnectedAccount.query()
@@ -386,6 +396,20 @@ router.patch(
           ...(connection.content_preferences || {}),
           ...content_preferences,
         };
+      }
+      if (generation_time !== undefined) {
+        if (generation_time === null) {
+          // Clear the override - fall back to account default
+          updates.generation_time = null;
+          updates.generation_time_utc = null;
+        } else {
+          // Set override and calculate UTC based on account's timezone
+          updates.generation_time = parseInt(generation_time, 10);
+          updates.generation_time_utc = ConnectedAccount.calculateGenerationTimeUTC(
+            updates.generation_time,
+            res.locals.account.timezone
+          );
+        }
       }
 
       const updated = await connection.$query().patchAndFetch(updates);
@@ -1016,7 +1040,17 @@ router.get(
   "/:id/trending",
   requireAppContext,
   requireAuth,
-  connectionParamValidators,
+  [
+    ...connectionParamValidators,
+    query("page")
+      .optional()
+      .isInt({ min: 1 })
+      .withMessage("page must be a positive integer"),
+    query("per_page")
+      .optional()
+      .isInt({ min: 1, max: 50 })
+      .withMessage("per_page must be between 1 and 50"),
+  ],
   handleValidationErrors,
   async (req, res) => {
     try {
@@ -1033,9 +1067,11 @@ router.get(
       // Get user's selected topic IDs
       const topicIds = await UserTopicPreference.getUserTopicIds(req.params.id);
 
+      // Get rotation context
+      const recommendedContentType =
+        await connection.getNextRecommendedContentType();
+
       if (topicIds.length === 0) {
-        const recommendedContentType =
-          await connection.getNextRecommendedContentType();
         return res
           .status(200)
           .json(
@@ -1048,27 +1084,34 @@ router.get(
           );
       }
 
-      // Get mixed trending topics (realtime + evergreen)
-      const { realtime, evergreen } =
-        await TrendingTopic.getMixedTrendingForTopics(topicIds, 5, 5);
+      const pagination = {
+        page: parseInt(req.query.page) || 1,
+        perPage: Math.min(parseInt(req.query.per_page) || 20, 50),
+      };
 
-      // Merge all trending topics
-      const trendingTopics = [...realtime, ...evergreen];
+      // Get paginated trending topics
+      const { topics, total, page, perPage, hasMore } =
+        await TrendingTopic.getPaginatedForTopics(topicIds, pagination);
 
-      // Get rotation context
-      const recommendedContentType =
-        await connection.getNextRecommendedContentType();
-
-      return res
-        .status(200)
-        .json(
-          successResponse(
-            connectionTrendingResponseSerializer(connection, {
-              recommendedContentType,
-              trendingTopics,
-            })
-          )
-        );
+      return res.status(200).json(paginatedResponse(
+        {
+          rotation_info: {
+            current_content_type: recommendedContentType,
+            last_post: connection.last_posted_at ? {
+              content_type: connection.last_content_type,
+              posted_at: connection.last_posted_at,
+            } : null,
+            rotation_enabled: connection.getContentPreferences().rotation_enabled,
+          },
+          trending_topics: topics.map(connectionTrendingSerializer),
+        },
+        {
+          page,
+          per_page: perPage,
+          total,
+          has_more: hasMore,
+        }
+      ));
     } catch (error) {
       console.error("Get trending topics for connection error:", error);
       return res

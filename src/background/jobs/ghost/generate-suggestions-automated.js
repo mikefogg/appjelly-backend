@@ -1,6 +1,7 @@
 /**
  * Automated Suggestions Generation Job
- * Runs hourly to generate suggestions for accounts scheduled for this UTC hour
+ * Runs hourly to generate suggestions for connections scheduled for this UTC hour
+ * Supports both account-level scheduling and connection-level overrides
  * Only generates for accounts with active subscriptions
  */
 
@@ -14,45 +15,46 @@ export default async function generateSuggestionsAutomated(job) {
   console.log(`[Generate Suggestions Automated] Starting automated generation cycle for UTC hour ${currentUTCHour}`);
 
   try {
-    // Get accounts scheduled for this UTC hour
-    const scheduledAccounts = await Account.query()
-      .where("generation_time_utc", currentUTCHour)
-      .whereNotNull("timezone");
+    // Strategy: Find eligible connections in two ways:
+    // 1. Connections with their own generation_time_utc matching current hour
+    // 2. Connections without override, where parent account's generation_time_utc matches
 
-    console.log(`[Generate Suggestions Automated] Found ${scheduledAccounts.length} accounts scheduled for ${currentUTCHour}:00 UTC`);
-
-    if (scheduledAccounts.length === 0) {
-      return {
-        success: true,
-        message: `No accounts scheduled for ${currentUTCHour}:00 UTC`,
-        accounts_processed: 0,
-        current_utc_hour: currentUTCHour,
-      };
-    }
-
-    // Filter to only accounts with active subscriptions
-    const accountIds = scheduledAccounts.map(acc => acc.id);
-    const activeSubscriptions = await Subscription.query()
-      .whereIn("account_id", accountIds)
-      .modify("active");
-
-    const subscribedAccountIds = [...new Set(activeSubscriptions.map(sub => sub.account_id))];
-
-    console.log(`[Generate Suggestions Automated] ${subscribedAccountIds.length} of ${accountIds.length} accounts have active subscriptions`);
+    // First, get all accounts with active subscriptions
+    const allActiveSubscriptions = await Subscription.query().modify("active");
+    const subscribedAccountIds = [...new Set(allActiveSubscriptions.map(sub => sub.account_id))];
 
     if (subscribedAccountIds.length === 0) {
       return {
         success: true,
-        message: `Found ${scheduledAccounts.length} scheduled accounts but none have active subscriptions`,
+        message: "No accounts with active subscriptions",
         accounts_processed: 0,
         current_utc_hour: currentUTCHour,
       };
     }
 
-    // Get all connected accounts for subscribed accounts only
+    // Get accounts scheduled for this hour (for connections without override)
+    const scheduledAccounts = await Account.query()
+      .whereIn("id", subscribedAccountIds)
+      .where("generation_time_utc", currentUTCHour)
+      .whereNotNull("timezone");
+
+    const accountScheduledIds = scheduledAccounts.map(acc => acc.id);
+
+    // Find eligible connections:
+    // - Has connection-level override matching current hour, OR
+    // - No override AND parent account scheduled for current hour
     const eligibleConnections = await ConnectedAccount.query()
       .whereIn("account_id", subscribedAccountIds)
       .where("is_active", true)
+      .where(function() {
+        // Connection has its own schedule matching current hour
+        this.where("generation_time_utc", currentUTCHour)
+          // OR connection has no override and account is scheduled now
+          .orWhere(function() {
+            this.whereNull("generation_time_utc")
+              .whereIn("account_id", accountScheduledIds);
+          });
+      })
       .modify((qb) => {
         qb.where((builder) => {
           builder
@@ -61,12 +63,17 @@ export default async function generateSuggestionsAutomated(job) {
         });
       });
 
-    console.log(`[Generate Suggestions Automated] Found ${eligibleConnections.length} eligible connected accounts from ${scheduledAccounts.length} scheduled accounts`);
+    const connectionsWithOverride = eligibleConnections.filter(c => c.generation_time_utc !== null).length;
+    const connectionsFromAccount = eligibleConnections.length - connectionsWithOverride;
+
+    console.log(`[Generate Suggestions Automated] Found ${eligibleConnections.length} eligible connections for ${currentUTCHour}:00 UTC`);
+    console.log(`[Generate Suggestions Automated]   - ${connectionsWithOverride} with connection-level override`);
+    console.log(`[Generate Suggestions Automated]   - ${connectionsFromAccount} from account-level schedule`);
 
     if (eligibleConnections.length === 0) {
       return {
         success: true,
-        message: `Found ${scheduledAccounts.length} scheduled accounts but no eligible connected accounts`,
+        message: `No connections scheduled for ${currentUTCHour}:00 UTC`,
         accounts_processed: 0,
         current_utc_hour: currentUTCHour,
       };
@@ -109,7 +116,8 @@ export default async function generateSuggestionsAutomated(job) {
     return {
       success: true,
       current_utc_hour: currentUTCHour,
-      accounts_scheduled: scheduledAccounts.length,
+      connections_with_override: connectionsWithOverride,
+      connections_from_account: connectionsFromAccount,
       connections_found: eligibleConnections.length,
       jobs_queued: successCount,
       failures: failureCount,

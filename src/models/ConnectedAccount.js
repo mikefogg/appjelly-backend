@@ -66,6 +66,8 @@ class ConnectedAccount extends BaseModel {
             rotation_enabled: { type: "boolean" },
           },
         },
+        generation_time: { type: ["integer", "null"], minimum: 0, maximum: 23 },
+        generation_time_utc: { type: ["integer", "null"], minimum: 0, maximum: 23 },
         metadata: { type: "object" },
       },
     };
@@ -99,6 +101,70 @@ class ConnectedAccount extends BaseModel {
       ...defaults,
       ...(this.content_preferences || {}),
     };
+  }
+
+  /**
+   * Calculate generation_time_utc from generation_time using account's timezone
+   * @param {number} localHour - Hour in local timezone (0-23)
+   * @param {string} timezone - IANA timezone from parent account
+   * @returns {number|null} Hour in UTC (0-23)
+   */
+  static calculateGenerationTimeUTC(localHour, timezone) {
+    // Delegate to Account's implementation
+    return Account.calculateGenerationTimeUTC(localHour, timezone);
+  }
+
+  /**
+   * Get the effective generation time (connection override or account default)
+   * @param {Object} account - Parent account with generation_time and timezone
+   * @returns {Object} { generation_time, generation_time_utc, is_override }
+   */
+  getEffectiveGenerationTime(account) {
+    if (this.generation_time !== null && this.generation_time !== undefined) {
+      return {
+        generation_time: this.generation_time,
+        generation_time_utc: this.generation_time_utc,
+        is_override: true,
+      };
+    }
+    return {
+      generation_time: account?.generation_time,
+      generation_time_utc: account?.generation_time_utc,
+      is_override: false,
+    };
+  }
+
+  /**
+   * Get the next scheduled batch generation time as an ISO string
+   * Uses connection's override if set, otherwise falls back to account
+   * @param {Object} account - Parent account with generation_time_utc
+   * @returns {string|null} ISO timestamp of next batch, or null if not configured
+   */
+  getNextBatchAt(account) {
+    const { generation_time_utc } = this.getEffectiveGenerationTime(account);
+
+    if (generation_time_utc === null || generation_time_utc === undefined) {
+      return null;
+    }
+
+    const now = new Date();
+    const currentUTCHour = now.getUTCHours();
+
+    const nextBatch = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      generation_time_utc,
+      0,
+      0,
+      0
+    ));
+
+    if (currentUTCHour >= generation_time_utc) {
+      nextBatch.setUTCDate(nextBatch.getUTCDate() + 1);
+    }
+
+    return nextBatch.toISOString();
   }
 
   static get relationMappings() {

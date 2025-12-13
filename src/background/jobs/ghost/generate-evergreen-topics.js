@@ -2,6 +2,7 @@
  * Generate Evergreen Topics Job
  * Uses AI to generate timeless, evergreen topics for a curated topic category
  * These topics are rotated daily and don't expire
+ * Works for ALL category types (evergreen, hybrid, realtime)
  */
 
 import { CuratedTopic, TrendingTopic } from "#src/models/index.js";
@@ -13,7 +14,7 @@ export const JOB_GENERATE_EVERGREEN_TOPICS = "generate-evergreen-topics";
 const TOPICS_PER_CATEGORY = 35; // 5 per day for 7-day rotation
 
 export default async function generateEvergreenTopicsJob(job) {
-  const { curatedTopicId } = job.data;
+  const { curatedTopicId, force = false } = job.data;
 
   console.log(`[Generate Evergreen Topics] Starting generation for topic: ${curatedTopicId}`);
 
@@ -25,12 +26,7 @@ export default async function generateEvergreenTopicsJob(job) {
       throw new Error(`Curated topic ${curatedTopicId} not found`);
     }
 
-    if (topic.topic_type !== 'evergreen') {
-      console.log(`[Generate Evergreen Topics] Topic "${topic.name}" is not evergreen type, skipping`);
-      return { success: true, message: 'Topic is not evergreen type' };
-    }
-
-    console.log(`[Generate Evergreen Topics] Generating topics for "${topic.name}" (${topic.slug})`);
+    console.log(`[Generate Evergreen Topics] Generating topics for "${topic.name}" (${topic.slug}, type: ${topic.topic_type})`);
 
     // Check if we already have evergreen topics for this category
     const existingCount = await TrendingTopic.query()
@@ -38,9 +34,18 @@ export default async function generateEvergreenTopicsJob(job) {
       .where('topic_type', 'evergreen')
       .resultSize();
 
-    if (existingCount >= TOPICS_PER_CATEGORY) {
-      console.log(`[Generate Evergreen Topics] Already have ${existingCount} evergreen topics, skipping`);
+    if (!force && existingCount >= TOPICS_PER_CATEGORY) {
+      console.log(`[Generate Evergreen Topics] Already have ${existingCount} evergreen topics, skipping (use force=true to regenerate)`);
       return { success: true, message: 'Already have sufficient evergreen topics', count: existingCount };
+    }
+
+    // If forcing, delete existing evergreen topics first
+    if (force && existingCount > 0) {
+      console.log(`[Generate Evergreen Topics] Force mode: deleting ${existingCount} existing evergreen topics`);
+      await TrendingTopic.query()
+        .where('curated_topic_id', curatedTopicId)
+        .where('topic_type', 'evergreen')
+        .delete();
     }
 
     // Generate topics with AI

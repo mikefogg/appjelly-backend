@@ -237,6 +237,37 @@ class Account extends BaseModel {
       }
     }
   }
+
+  /**
+   * Get the next scheduled batch generation time as an ISO string
+   * @returns {string|null} ISO timestamp of next batch, or null if not configured
+   */
+  getNextBatchAt() {
+    if (this.generation_time_utc === null || this.generation_time_utc === undefined) {
+      return null;
+    }
+
+    const now = new Date();
+    const currentUTCHour = now.getUTCHours();
+
+    // Start with today at the scheduled UTC hour
+    const nextBatch = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      this.generation_time_utc,
+      0,
+      0,
+      0
+    ));
+
+    // If we've already passed that hour today, move to tomorrow
+    if (currentUTCHour >= this.generation_time_utc) {
+      nextBatch.setUTCDate(nextBatch.getUTCDate() + 1);
+    }
+
+    return nextBatch.toISOString();
+  }
 }
 
 export default Account;
