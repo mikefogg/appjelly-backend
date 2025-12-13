@@ -88,6 +88,8 @@ router.post(
 );
 
 // POST /posts/generate - Generate a post from a prompt
+// If post_id is provided, generates a new version of that existing post
+// Otherwise creates a new post
 router.post(
   "/generate",
   requireAppContext,
@@ -100,6 +102,7 @@ router.post(
       .isLength({ min: 1, max: 5000 })
       .withMessage("Prompt must be between 1 and 5000 characters"),
     body("angle")
+      .optional()
       .isString()
       .isIn(["hot_take", "roast", "hype", "story", "teach", "question", "clean_up"])
       .withMessage("Angle must be one of: hot_take, roast, hype, story, teach, question, clean_up"),
@@ -110,6 +113,10 @@ router.post(
     body("connected_account_id")
       .isUUID()
       .withMessage("connected_account_id is required and must be a valid UUID"),
+    body("post_id")
+      .optional()
+      .isUUID()
+      .withMessage("post_id must be a valid UUID"),
     body("line_breaks")
       .optional()
       .isIn(["minimal", "moderate", "frequent"])
@@ -118,11 +125,17 @@ router.post(
       .optional()
       .isIn(["none", "sparse", "moderate", "heavy"])
       .withMessage("emojis must be 'none', 'sparse', 'moderate', or 'heavy'"),
+    body("instructions")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ max: 1000 })
+      .withMessage("instructions must be under 1000 characters"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { prompt, angle, length, connected_account_id, line_breaks, emojis } = req.body;
+      const { prompt, angle, length, connected_account_id, post_id, line_breaks, emojis, instructions } = req.body;
 
       const connection = await ConnectedAccount.query()
         .findById(connected_account_id)
@@ -147,45 +160,85 @@ router.post(
         emojis: emojis || contentPrefs.emojis,
       };
 
-      // Create input
-      const input = await Input.query().insert({
-        account_id: res.locals.account.id,
-        app_id: res.locals.app.id,
-        connected_account_id: connection.id,
-        prompt,
-        metadata: {
-          platform,
-          mode: platform === "ghost" ? "standalone" : "connected",
-          angle,
-          length,
-          formatting,
-        },
-      });
+      let artifact;
 
-      // Create artifact (pending generation)
-      const artifact = await Artifact.query().insert({
-        input_id: input.id,
-        account_id: res.locals.account.id,
-        app_id: res.locals.app.id,
-        connected_account_id: connection.id,
-        artifact_type: "social_post",
-        status: "pending",
-        metadata: {
-          platform,
+      if (post_id) {
+        // Generate into existing post - verify ownership
+        artifact = await Artifact.query()
+          .findById(post_id)
+          .where("account_id", res.locals.account.id)
+          .where("app_id", res.locals.app.id);
+
+        if (!artifact) {
+          return res.status(404).json(formatError("Post not found", 404));
+        }
+
+        if (!artifact.content) {
+          return res.status(400).json(formatError("Post has no content to regenerate", 400));
+        }
+
+        // Update artifact with generation metadata and mark as pending
+        // Store original_content so the job can use it like /improve does
+        await artifact.$query().patch({
+          status: "pending",
+          metadata: {
+            ...artifact.metadata,
+            prompt,
+            original_content: artifact.content,
+            angle,
+            length,
+            formatting,
+            instructions,
+          },
+        });
+      } else {
+        // Create new input
+        const input = await Input.query().insert({
+          account_id: res.locals.account.id,
+          app_id: res.locals.app.id,
+          connected_account_id: connection.id,
           prompt,
-          angle,
-          length,
-          formatting,
-          mode: platform === "ghost" ? "standalone" : "connected",
-        },
-      });
+          metadata: {
+            platform,
+            mode: platform === "ghost" ? "standalone" : "connected",
+            angle,
+            length,
+            formatting,
+            instructions,
+          },
+        });
+
+        // Create new artifact (pending generation)
+        artifact = await Artifact.query().insert({
+          input_id: input.id,
+          account_id: res.locals.account.id,
+          app_id: res.locals.app.id,
+          connected_account_id: connection.id,
+          artifact_type: "social_post",
+          status: "pending",
+          metadata: {
+            platform,
+            prompt,
+            angle,
+            length,
+            formatting,
+            instructions,
+            mode: platform === "ghost" ? "standalone" : "connected",
+          },
+        });
+      }
 
       // Trigger background job for AI generation
       await ghostQueue.add(JOB_GENERATE_POST, {
         artifactId: artifact.id,
       });
 
-      return res.status(202).json(successResponse(postGeneratePendingSerializer(artifact, input, connection)));
+      // Refetch artifact for response
+      const updatedArtifact = await Artifact.query()
+        .findById(artifact.id)
+        .withGraphFetched("[input, connected_account]");
+
+      return res.status(202).json(successResponse(postGeneratePendingSerializer(updatedArtifact, updatedArtifact.input, connection)));
     } catch (error) {
       console.error("Generate post error:", error);
       return res.status(500).json(formatError("Failed to generate post"));
@@ -233,14 +286,12 @@ router.get(
       // No filter or invalid value: return all posts for the user
 
       // Filter by type
-      if (type === "draft") {
-        query = query.where("status", "draft").whereNull("input_id");
-      } else if (type === "generated") {
-        query = query.whereNotNull("input_id");
+      if (type === "draft" || type === "completed") {
+        query = query.where("status", "completed");
       } else if (type === "used") {
         query = query.whereRaw("metadata->>'copied' = 'true'");
       }
-      // type === "all" or undefined: return both
+      // type === "all" or undefined: return all
 
       const artifacts = await query.page(pagination.page - 1, pagination.per_page);
 

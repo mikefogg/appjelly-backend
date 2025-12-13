@@ -40,19 +40,19 @@ export default async function generatePost(job) {
 
     const { input, connected_account } = artifact;
 
-    if (!input) {
-      throw new Error(`No input found for artifact ${artifactId}`);
-    }
-
-    const prompt = input.prompt;
+    // Get prompt from input or artifact metadata (for existing posts without input)
+    const prompt = input?.prompt || artifact.metadata?.prompt;
     if (!prompt) {
-      throw new Error(`No prompt found in input`);
+      throw new Error(`No prompt found for artifact ${artifactId}`);
     }
 
-    // Extract angle, length, and formatting from metadata
-    const angle = input.metadata?.angle || artifact.metadata?.angle;
-    const length = input.metadata?.length || artifact.metadata?.length;
-    const formatting = input.metadata?.formatting || artifact.metadata?.formatting;
+    // Extract angle, length, formatting, and instructions from metadata
+    // Prefer artifact.metadata (set by /generate endpoint) over input.metadata
+    const angle = artifact.metadata?.angle || input?.metadata?.angle;
+    const length = artifact.metadata?.length || input?.metadata?.length;
+    const formatting = artifact.metadata?.formatting || input?.metadata?.formatting;
+    const instructions = artifact.metadata?.instructions || input?.metadata?.instructions;
+    const originalContent = artifact.metadata?.original_content; // Set when using post_id
     const platform = connected_account?.platform || "ghost";
 
     // Calculate character limit based on platform and length
@@ -83,16 +83,30 @@ export default async function generatePost(job) {
 
     console.log(`[Generate Post] Generating from prompt: "${prompt.substring(0, 50)}..."`);
     console.log(`[Generate Post] Angle: ${angle}, Length: ${length}, Max chars: ${maxLength}`);
+    if (originalContent) {
+      console.log(`[Generate Post] Regenerating existing content (${originalContent.length} chars)`);
+    }
     if (voiceProfile) {
       console.log(`[Generate Post] Using voice profile v${voiceProfile.version}`);
     } else {
       console.log(`[Generate Post] No voice profile found`);
     }
 
-    // For clean_up angle, the prompt is the content to polish - build a special topic
-    const topic = angle === "clean_up"
-      ? `Polish and refine this draft into a better post while preserving the core message. Keep a similar length. Here's the draft:\n\n${prompt}`
-      : prompt;
+    // Build the topic from prompt + optional instructions
+    let topic;
+    if (originalContent) {
+      // Regenerating existing post - use original content as base, apply angle/instructions
+      const angleInstruction = angle ? `Rewrite this as a ${angle.replace(/_/g, " ")} style post.` : "Improve and refine this post.";
+      topic = `${angleInstruction}${instructions ? ` ${instructions}` : ""}\n\nOriginal post:\n${originalContent}${prompt && prompt !== originalContent ? `\n\nAdditional context: ${prompt}` : ""}`;
+    } else if (angle === "clean_up") {
+      // For clean_up angle, the prompt is the content to polish
+      topic = `Polish and refine this draft into a better post while preserving the core message. Keep a similar length. Here's the draft:\n\n${prompt}`;
+    } else if (instructions) {
+      // Add user instructions to the topic
+      topic = `${prompt}\n\nAdditional instructions: ${instructions}`;
+    } else {
+      topic = prompt;
+    }
 
     // Generate post using AI service
     const result = await AI.generatePost({
@@ -124,30 +138,88 @@ export default async function generatePost(job) {
     job.updateProgress(90);
 
     // Update artifact with generated content
-    await artifact.$query().patch({
-      status: "completed",
-      content: result.content,
-      current_version_number: 1,
-      total_tokens: result.metadata.total_tokens,
-      prompt_tokens: result.metadata.prompt_tokens,
-      completion_tokens: result.metadata.completion_tokens,
-      cost_usd: result.metadata.cost_usd,
-      generation_time_seconds: result.metadata.generation_time_seconds,
-      ai_model: result.metadata.ai_model,
-      ai_provider: result.metadata.ai_provider,
-      metadata: {
-        ...artifact.metadata,
-        topics,
-      },
-    });
+    // For regeneration (has originalContent), we'll create a new version
+    // For new generation, we create the initial version
+    const isRegeneration = !!originalContent;
 
-    // Create initial version (refetch to get updated content)
-    const updatedArtifact = await Artifact.query().findById(artifact.id);
-    await updatedArtifact.createInitialVersion("generation", {
-      prompt,
-      angle,
-      length,
-    });
+    console.log(`[Generate Post] isRegeneration: ${isRegeneration}`);
+
+    if (isRegeneration) {
+      // Check if artifact has any versions yet
+      const versionCount = await artifact.getVersionCount();
+      console.log(`[Generate Post] Existing version count: ${versionCount}`);
+
+      if (versionCount === 0 && artifact.content) {
+        // Create v1 from original content before creating new version
+        console.log(`[Generate Post] Creating initial version from original content`);
+        await artifact.$query().patch({ content: originalContent });
+        await artifact.createInitialVersion("generation", {
+          prompt: artifact.metadata?.prompt || prompt,
+          angle: artifact.metadata?.angle,
+          length: artifact.metadata?.length,
+        });
+      }
+
+      // Update artifact content
+      // Accumulate tokens/cost - ensure proper integer/number types
+      const newTotalTokens = parseInt(artifact.total_tokens || 0, 10) + parseInt(result.metadata.total_tokens || 0, 10);
+      const newPromptTokens = parseInt(artifact.prompt_tokens || 0, 10) + parseInt(result.metadata.prompt_tokens || 0, 10);
+      const newCompletionTokens = parseInt(artifact.completion_tokens || 0, 10) + parseInt(result.metadata.completion_tokens || 0, 10);
+      const newCostUsd = parseFloat(artifact.cost_usd || 0) + parseFloat(result.metadata.cost_usd || 0);
+
+      await artifact.$query().patch({
+        status: "completed",
+        content: result.content,
+        total_tokens: newTotalTokens,
+        prompt_tokens: newPromptTokens,
+        completion_tokens: newCompletionTokens,
+        cost_usd: newCostUsd,
+        generation_time_seconds: result.metadata.generation_time_seconds,
+        ai_model: result.metadata.ai_model,
+        ai_provider: result.metadata.ai_provider,
+        metadata: {
+          ...artifact.metadata,
+          topics,
+          original_content: undefined, // Clear after use
+        },
+      });
+
+      // Create new version with the regenerated content
+      const updatedArtifact = await Artifact.query().findById(artifact.id);
+      const newVersion = await updatedArtifact.createVersion(result.content, "generation", {
+        prompt,
+        angle,
+        length,
+        instructions,
+      });
+      console.log(`[Generate Post] Created new version: v${newVersion.version_number}`);
+    } else {
+      // New generation - set version to 1
+      await artifact.$query().patch({
+        status: "completed",
+        content: result.content,
+        current_version_number: 1,
+        total_tokens: result.metadata.total_tokens,
+        prompt_tokens: result.metadata.prompt_tokens,
+        completion_tokens: result.metadata.completion_tokens,
+        cost_usd: result.metadata.cost_usd,
+        generation_time_seconds: result.metadata.generation_time_seconds,
+        ai_model: result.metadata.ai_model,
+        ai_provider: result.metadata.ai_provider,
+        metadata: {
+          ...artifact.metadata,
+          topics,
+        },
+      });
+
+      // Create initial version
+      const updatedArtifact = await Artifact.query().findById(artifact.id);
+      await updatedArtifact.createInitialVersion("generation", {
+        prompt,
+        angle,
+        length,
+      });
+    }
 
     job.updateProgress(100);
 
