@@ -27,7 +27,8 @@
     "regenerate-voice": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/regenerate-voice.js",
     "grant-access": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/grant-access.js",
     "sync-revenuecat": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/sync-revenuecat.js",
-    "generate-evergreen-topics": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-all-evergreen-topics.js"
+    "generate-evergreen-topics": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/generate-all-evergreen-topics.js",
+    "reprocess-webhooks": "dotenvx run -f .env.development.local -f .env.development -f .env -- node scripts/reprocess-failed-webhooks.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.842.0",

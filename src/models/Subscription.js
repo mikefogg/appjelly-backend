@@ -10,10 +10,10 @@ class Subscription extends BaseModel {
   static get jsonSchema() {
     return {
       type: "object",
-      required: ["account_id", "rc_user_id"],
+      required: ["rc_user_id"],
       properties: {
         ...super.jsonSchema.properties,
-        account_id: { type: "string", format: "uuid" },
+        account_id: { type: ["string", "null"], format: "uuid" },
         app_id: { type: ["string", "null"], format: "uuid" },
         rc_user_id: { type: "string", minLength: 1 },
         rc_entitlement: { type: "string" },

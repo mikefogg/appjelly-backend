@@ -87,25 +87,31 @@ const handleTransfer = async (event, appId, jobKey) => {
   const fromAliases = event.transferred_from || [];
   const toAliases = event.transferred_to || [];
 
-  // Find the actual user IDs (non-anonymous)
-  const fromUserId = fromAliases.find((alias) => !alias.includes(RC_ANON));
-  const toUserId = toAliases.find((alias) => !alias.includes(RC_ANON));
+  // Filter to non-anonymous aliases
+  const nonAnonFromAliases = fromAliases.filter((alias) => !alias.includes(RC_ANON));
+  const nonAnonToAliases = toAliases.filter((alias) => !alias.includes(RC_ANON));
 
-  if (!toUserId) {
+  if (nonAnonToAliases.length === 0) {
     if (process.env.NODE_ENV === "development") {
       console.log(
-        `[${jobKey}] Skipped transfer from ${fromUserId} - no recipient user ID`
+        `[${jobKey}] Skipped transfer from ${nonAnonFromAliases[0]} - no recipient user ID`
       );
     }
     return Promise.resolve();
   }
 
-  // Find the target account for the transfer
-  const toAccount = await Account.query().findOne({ clerk_id: toUserId });
+  // Find the target account for the transfer (check both id and clerk_id)
+  const toAccount = await Account.query()
+    .where((builder) => {
+      builder
+        .whereIn("id", nonAnonToAliases)
+        .orWhereIn("clerk_id", nonAnonToAliases);
+    })
+    .first();
   if (!toAccount) {
     if (process.env.NODE_ENV === "development") {
       console.log(
-        `[${jobKey}] Skipped transfer - account not found for user ${toUserId}`
+        `[${jobKey}] Skipped transfer - account not found for aliases: ${nonAnonToAliases.join(", ")}`
       );
     }
     return Promise.resolve();
@@ -118,11 +124,15 @@ const handleTransfer = async (event, appId, jobKey) => {
     query = query.where("app_id", appId);
   }
 
+  // Use account's clerk_id or first non-anon alias as the canonical user id
+  const toUserId = toAccount.clerk_id || nonAnonToAliases[0];
+  const fromUserId = nonAnonFromAliases[0] || "unknown";
+
   const updatedSubs = await query.patch({
     rc_user_id: toUserId,
     account_id: toAccount.id,
     metadata: raw(
-      `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId || "unknown"}"}'`
+      `metadata || '{"transferred_at": "${new Date().toISOString()}", "transferred_from": "${fromUserId}"}'`
     ),
   });
 
@@ -178,10 +188,15 @@ const processSubscriptionEvent = async (event, appId, jobKey) => {
   console.log(`[${jobKey}] Looking up account by aliases: ${nonAnonAliases.join(", ")}`);
 
   // Find account by any of the non-anonymous aliases (single query)
+  // Check both id and clerk_id since apps may identify users by either
   let account = null;
   if (nonAnonAliases.length > 0) {
     account = await Account.query()
-      .whereIn("clerk_id", nonAnonAliases)
+      .where((builder) => {
+        builder
+          .whereIn("id", nonAnonAliases)
+          .orWhereIn("clerk_id", nonAnonAliases);
+      })
       .first();
   }
 
