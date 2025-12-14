@@ -7,6 +7,7 @@
 
 import { Account, ConnectedAccount, Subscription } from "#src/models/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
+import { trackEvent } from "#src/helpers/track.js";
 
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
 
@@ -100,6 +101,15 @@ export default async function generateSuggestionsAutomated(job) {
           accountId: connection.account_id,
           platform: connection.platform,
           jobId: suggestionJob.id,
+        });
+
+        // Track for this account
+        trackEvent(connection.account_id, "Suggestions Auto-Generated", {
+          connected_account_id: connection.id,
+          platform: connection.platform,
+          suggestion_count: 3,
+          utc_hour: currentUTCHour,
+          has_override: connection.generation_time_utc !== null,
         });
 
         successCount++;

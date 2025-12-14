@@ -8,6 +8,7 @@ import twitterService from "#src/services/twitter.js";
 import rateLimiter from "#src/services/rate-limiter.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 import AI from "#src/services/ai/index.js";
+import { trackEvent } from "#src/helpers/track.js";
 
 export const JOB_SYNC_NETWORK = "sync-network";
 
@@ -236,6 +237,14 @@ export default async function syncNetwork(job) {
     job.updateProgress(100);
 
     console.log(`[Sync Network] Sync completed successfully`);
+
+    // Track sync completion
+    trackEvent(connectedAccount.account_id, "Network Sync Completed", {
+      connected_account_id: connectedAccountId,
+      platform: connectedAccount.platform,
+      profiles_synced: profilesCreated,
+      posts_synced: postsSynced,
+    });
 
     return {
       success: true,

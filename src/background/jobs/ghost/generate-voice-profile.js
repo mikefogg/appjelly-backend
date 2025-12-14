@@ -8,6 +8,7 @@ import { ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, Subscr
 import AI from "#src/services/ai/index.js";
 import crypto from "crypto";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
+import { trackEvent } from "#src/helpers/track.js";
 
 export const JOB_GENERATE_VOICE_PROFILE = "generate-voice-profile";
 
@@ -172,6 +173,19 @@ export default async function generateVoiceProfile(job) {
       `[Generate Voice Profile] ✅ Profile v${newProfile.version} active ` +
         `(confidence: ${(profileData.confidence * 100).toFixed(0)}%)`
     );
+
+    // Track voice profile generation
+    trackEvent(connectedAccount.account_id, "Voice Profile Generated", {
+      connected_account_id: connectedAccountId,
+      platform: connectedAccount.platform,
+      profile_id: newProfile.id,
+      version: newProfile.version,
+      confidence: profileData.confidence,
+      sample_count: samplePosts.length,
+      rule_count: rules.length,
+      feedback_processed: pendingFeedback.length,
+      forced: !!force,
+    });
 
     return {
       success: true,

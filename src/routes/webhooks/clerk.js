@@ -2,7 +2,7 @@ import express from "express";
 import { Webhook } from "svix";
 import { raw } from "objection";
 import { Account, App } from "#src/models/index.js";
-import { formatError } from "#src/helpers/index.js";
+import { formatError, trackEvent, trackEventForAccounts } from "#src/helpers/index.js";
 import {
   notificationQueue,
   analyticsQueue,
@@ -88,14 +88,25 @@ const processClerkEvent = async (event) => {
 
 const handleUserCreated = async (userData) => {
   try {
+    const signUpMethod = userData.external_accounts?.[0]?.provider || "email";
+    const email = userData.email_addresses?.[0]?.email_address;
+
+    // Track with clerk_id since no account exists yet
+    trackEvent(userData.id, "Clerk User Created", {
+      clerk_id: userData.id,
+      email,
+      sign_up_method: signUpMethod,
+      created_at: new Date(userData.created_at).toISOString(),
+    });
+
     // Track user creation analytics
     await analyticsQueue.add(ANALYTICS_JOBS.UPDATE_USER_ANALYTICS, {
       clerkUserId: userData.id,
       event: "user_created",
       metadata: {
-        email: userData.email_addresses?.[0]?.email_address,
+        email,
         created_at: new Date(userData.created_at).toISOString(),
-        sign_up_method: userData.external_accounts?.[0]?.provider || "email",
+        sign_up_method: signUpMethod,
       },
     });
 
@@ -116,9 +127,11 @@ const handleUserUpdated = async (userData) => {
       return;
     }
 
+    const email = userData.email_addresses?.[0]?.email_address;
+
     // Update account information across all apps
     const updateData = {
-      email: userData.email_addresses?.[0]?.email_address,
+      email,
       metadata: {
         ...accounts[0].metadata, // Preserve existing metadata
         clerk_updated_at: new Date(userData.updated_at).toISOString(),
@@ -130,13 +143,21 @@ const handleUserUpdated = async (userData) => {
 
     await Account.query().where("clerk_id", userData.id).patch(updateData);
 
+    // Track for all accounts
+    const accountIds = accounts.map(a => a.id);
+    trackEventForAccounts(accountIds, "Clerk User Updated", {
+      clerk_id: userData.id,
+      email,
+      accounts_updated: accounts.length,
+    });
+
     // Track user update analytics
     await analyticsQueue.add(ANALYTICS_JOBS.UPDATE_USER_ANALYTICS, {
       clerkUserId: userData.id,
       event: "user_updated",
       metadata: {
         accounts_updated: accounts.length,
-        email: userData.email_addresses?.[0]?.email_address,
+        email,
       },
     });
   } catch (error) {
@@ -186,6 +207,14 @@ const handleUserDeleted = async (userData) => {
           `metadata || '{"deleted_at": "${deletedAt}", "deletion_reason": "user_deleted_clerk"}'`
         ),
       });
+
+    // Track for all accounts
+    const accountIds = accounts.map(a => a.id);
+    trackEventForAccounts(accountIds, "Clerk User Deleted", {
+      clerk_id: userData.id,
+      ...deletionSummary,
+      deleted_at: deletedAt,
+    });
 
     // Track user deletion analytics
     await analyticsQueue.add(ANALYTICS_JOBS.UPDATE_USER_ANALYTICS, {

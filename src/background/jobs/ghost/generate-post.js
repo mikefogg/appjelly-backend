@@ -119,22 +119,6 @@ export default async function generatePost(job) {
       formatting,
     });
 
-    job.updateProgress(80);
-
-    // Extract topics from the generated content
-    let topics = [];
-    try {
-      console.log(`[Generate Post] Extracting topics from generated content...`);
-      const extractedTopics = await AI.extractTopics(
-        [{ content: result.content, engagement_score: 0 }],
-        { limit: 3 }
-      );
-      topics = extractedTopics.map(t => t.topic);
-      console.log(`[Generate Post] Extracted topics:`, topics);
-    } catch (error) {
-      console.warn(`[Generate Post] Failed to extract topics:`, error.message);
-    }
-
     job.updateProgress(90);
 
     // Update artifact with generated content
@@ -179,7 +163,6 @@ export default async function generatePost(job) {
         ai_provider: result.metadata.ai_provider,
         metadata: {
           ...artifact.metadata,
-          topics,
           original_content: undefined, // Clear after use
         },
       });
@@ -208,7 +191,6 @@ export default async function generatePost(job) {
         ai_provider: result.metadata.ai_provider,
         metadata: {
           ...artifact.metadata,
-          topics,
         },
       });
 
