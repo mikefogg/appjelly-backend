@@ -4,6 +4,10 @@ import { addDays, addYears } from "date-fns";
 
 const RC_ANON = "$RCAnonymousID";
 
+// UUID v4 regex pattern
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isUUID = (str) => UUID_REGEX.test(str);
+
 // Map RevenueCat store names to our platform enum values
 const mapStoreToPlatform = (store) => {
   const storeMap = {
@@ -101,11 +105,17 @@ const handleTransfer = async (event, appId, jobKey) => {
   }
 
   // Find the target account for the transfer (check both id and clerk_id)
+  // Only check id column with valid UUIDs to avoid postgres type errors
+  const uuidAliases = nonAnonToAliases.filter(isUUID);
   const toAccount = await Account.query()
     .where((builder) => {
-      builder
-        .whereIn("id", nonAnonToAliases)
-        .orWhereIn("clerk_id", nonAnonToAliases);
+      if (uuidAliases.length > 0 && nonAnonToAliases.length > 0) {
+        builder.whereIn("id", uuidAliases).orWhereIn("clerk_id", nonAnonToAliases);
+      } else if (uuidAliases.length > 0) {
+        builder.whereIn("id", uuidAliases);
+      } else if (nonAnonToAliases.length > 0) {
+        builder.whereIn("clerk_id", nonAnonToAliases);
+      }
     })
     .first();
   if (!toAccount) {
@@ -189,13 +199,19 @@ const processSubscriptionEvent = async (event, appId, jobKey) => {
 
   // Find account by any of the non-anonymous aliases (single query)
   // Check both id and clerk_id since apps may identify users by either
+  // Only check id column with valid UUIDs to avoid postgres type errors
   let account = null;
   if (nonAnonAliases.length > 0) {
+    const uuidAliases = nonAnonAliases.filter(isUUID);
     account = await Account.query()
       .where((builder) => {
-        builder
-          .whereIn("id", nonAnonAliases)
-          .orWhereIn("clerk_id", nonAnonAliases);
+        if (uuidAliases.length > 0 && nonAnonAliases.length > 0) {
+          builder.whereIn("id", uuidAliases).orWhereIn("clerk_id", nonAnonAliases);
+        } else if (uuidAliases.length > 0) {
+          builder.whereIn("id", uuidAliases);
+        } else if (nonAnonAliases.length > 0) {
+          builder.whereIn("clerk_id", nonAnonAliases);
+        }
       })
       .first();
   }
