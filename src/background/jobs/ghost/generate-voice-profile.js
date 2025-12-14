@@ -25,6 +25,7 @@ function generateInputHash(samplePosts, rules) {
 
 export default async function generateVoiceProfile(job) {
   const { connectedAccountId, feedback, force } = job.data;
+  const startTime = Date.now();
 
   console.log(`[Generate Voice Profile] Starting for account: ${connectedAccountId}`);
 
@@ -175,6 +176,7 @@ export default async function generateVoiceProfile(job) {
     );
 
     // Track voice profile generation
+    const durationSeconds = (Date.now() - startTime) / 1000;
     trackEvent(connectedAccount.account_id, "Voice Profile Generated", {
       connected_account_id: connectedAccountId,
       platform: connectedAccount.platform,
@@ -185,6 +187,7 @@ export default async function generateVoiceProfile(job) {
       rule_count: rules.length,
       feedback_processed: pendingFeedback.length,
       forced: !!force,
+      duration_seconds: durationSeconds,
     });
 
     return {

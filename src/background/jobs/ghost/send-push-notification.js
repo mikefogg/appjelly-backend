@@ -1,5 +1,6 @@
 import Account from "#src/models/Account.js";
 import { sendPushNotification } from "#src/services/push-notifications/onesignal.js";
+import { trackEvent } from "#src/helpers/track.js";
 
 /**
  * Background job to send push notifications via OneSignal
@@ -37,12 +38,26 @@ export default async function sendPushNotificationJob(job) {
     // Send the push notification using account ID as external user ID
     const result = await sendPushNotification(account_id, notification);
 
+    // Track successful push
+    trackEvent(account_id, "Push Notification Sent", {
+      notification_type: notification.data?.type || "unknown",
+      heading: notification.heading,
+      recipients: result.recipients,
+    });
+
     return {
       success: true,
       notification_id: result.notification_id,
       recipients: result.recipients,
     };
   } catch (error) {
+    // Track failed push
+    trackEvent(account_id, "Push Notification Failed", {
+      notification_type: notification.data?.type || "unknown",
+      heading: notification.heading,
+      error: error.message,
+    });
+
     throw error; // Let BullMQ handle retries
   }
 }

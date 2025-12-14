@@ -49,6 +49,7 @@ async function extractTopicsFromBatch(tweets) {
 
 export default async function syncNetwork(job) {
   const { connectedAccountId } = job.data;
+  const startTime = Date.now();
 
   console.log(`[Sync Network] Starting sync for connected account: ${connectedAccountId}`);
 
@@ -239,11 +240,13 @@ export default async function syncNetwork(job) {
     console.log(`[Sync Network] Sync completed successfully`);
 
     // Track sync completion
+    const durationSeconds = (Date.now() - startTime) / 1000;
     trackEvent(connectedAccount.account_id, "Network Sync Completed", {
       connected_account_id: connectedAccountId,
       platform: connectedAccount.platform,
       profiles_synced: profilesCreated,
       posts_synced: postsSynced,
+      duration_seconds: durationSeconds,
     });
 
     return {

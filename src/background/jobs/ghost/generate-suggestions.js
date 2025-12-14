@@ -12,12 +12,14 @@ import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
 import { getTargetLength } from "#src/config/platform-lengths.js";
 import { ghostQueue } from "#src/background/queues/index.js";
+import { trackEvent } from "#src/helpers/track.js";
 
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
 const VOICE_UPDATE_RETRY_DELAY_MS = 10000; // 10 seconds
 
 export default async function generateSuggestions(job) {
   const { connectedAccountId, suggestionCount = 3 } = job.data;
+  const startTime = Date.now();
 
   console.log(`[Generate Suggestions] Starting for connected account: ${connectedAccountId}`);
 
@@ -90,7 +92,7 @@ export default async function generateSuggestions(job) {
     }
 
     // Generate suggestions based on persona
-    return await generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount);
+    return await generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount, startTime);
 
   } catch (error) {
     console.error(`[Generate Suggestions] Error:`, error);
@@ -102,7 +104,7 @@ export default async function generateSuggestions(job) {
  * Generate suggestions based on user's persona and voice
  * No topics needed - AI generates relevant content based on who they are
  */
-async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount) {
+async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount, startTime) {
   // Log what we're using
   console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
   console.log(`[Generate Suggestions] Bio: ${connectedAccount.bio ? JSON.stringify(connectedAccount.bio) : 'none'}`);
@@ -190,6 +192,18 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
   if (job.data.automated && savedCount > 0) {
     await sendPushNotification(connectedAccount, savedCount);
   }
+
+  // Track suggestions generated
+  const durationSeconds = (Date.now() - startTime) / 1000;
+  trackEvent(connectedAccount.account_id, "Suggestions Generated", {
+    connected_account_id: connectedAccount.id,
+    platform: connectedAccount.platform,
+    suggestion_count: savedCount,
+    batch_id: batchId,
+    voice_profile_version: voiceProfile?.version || null,
+    automated: !!job.data.automated,
+    duration_seconds: durationSeconds,
+  });
 
   return {
     success: true,
