@@ -18,7 +18,7 @@ class Subscription extends BaseModel {
         rc_user_id: { type: "string", minLength: 1 },
         rc_entitlement: { type: "string" },
         rc_product_id: { type: "string" },
-        rc_period_type: { type: "string", enum: ["normal", "trial", "intro"] },
+        rc_period_type: { type: "string", enum: ["normal", "trial", "intro", "promotional", "prepaid"] },
         rc_renewal_status: { type: "string" },
         rc_platform: { type: "string", enum: ["ios", "android", "web", "amazon", "manual", "unknown"] },
         rc_expiration: { type: "string", format: "date-time" },

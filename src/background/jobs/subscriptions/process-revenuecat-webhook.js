@@ -1,6 +1,7 @@
 import { raw } from "objection";
 import { Account, Subscription, WebhookEvent } from "#src/models/index.js";
 import { addDays, addYears } from "date-fns";
+import { trackEvent, trackEventForAccounts } from "#src/helpers/track.js";
 
 const RC_ANON = "$RCAnonymousID";
 
@@ -15,6 +16,7 @@ const mapStoreToPlatform = (store) => {
     play_store: "android",
     stripe: "web",
     amazon: "amazon",
+    promotional: "manual",
   };
   return storeMap[store?.toLowerCase()] || "unknown";
 };
@@ -31,6 +33,32 @@ const ALLOWED_WEBHOOK_TYPES = [
   "SUBSCRIPTION_EXTENDED",
   "EXPIRATION",
 ];
+
+// Build common event properties from RevenueCat event
+const buildEventProperties = (event) => ({
+  event_type: event.type,
+  product_id: event.product_id,
+  price: event.price,
+  currency: event.currency,
+  store: event.store,
+  environment: event.environment,
+  period_type: event.period_type,
+  purchased_at: event.purchased_at_ms ? new Date(event.purchased_at_ms).toISOString() : null,
+  expiration_at: event.expiration_at_ms ? new Date(event.expiration_at_ms).toISOString() : null,
+  country_code: event.country_code,
+  entitlement_ids: event.entitlement_ids,
+  is_trial_conversion: event.is_trial_conversion,
+  is_family_share: event.is_family_share,
+  renewal_number: event.renewal_number,
+  cancel_reason: event.cancel_reason,
+  offer_code: event.offer_code,
+  transaction_id: event.transaction_id,
+  original_transaction_id: event.original_transaction_id,
+  app_user_id: event.app_user_id,
+  original_app_user_id: event.original_app_user_id,
+  takehome_percentage: event.takehome_percentage,
+  commission_percentage: event.commission_percentage,
+});
 
 const ProcessRevenueCatWebhookWorker = async ({ data }) => {
   const { event, appId, webhookEventId } = data;
@@ -150,6 +178,42 @@ const handleTransfer = async (event, appId, jobKey) => {
     `[${jobKey}] Transferred ${updatedSubs} subscriptions to ${toUserId}`
   );
 
+  // Track transfer event for recipient account
+  if (toAccount) {
+    trackEvent(toAccount.id, "Subscription Transfer Received", {
+      ...buildEventProperties(event),
+      transferred_from_aliases: fromAliases,
+      transferred_to_aliases: toAliases,
+      subscriptions_transferred: updatedSubs,
+    });
+  }
+
+  // Try to find and track for the source account too
+  if (nonAnonFromAliases.length > 0) {
+    const fromUuidAliases = nonAnonFromAliases.filter(isUUID);
+    const fromAccount = await Account.query()
+      .where((builder) => {
+        if (fromUuidAliases.length > 0 && nonAnonFromAliases.length > 0) {
+          builder.whereIn("id", fromUuidAliases).orWhereIn("clerk_id", nonAnonFromAliases);
+        } else if (fromUuidAliases.length > 0) {
+          builder.whereIn("id", fromUuidAliases);
+        } else if (nonAnonFromAliases.length > 0) {
+          builder.whereIn("clerk_id", nonAnonFromAliases);
+        }
+      })
+      .first();
+
+    if (fromAccount) {
+      trackEvent(fromAccount.id, "Subscription Transfer Sent", {
+        ...buildEventProperties(event),
+        transferred_from_aliases: fromAliases,
+        transferred_to_aliases: toAliases,
+        transferred_to_account_id: toAccount?.id,
+        subscriptions_transferred: updatedSubs,
+      });
+    }
+  }
+
   // If no subscriptions were transferred, check if there's an active subscription for this product
   // and create it for the target account
   if (updatedSubs === 0 && event.product_id) {
@@ -267,6 +331,23 @@ const processSubscriptionEvent = async (event, appId, jobKey) => {
       }`
     );
   }
+
+  // Track subscription event
+  if (account) {
+    trackEvent(account.id, `Subscription ${event.type.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}`, {
+      ...buildEventProperties(event),
+      subscription_id: subscription.id,
+      account_found: true,
+    });
+  } else {
+    // Track without account for audit purposes (use app_user_id as distinct_id)
+    trackEvent(appUserId, `Subscription ${event.type.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}`, {
+      ...buildEventProperties(event),
+      subscription_id: subscription.id,
+      account_found: false,
+    });
+  }
+
   return Promise.resolve();
 };
 
