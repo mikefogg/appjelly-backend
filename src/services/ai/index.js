@@ -33,7 +33,131 @@ function getModelParams(model, { tokens, temperature }) {
 }
 
 /**
- * Build formatting instructions from content preferences
+ * Build system message for content generation "as" a user
+ * Combines persona, voice profile, hard rules, and formatting requirements
+ *
+ * @param {Object} options
+ * @param {Object} options.voiceProfile - Voice profile with persona_summary, voice_summary, etc.
+ * @param {Object} options.bio - Structured bio { what_you_do, audience, perspective, differentiator }
+ * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
+ * @param {Array<Object>} options.samplePosts - Optional sample posts for reference
+ * @returns {string} System message for AI
+ */
+function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting = null, samplePosts = [] }) {
+  const sections = [];
+
+  // 1. PERSONA - Who you are
+  const personaSummary = voiceProfile?.persona_summary;
+  const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+
+  if (personaSummary) {
+    sections.push(`WHO YOU ARE:\n${personaSummary}`);
+  } else if (hasBio) {
+    const bioLines = [
+      `You are someone who ${bio.what_you_do || "creates content"}.`,
+      bio.audience ? `Your audience: ${bio.audience}` : null,
+      bio.perspective ? `Your perspective: ${bio.perspective}` : null,
+      bio.differentiator ? `What makes you different: ${bio.differentiator}` : null,
+    ].filter(Boolean);
+    sections.push(`WHO YOU ARE:\n${bioLines.join("\n")}`);
+  } else {
+    sections.push("WHO YOU ARE:\nA thoughtful professional sharing insights with your audience.");
+  }
+
+  // 2. VOICE - How you write
+  if (voiceProfile) {
+    const voiceLines = [
+      voiceProfile.voice_summary || "Conversational and authentic.",
+      voiceProfile.sentence_patterns ? `Sentence style: ${voiceProfile.sentence_patterns}` : null,
+      voiceProfile.vocabulary_notes ? `Vocabulary: ${voiceProfile.vocabulary_notes}` : null,
+      voiceProfile.tone_markers ? `Tone: ${voiceProfile.tone_markers}` : null,
+      voiceProfile.formatting_habits ? `Style quirks: ${voiceProfile.formatting_habits}` : null,
+    ].filter(Boolean);
+    sections.push(`HOW YOU WRITE:\n${voiceLines.join("\n")}`);
+  }
+
+  // 3. EXAMPLES - Reference posts (from voice profile or sample posts)
+  const examples = voiceProfile?.examples || {};
+  const exampleOutputs = Object.entries(examples)
+    .map(([type, ex]) => ex?.output)
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (exampleOutputs.length > 0) {
+    sections.push(`EXAMPLE POSTS IN YOUR VOICE (match this style exactly):\n${exampleOutputs.map(ex => `---\n${ex}\n---`).join("\n\n")}`);
+  } else if (samplePosts.length > 0) {
+    const samples = samplePosts.slice(0, 2).map((p, i) => `--- SAMPLE ${i + 1} ---\n${p.content}\n---`).join("\n\n");
+    sections.push(`REFERENCE POSTS (match this style exactly):\n${samples}`);
+  }
+
+  // 4. HARD RULES - Things to never do (filter out rules that conflict with user's explicit preferences)
+  let hardRules = voiceProfile?.hard_rules || [];
+  // Ensure hardRules is an array (might be string from AI)
+  if (typeof hardRules === "string") {
+    hardRules = [];
+  }
+  if (formatting && Array.isArray(hardRules)) {
+    // If user explicitly wants emojis, remove any "no emoji" rules
+    if (formatting.emojis && formatting.emojis !== "none") {
+      hardRules = hardRules.filter(r => !r.toLowerCase().includes("emoji"));
+    }
+    // If user explicitly wants hashtags, remove any "no hashtag" rules (future-proofing)
+    if (formatting.hashtags && formatting.hashtags !== "none") {
+      hardRules = hardRules.filter(r => !r.toLowerCase().includes("hashtag"));
+    }
+  }
+  if (Array.isArray(hardRules) && hardRules.length > 0) {
+    sections.push(`NEVER:\n${hardRules.map(r => `- ${r}`).join("\n")}`);
+  }
+
+  // 5. FORMATTING REQUIREMENTS - Emojis, line breaks, etc.
+  const formattingInstructions = buildFormattingInstructionsList(formatting);
+  if (formattingInstructions.length > 0) {
+    sections.push(`FORMATTING REQUIREMENTS:\n${formattingInstructions.map(i => `- ${i}`).join("\n")}`);
+  }
+
+  // 6. Final instruction
+  sections.push("Write authentically as this person. Every post should feel like something they would actually say.");
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Build formatting instructions as a list (used by buildContentSystemMessage)
+ */
+function buildFormattingInstructionsList(formatting) {
+  if (!formatting) return [];
+
+  const instructions = [];
+
+  // Paragraph breaks
+  if (formatting.line_breaks === "minimal") {
+    instructions.push("Use minimal line breaks - write in flowing prose with sentences grouped together");
+  } else if (formatting.line_breaks === "frequent") {
+    instructions.push("Use VERY frequent line breaks - put a blank line after almost EVERY sentence. Each thought gets its own line. This is social media style, not essay style.");
+  } else if (formatting.line_breaks === "moderate") {
+    instructions.push("Use moderate line breaks - group 2-3 related sentences together, then add a blank line");
+  }
+
+  // Emojis
+  if (formatting.emojis === "none") {
+    instructions.push("Do NOT use any emojis");
+  } else if (formatting.emojis === "sparse") {
+    instructions.push("Optionally include 1-2 emojis where they feel natural");
+  } else if (formatting.emojis === "moderate") {
+    instructions.push("Include 3-5 emojis throughout the post for visual interest");
+  } else if (formatting.emojis === "heavy") {
+    instructions.push("Include 5+ emojis throughout the post for visual interest and emphasis");
+  }
+
+  // Hashtags
+  instructions.push("Do NOT use any hashtags");
+
+  return instructions;
+}
+
+/**
+ * Build formatting instructions from content preferences (legacy format with header)
  */
 function buildFormattingInstructions(formatting) {
   if (!formatting) return "";
@@ -200,26 +324,21 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     formatting = null,
   }) {
     const startTime = Date.now();
-    const model = "gpt-4o-mini";
+    const model = "gpt-4o";
 
-    // Build bio context section
-    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
-    const bioSection = hasBio ? `
-ABOUT THE WRITER:
-${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
-${bio.audience ? `- Their audience: ${bio.audience}` : ""}
-${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
-${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
-` : "";
-
-    // Build system prompt: platform rules + voice style + formatting
+    // Build system message: platform rules + persona/voice/formatting
     const platformPrompt = getPlatformSystemPrompt(platform);
-    const styleSection = buildStyleSection(voiceProfile);
-    const formattingSection = buildFormattingInstructions(formatting);
-    const systemPrompt = platformPrompt + bioSection + styleSection + formattingSection;
+    const contentSystemMessage = buildContentSystemMessage({ voiceProfile, bio, formatting });
+    const systemMessage = `${platformPrompt}\n\n${contentSystemMessage}`;
 
-    // Build user prompt
-    let userPrompt = `Write a ${platform} post about: ${topic}`;
+    // Build formatting reminder for user prompt (reinforce what's in system message)
+    const formattingReminder = buildFormattingInstructionsList(formatting);
+    const formattingSection = formattingReminder.length > 0
+      ? `FORMATTING REQUIREMENTS:\n${formattingReminder.map(i => `- ${i}`).join("\n")}\n\n`
+      : "";
+
+    // User message is just the task
+    let userPrompt = `${formattingSection}Write a ${platform} post about: ${topic}`;
     if (contentType) {
       userPrompt += `\n\nContent type: ${contentType}`;
     }
@@ -232,7 +351,7 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     const response = await openai.chat.completions.create({
       model,
       messages: [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: systemMessage },
         { role: "user", content: userPrompt },
       ],
       temperature: 0.8,
@@ -277,78 +396,35 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     count = 3,
     formatting = null,
   }) {
-    // Get persona summary - this is the key context
-    const personaSummary = voiceProfile?.persona_summary;
+    // Build system message with persona, voice, rules, and formatting
+    const systemMessage = buildContentSystemMessage({ voiceProfile, bio, formatting });
 
-    // Fallback: build persona from bio if no persona_summary exists
-    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
-    let personaContext;
-
-    if (personaSummary) {
-      personaContext = `WHO YOU ARE:\n${personaSummary}`;
-    } else if (hasBio) {
-      personaContext = `WHO YOU ARE:
-You are someone who ${bio.what_you_do || "creates content"}.
-${bio.audience ? `Your audience: ${bio.audience}` : ""}
-${bio.perspective ? `Your perspective: ${bio.perspective}` : ""}
-${bio.differentiator ? `What makes you different: ${bio.differentiator}` : ""}`;
-    } else {
-      personaContext = "WHO YOU ARE:\nA thoughtful professional sharing insights with your audience.";
-    }
-
-    // Build voice context
-    const voiceContext = voiceProfile ? `
-HOW YOU WRITE:
-${voiceProfile.voice_summary || "Conversational and authentic."}
-${voiceProfile.sentence_patterns ? `Sentence style: ${voiceProfile.sentence_patterns}` : ""}
-${voiceProfile.formatting_habits ? `Formatting: ${voiceProfile.formatting_habits}` : ""}` : "";
-
-    // Get examples from voice profile
-    const examples = voiceProfile?.examples || {};
-    const exampleOutputs = Object.entries(examples)
-      .map(([type, ex]) => ex?.output)
-      .filter(Boolean)
-      .slice(0, 3);
-
-    const examplesSection = exampleOutputs.length > 0
-      ? `\nEXAMPLE POSTS IN YOUR VOICE:\n${exampleOutputs.map((ex, i) => `---\n${ex}\n---`).join("\n\n")}`
+    // Build formatting reminder for user prompt (reinforce what's in system message)
+    const formattingReminder = buildFormattingInstructionsList(formatting);
+    const formattingSection = formattingReminder.length > 0
+      ? `FORMATTING REQUIREMENTS:\n${formattingReminder.map(i => `- ${i}`).join("\n")}\n\n`
       : "";
 
-    const hardRules = voiceProfile?.hard_rules || [];
-    const rulesSection = hardRules.length > 0
-      ? `\nNEVER: ${hardRules.join(", ")}`
-      : "";
-
-    // Build formatting section
-    const formattingSection = buildFormattingInstructions(formatting);
-
-    const userPrompt = `${personaContext}
-${voiceContext}
-${examplesSection}
-${rulesSection}
-${formattingSection}
-
-Write ${count} social media posts that this person would naturally share. Think about:
-- What insights from their work would resonate with their audience?
-- What opinions or hot takes would they have?
-- What stories or experiences might they share?
-- What would their followers find valuable?
+    // User message is just the task
+    const userPrompt = `${formattingSection}Write ${count} social media posts. Think about:
+- What insights from your work would resonate with your audience?
+- What opinions or hot takes would you have?
+- What stories or experiences might you share?
 
 Content types to include: ${contentTypes.join(", ")}
 
-IMPORTANT:
-- Write posts RELEVANT to their work and audience (not generic marketing advice)
-- Each post should feel like something THIS person would actually say
-- Target length: ~${maxLength} characters each (this is the GOAL, not just a limit - write substantive posts that reach this length)
-- Match the voice examples exactly
+Requirements:
+- Target length: ~${maxLength} characters each (this is the GOAL, not a max limit)
+- Write posts relevant to your work and audience
 - Don't make up specific accomplishments or numbers
 
 Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "content": "the post text" }] }`;
 
-    console.log(`[AI.generatePosts] Prompt:\n${userPrompt}`);
+    console.log(`[AI.generatePosts] System:\n${systemMessage}`);
+    console.log(`[AI.generatePosts] User:\n${userPrompt}`);
 
     const startTime = Date.now();
-    const model = "gpt-4.1-mini";
+    const model = "gpt-4o";
 
     // Scale max_tokens based on target length and count (roughly 4 chars per token + JSON overhead)
     const estimatedTokens = Math.ceil((maxLength * count) / 3) + 200;
@@ -358,6 +434,7 @@ Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "conten
       model,
       response_format: { type: "json_object" },
       messages: [
+        { role: "system", content: systemMessage },
         { role: "user", content: userPrompt },
       ],
       temperature: 0.8,
@@ -466,7 +543,7 @@ Return JSON:
 }`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4.1",
       response_format: { type: "json_object" },
       messages: [
         {
@@ -517,7 +594,7 @@ Return JSON:
     }
 
     const startTime = Date.now();
-    const model = "gpt-4o-mini";
+    const model = "gpt-4o";
 
     // Step 1: Analyze voice characteristics
     // Format posts to preserve line breaks and formatting
@@ -562,7 +639,7 @@ Analyze and return JSON with these fields:
   "vocabulary_notes": "Words/phrases they love, words they avoid, formality level, jargon use",
   "tone_markers": "Attitude, humor style, confidence level, how they relate to readers",
   "formatting_habits": "Punctuation quirks (em-dashes, caps for emphasis, ellipses), list/bullet usage, paragraph structure. Do NOT mention line break frequency or emoji usage here - those are configured separately.",
-  "hard_rules": ["Never use emojis", "Avoid corporate jargon", "Don't start with questions"],
+  "hard_rules": ["Array of writing patterns to avoid - e.g. 'Avoid corporate jargon', 'Don't start with questions'. Do NOT include rules about emojis, hashtags, or line breaks - those are user preferences."],
   "confidence": 0.0-1.0,
   "confidence_reasoning": "Why confidence is at this level, what would improve it"
 }
@@ -598,17 +675,28 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
     // Step 2: Generate example posts using the analyzed voice + original samples as reference
     const { examples, usage: examplesUsage } = await this.generateExamples(profile, samplePosts, formatting);
 
+    // Sanitize hard_rules - must be an array of strings
+    let hardRules = profile.hard_rules;
+    if (!Array.isArray(hardRules)) {
+      hardRules = [];
+    } else {
+      // Filter out any non-string entries and emoji/hashtag/line break rules
+      hardRules = hardRules
+        .filter(r => typeof r === "string")
+        .filter(r => !r.toLowerCase().includes("emoji") && !r.toLowerCase().includes("hashtag") && !r.toLowerCase().includes("line break"));
+    }
+
     return {
-      voice_summary: profile.voice_summary,
-      persona_summary: profile.persona_summary,
-      sentence_patterns: profile.sentence_patterns,
-      vocabulary_notes: profile.vocabulary_notes,
-      tone_markers: profile.tone_markers,
-      formatting_habits: profile.formatting_habits,
-      hard_rules: profile.hard_rules || [],
+      voice_summary: profile.voice_summary || "",
+      persona_summary: profile.persona_summary || "",
+      sentence_patterns: profile.sentence_patterns || "",
+      vocabulary_notes: profile.vocabulary_notes || "",
+      tone_markers: profile.tone_markers || "",
+      formatting_habits: profile.formatting_habits || "",
+      hard_rules: hardRules,
       examples,
-      confidence: profile.confidence,
-      confidence_reasoning: profile.confidence_reasoning,
+      confidence: typeof profile.confidence === "number" ? profile.confidence : 0.5,
+      confidence_reasoning: profile.confidence_reasoning || "",
       // Return separate usage for each AI call so they can be tracked independently
       usages: [
         { ...analysisUsage, operation: "voice_analysis" },
@@ -628,9 +716,16 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
    */
   async generateExamples(profile, samplePosts = [], formatting = null) {
     const startTime = Date.now();
-    const model = "gpt-4.1-mini";
+    const model = "gpt-4o";
 
     console.log(`[AI.generateExamples] Formatting received:`, JSON.stringify(formatting));
+
+    // Build system message with voice profile and formatting
+    const systemMessage = buildContentSystemMessage({
+      voiceProfile: profile,
+      formatting,
+      samplePosts,
+    });
 
     const examplePrompts = {
       hot_take: "Write a contrarian opinion about morning routines",
@@ -638,25 +733,14 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
       insight: "Write an observation about how people behave in meetings",
     };
 
-    // Format sample posts as reference (use first 2)
-    const referencePosts = samplePosts.slice(0, 2);
-    const referenceSection = referencePosts.length > 0
-      ? `REFERENCE - Here's how this person actually writes:\n\n${referencePosts.map((p, i) => `--- SAMPLE ${i + 1} ---\n${p.content}\n--- END SAMPLE ${i + 1} ---`).join("\n\n")}\n\nMatch the voice profile below, but more importantly, match the FEEL of these reference posts. Notice the rhythm, the line breaks, the attitude, the directness.\n\n`
+    // Build formatting reminder for user prompt (reinforce what's in system message)
+    const formattingReminder = buildFormattingInstructionsList(formatting);
+    const formattingSection = formattingReminder.length > 0
+      ? `FORMATTING REQUIREMENTS:\n${formattingReminder.map(i => `- ${i}`).join("\n")}\n\n`
       : "";
 
-    // Build formatting instructions
-    const formattingSection = buildFormattingInstructions(formatting);
-
-    const examplesPrompt = `${referenceSection}VOICE PROFILE:
-- Summary: ${profile.voice_summary}
-- Sentence patterns: ${profile.sentence_patterns}
-- Vocabulary: ${profile.vocabulary_notes}
-- Tone: ${profile.tone_markers}
-- Formatting: ${profile.formatting_habits}
-- Never: ${(profile.hard_rules || []).join(", ") || "N/A"}
-${formattingSection}
-
-Write 3 posts (each under 280 characters). Return ONLY the post content, no labels:
+    // User message is just the task
+    const userPrompt = `${formattingSection}Write 3 example posts (each under 280 characters):
 
 1. ${examplePrompts.hot_take}
 2. ${examplePrompts.story}
@@ -664,21 +748,20 @@ Write 3 posts (each under 280 characters). Return ONLY the post content, no labe
 
 Return JSON:
 {
-  "hot_take": { "prompt": "${examplePrompts.hot_take}", "output": "post content matching the reference style" },
-  "story": { "prompt": "${examplePrompts.story}", "output": "post content matching the reference style" },
-  "insight": { "prompt": "${examplePrompts.insight}", "output": "post content matching the reference style" }
+  "hot_take": { "prompt": "${examplePrompts.hot_take}", "output": "the post" },
+  "story": { "prompt": "${examplePrompts.story}", "output": "the post" },
+  "insight": { "prompt": "${examplePrompts.insight}", "output": "the post" }
 }`;
+
+    console.log(`[AI.generateExamples] System:\n${systemMessage}`);
+    console.log(`[AI.generateExamples] User:\n${userPrompt}`);
 
     const response = await openai.chat.completions.create({
       model,
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "You write social media posts that perfectly match a given voice. The reference samples are the ground truth - match their feel exactly. Be authentic, not corporate.",
-        },
-        { role: "user", content: examplesPrompt },
+        { role: "system", content: systemMessage },
+        { role: "user", content: userPrompt },
       ],
       ...getModelParams(model, { tokens: 2000, temperature: 0.7 }),
     });

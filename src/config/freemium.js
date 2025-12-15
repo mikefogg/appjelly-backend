@@ -10,7 +10,7 @@ export const FREEMIUM_CONFIG = {
 
   // Free tier limits
   FREE_CONNECTIONS_LIMIT: isDevelopment ? 5 : 1,
-  FREE_POSTS_PER_CONNECTION: 20,
+  FREE_POSTS_PER_CONNECTION: isDevelopment ? 1000 : 20,
 
   // Error messages
   ERRORS: {
