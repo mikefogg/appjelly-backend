@@ -19,8 +19,26 @@ router.get(
   "/",
   requireAppContext,
   async (req, res) => {
+    // Transform platforms to only include id, label, icon - exclude ghost
+    const platforms = Object.entries(PLATFORM_LENGTHS)
+      .filter(([key]) => key !== "ghost")
+      .map(([key, value]) => ({
+        id: key,
+        label: value.label,
+        icon: value.icon,
+      }));
+
+    // Transform platform_lengths to only include length values
+    const platformLengths = Object.fromEntries(
+      Object.entries(PLATFORM_LENGTHS).map(([key, value]) => [
+        key,
+        { short: value.short, medium: value.medium, long: value.long },
+      ])
+    );
+
     return res.status(200).json(successResponse({
-      platform_lengths: PLATFORM_LENGTHS,
+      platforms,
+      platform_lengths: platformLengths,
       free_tier_limits: {
         connections: FREEMIUM_CONFIG.FREE_CONNECTIONS_LIMIT,
         posts_per_connection: FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION,

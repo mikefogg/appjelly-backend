@@ -4,12 +4,62 @@
  */
 
 export const PLATFORM_LENGTHS = {
-  twitter: { short: 100, medium: 280, long: 4000 },
-  linkedin: { short: 200, medium: 600, long: 1300 },
-  threads: { short: 150, medium: 300, long: 500 },
-  facebook: { short: 100, medium: 400, long: 2000 },
-  ghost: { short: 150, medium: 300, long: 2000 },
-  custom: { short: 150, medium: 300, long: 2000 },
+  linkedin: {
+    name: "LinkedIn",
+    label: "LinkedIn",
+    shortname: "LI",
+    icon: "linkedin",
+    short: 200, medium: 600, long: 1300,
+  },
+  twitter: {
+    name: "X",
+    label: "X (Twitter)",
+    shortname: "X",
+    icon: "x-twitter",
+    short: 100, medium: 280, long: 4000,
+  },
+  threads: {
+    name: "Threads",
+    label: "Threads",
+    shortname: "TH",
+    icon: "threads",
+    short: 150, medium: 300, long: 500,
+  },
+  facebook: {
+    name: "Facebook",
+    label: "Facebook",
+    shortname: "FB",
+    icon: "facebook",
+    short: 100, medium: 400, long: 2000,
+  },
+  instagram: {
+    name: "Instagram",
+    label: "Instagram",
+    shortname: "IG",
+    icon: "instagram",
+    short: 150, medium: 300, long: 2200,
+  },
+  tiktok: {
+    name: "TikTok",
+    label: "TikTok",
+    shortname: "TT",
+    icon: "tiktok",
+    short: 150, medium: 300, long: 4000,
+  },
+  ghost: {
+    name: "Ghost",
+    label: "Ghost",
+    shortname: "GH",
+    icon: "ghost",
+    short: 150, medium: 300, long: 2000,
+  },
+  custom: {
+    name: "Custom",
+    label: "Custom",
+    shortname: "CU",
+    icon: "custom",
+    short: 150, medium: 300, long: 2000,
+  },
 };
 
 /**
