@@ -25,6 +25,7 @@ router.get(
         connections: FREEMIUM_CONFIG.FREE_CONNECTIONS_LIMIT,
         posts_per_connection: FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION,
       },
+      voice_match_threshold: FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD,
     }));
   }
 );
