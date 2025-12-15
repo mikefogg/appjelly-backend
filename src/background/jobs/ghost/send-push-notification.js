@@ -1,6 +1,7 @@
 import Account from "#src/models/Account.js";
 import { sendPushNotification } from "#src/services/push-notifications/onesignal.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 
 /**
  * Background job to send push notifications via OneSignal
@@ -39,7 +40,7 @@ export default async function sendPushNotificationJob(job) {
     const result = await sendPushNotification(account_id, notification);
 
     // Track successful push
-    trackEvent(account_id, "Push Notification Sent", {
+    trackEvent(account_id, EVENTS.PUSH_NOTIFICATION_SENT, {
       notification_type: notification.data?.type || "unknown",
       heading: notification.heading,
       recipients: result.recipients,
@@ -52,7 +53,7 @@ export default async function sendPushNotificationJob(job) {
     };
   } catch (error) {
     // Track failed push
-    trackEvent(account_id, "Push Notification Failed", {
+    trackEvent(account_id, EVENTS.PUSH_NOTIFICATION_FAILED, {
       notification_type: notification.data?.type || "unknown",
       heading: notification.heading,
       error: error.message,

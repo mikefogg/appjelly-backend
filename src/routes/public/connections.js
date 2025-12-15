@@ -34,8 +34,6 @@ import {
   ghostQueue,
   JOB_SYNC_NETWORK,
   JOB_ANALYZE_STYLE,
-  JOB_GENERATE_VOICE_PROFILE,
-  JOB_PROCESS_VOICE_FEEDBACK,
 } from "#src/background/queues/index.js";
 
 const router = express.Router({ mergeParams: true });
@@ -414,18 +412,22 @@ router.patch(
 
       const updated = await connection.$query().patchAndFetch(updates);
 
-      // If bio or topics were updated, regenerate voice profile
+      // Check if we need to regenerate voice profile
       const hasBio = bio && Object.values(bio).some((v) => v && v.trim());
       const hasTopics = topics_of_interest && topics_of_interest.trim();
-      if (hasBio || hasTopics) {
-        console.log(
-          `[Connection Update] Bio/topics updated, triggering voice profile regeneration`
-        );
-        await updated.markVoiceUpdateStarted();
-        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-          connectedAccountId: connection.id,
-          force: true, // Regenerate even if hash hasn't changed (bio isn't in hash)
-        });
+      // Formatting preferences affect voice profile examples
+      const hasFormattingChange = content_preferences && (
+        content_preferences.emojis !== undefined ||
+        content_preferences.line_breaks !== undefined ||
+        content_preferences.default_length !== undefined
+      );
+
+      if (hasBio || hasTopics || hasFormattingChange) {
+        const queued = await updated.queueVoiceProfileRegenIfOverThreshold({ force: true });
+        if (queued) {
+          const reason = hasFormattingChange ? "formatting preferences" : "bio/topics";
+          console.log(`[Connection Update] ${reason} updated, triggered voice profile regeneration`);
+        }
       }
 
       return res
@@ -526,11 +528,8 @@ router.post(
         sort_order: sort_order !== undefined ? sort_order : 0,
       });
 
-      // Trigger voice profile regeneration
-      await connection.markVoiceUpdateStarted();
-      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-        connectedAccountId: connection.id,
-      });
+      // Trigger voice profile regeneration (if over threshold)
+      await connection.queueVoiceProfileRegenIfOverThreshold();
 
       return res
         .status(201)
@@ -637,12 +636,9 @@ router.patch(
       // Update sample post
       const updated = await samplePost.$query().patchAndFetch(updates);
 
-      // Trigger voice profile regeneration if content changed
+      // Trigger voice profile regeneration if content changed (and over threshold)
       if (content !== undefined) {
-        await connection.markVoiceUpdateStarted();
-        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-          connectedAccountId: connection.id,
-        });
+        await connection.queueVoiceProfileRegenIfOverThreshold();
       }
 
       return res
@@ -689,11 +685,8 @@ router.delete(
       // Delete sample post
       await samplePost.$query().delete();
 
-      // Trigger voice profile regeneration
-      await connection.markVoiceUpdateStarted();
-      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-        connectedAccountId: connection.id,
-      });
+      // Trigger voice profile regeneration (if still over threshold after delete)
+      await connection.queueVoiceProfileRegenIfOverThreshold();
 
       return res.status(200).json(
         successResponse({
@@ -799,11 +792,8 @@ router.post(
         is_active: true,
       });
 
-      // Trigger voice profile regeneration
-      await connection.markVoiceUpdateStarted();
-      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-        connectedAccountId: connection.id,
-      });
+      // Trigger voice profile regeneration (if over threshold)
+      await connection.queueVoiceProfileRegenIfOverThreshold();
 
       return res.status(201).json(successResponse(ruleSerializer(rule)));
     } catch (error) {
@@ -875,12 +865,9 @@ router.patch(
       // Update rule
       const updated = await rule.$query().patchAndFetch(updates);
 
-      // Trigger voice profile regeneration if content or rule_type changed
+      // Trigger voice profile regeneration if content or rule_type changed (and over threshold)
       if (content !== undefined || rule_type !== undefined) {
-        await connection.markVoiceUpdateStarted();
-        await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-          connectedAccountId: connection.id,
-        });
+        await connection.queueVoiceProfileRegenIfOverThreshold();
       }
 
       return res.status(200).json(successResponse(ruleSerializer(updated)));
@@ -925,11 +912,8 @@ router.delete(
       // Delete rule
       await rule.$query().delete();
 
-      // Trigger voice profile regeneration
-      await connection.markVoiceUpdateStarted();
-      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-        connectedAccountId: connection.id,
-      });
+      // Trigger voice profile regeneration (if still over threshold after delete)
+      await connection.queueVoiceProfileRegenIfOverThreshold();
 
       return res
         .status(200)
@@ -1225,10 +1209,8 @@ router.post(
         status: "pending",
       });
 
-      // Queue processing job immediately
-      await ghostQueue.add(JOB_PROCESS_VOICE_FEEDBACK, {
-        feedbackId: voiceFeedback.id,
-      });
+      // Queue feedback processing (if over threshold)
+      await connection.queueVoiceFeedbackProcessingIfOverThreshold(voiceFeedback.id);
 
       // Get current voice profile version (if any)
       const currentProfile = await VoiceProfile.getCurrentProfile(

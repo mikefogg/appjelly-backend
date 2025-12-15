@@ -51,13 +51,13 @@ function buildFormattingInstructions(formatting) {
 
   // Emojis
   if (formatting.emojis === "none") {
-    instructions.push("Do NOT use any emojis");
+    instructions.push("IMPORTANT: Do NOT use any emojis anywhere");
   } else if (formatting.emojis === "sparse") {
-    instructions.push("Use emojis sparingly - at most 1-2 if they feel natural");
+    instructions.push("IMPORTANT: Optionally include 1-2 emojis per post where they feel natural to add visual interest and emphasis");
   } else if (formatting.emojis === "moderate") {
-    instructions.push("Use emojis moderately throughout the post");
+    instructions.push("IMPORTANT: Use 3-5 emojis THROUGHOUT THE POST to add visual interest and emphasis");
   } else if (formatting.emojis === "heavy") {
-    instructions.push("Use emojis liberally to add personality and visual interest");
+    instructions.push("IMPORTANT: Use 5+ emojis THROUGHOUT THE POST to add visual interest and emphasis 🔥✨💡");
   }
 
   // Hashtags - always none for now (removed from UI)
@@ -65,7 +65,9 @@ function buildFormattingInstructions(formatting) {
 
   if (instructions.length === 0) return "";
 
-  return `\n\n📋 FORMATTING REQUIREMENTS:\n${instructions.map(i => `- ${i}`).join("\n")}`;
+  const result = `\n\n📋 FORMATTING REQUIREMENTS:\n${instructions.map(i => `- ${i}`).join("\n")}`;
+  console.log(`[AI] Built formatting instructions from:`, JSON.stringify(formatting), `=> ${instructions.length} rules`);
+  return result;
 }
 
 /**
@@ -198,7 +200,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     formatting = null,
   }) {
     const startTime = Date.now();
-    const model = "gpt-4.1-mini";
+    const model = "gpt-4o-mini";
 
     // Build bio context section
     const hasBio = bio && Object.values(bio).some(v => v && v.trim());
@@ -497,26 +499,21 @@ Return JSON:
    * @returns {Object} Complete voice profile
    */
   async generateVoiceProfile({ samplePosts = [], rules = [], feedback = null, topics = null, bio = null, formatting = null }) {
-    // If no sample posts but we have topics or bio, generate a starter profile
+    // No sample posts = no voice profile (can't meet 50% threshold without samples)
     if (samplePosts.length === 0) {
-      if (!topics && !bio) {
-        return {
-          voice_summary: null,
-          persona_summary: null,
-          sentence_patterns: null,
-          vocabulary_notes: null,
-          tone_markers: null,
-          formatting_habits: null,
-          hard_rules: [],
-          examples: {},
-          confidence: 0,
-          confidence_reasoning: "No sample posts, topics, or bio provided.",
-          usage: null,
-        };
-      }
-
-      // Generate a starter profile based on topics/bio only
-      return await this.generateStarterVoiceProfile({ topics, bio, rules, feedback, formatting });
+      return {
+        voice_summary: null,
+        persona_summary: null,
+        sentence_patterns: null,
+        vocabulary_notes: null,
+        tone_markers: null,
+        formatting_habits: null,
+        hard_rules: [],
+        examples: {},
+        confidence: 0,
+        confidence_reasoning: "No sample posts provided. Add sample posts to build your voice profile.",
+        usage: null,
+      };
     }
 
     const startTime = Date.now();
@@ -621,97 +618,6 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
   },
 
   /**
-   * 5b. GENERATE STARTER VOICE PROFILE (topics/bio only)
-   * Creates a basic voice profile when user only has topics or bio, no samples
-   * Lower confidence but gives us something to work with
-   *
-   * @param {Object} options
-   * @param {string} options.topics - User's topics of interest
-   * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
-   * @param {Array<Object>} options.rules - User's rules { rule_type, content }
-   * @param {string} options.feedback - Optional user feedback
-   * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
-   * @returns {Object} Starter voice profile
-   */
-  async generateStarterVoiceProfile({ topics, bio = null, rules = [], feedback = null, formatting = null }) {
-    const rulesSection = rules.length > 0
-      ? `\nUser's explicit rules:\n${rules.map((r) => `- ${r.rule_type.toUpperCase()}: ${r.content}`).join("\n")}`
-      : "";
-
-    const feedbackSection = feedback
-      ? `\nUser feedback: "${feedback}"`
-      : "";
-
-    // Build bio context section
-    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
-    const bioSection = hasBio ? `
-ABOUT THE USER:
-${bio.what_you_do ? `- What they do: ${bio.what_you_do}` : ""}
-${bio.audience ? `- Their audience: ${bio.audience}` : ""}
-${bio.perspective ? `- Their unique perspective: ${bio.perspective}` : ""}
-${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""}
-` : "";
-
-    const topicsSection = topics ? `Topics they want to post about: ${topics}` : "";
-
-    const prompt = `A user wants to create social media content. Here's what we know about them:
-${bioSection}
-${topicsSection}
-${rulesSection}${feedbackSection}
-
-Since we don't have sample posts from them yet, create a voice profile that:
-- Is conversational and authentic (not corporate)
-- Works well for social media
-- Reflects their background and perspective${hasBio ? " based on the bio info above" : ""}
-- Can be refined later when they provide samples
-
-Return JSON:
-{
-  "voice_summary": "Brief description of their voice based on their background and topics",
-  "persona_summary": "A 1-2 sentence description of WHO this person is based on their bio. Write it as a prompt that starts with 'You are...' Example: 'You are a custom jewelry maker who creates simple gold pieces for teenage girls. You believe less is more, and you ship globally to make beautiful jewelry accessible to everyone.'",
-  "sentence_patterns": "Mix of short punchy sentences and longer flowing ones",
-  "vocabulary_notes": "Casual but smart, no jargon, accessible to everyone",
-  "tone_markers": "Conversational, relatable, not preachy",
-  "formatting_habits": "Standard punctuation, occasional lists",
-  "hard_rules": ["array of things to avoid based on user rules or general best practices"],
-  "confidence": ${hasBio ? "0.4" : "0.3"},
-  "confidence_reasoning": "Starter profile based on ${hasBio ? "bio and topics" : "topics only"} - will improve with sample posts"
-}`;
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "You create starter voice profiles for social media writers. Keep it neutral but engaging - something that can be refined as we learn more about how they actually write.",
-        },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.5,
-      max_tokens: 800,
-    });
-
-    const profile = JSON.parse(response.choices[0].message.content);
-
-    // Generate example posts with this starter profile
-    const { examples } = await this.generateExamples(profile, [], formatting);
-
-    return {
-      voice_summary: profile.voice_summary,
-      persona_summary: profile.persona_summary,
-      sentence_patterns: profile.sentence_patterns,
-      vocabulary_notes: profile.vocabulary_notes,
-      tone_markers: profile.tone_markers,
-      formatting_habits: profile.formatting_habits,
-      hard_rules: profile.hard_rules || [],
-      examples,
-      confidence: hasBio ? 0.4 : 0.3, // Slightly higher confidence if we have bio info
-      confidence_reasoning: profile.confidence_reasoning || `Starter profile based on ${hasBio ? "bio and topics" : "topics only"} - add sample posts to improve accuracy`,
-    };
-  },
-
-  /**
    * 6. GENERATE EXAMPLES
    * Generate example posts using a voice profile and reference samples
    *
@@ -723,6 +629,8 @@ Return JSON:
   async generateExamples(profile, samplePosts = [], formatting = null) {
     const startTime = Date.now();
     const model = "gpt-4.1-mini";
+
+    console.log(`[AI.generateExamples] Formatting received:`, JSON.stringify(formatting));
 
     const examplePrompts = {
       hot_take: "Write a contrarian opinion about morning routines",

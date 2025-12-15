@@ -3,6 +3,7 @@
  * Tracks AI usage and costs to Mixpanel
  */
 import { trackEvent } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 
 // Pricing per 1M tokens (updated Dec 2024)
 const AI_PRICING = {
@@ -64,7 +65,7 @@ export const trackAICost = (accountId, {
 }) => {
   const cost = calculateCost(model, inputTokens, outputTokens);
 
-  trackEvent(accountId, "AI Usage", {
+  trackEvent(accountId, EVENTS.AI_USAGE, {
     // Operation info
     operation,
     model,

@@ -9,6 +9,7 @@ import rateLimiter from "#src/services/rate-limiter.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 import AI from "#src/services/ai/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 
 export const JOB_SYNC_NETWORK = "sync-network";
 
@@ -241,7 +242,7 @@ export default async function syncNetwork(job) {
 
     // Track sync completion
     const durationSeconds = (Date.now() - startTime) / 1000;
-    trackEvent(connectedAccount.account_id, "Network Sync Completed", {
+    trackEvent(connectedAccount.account_id, EVENTS.NETWORK_SYNC_COMPLETED, {
       connected_account_id: connectedAccountId,
       platform: connectedAccount.platform,
       profiles_synced: profilesCreated,

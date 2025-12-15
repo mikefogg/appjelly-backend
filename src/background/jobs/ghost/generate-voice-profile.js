@@ -11,6 +11,7 @@ import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/ind
 import { trackEvent } from "#src/helpers/track.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
+import { EVENTS } from "#src/utils/constants.js";
 
 export const JOB_GENERATE_VOICE_PROFILE = "generate-voice-profile";
 
@@ -53,6 +54,7 @@ export default async function generateVoiceProfile(job) {
     const reason = job.data.reason;
     if (reason !== "subscription_activated" && connectedAccount.hasReachedGenerationLimit(account)) {
       console.log(`[Generate Voice Profile] Free user at generation limit for account ${connectedAccount.account_id} - skipping`);
+      await connectedAccount.markVoiceUpdateCompleted(); // Clear the flag
       return {
         success: false,
         skipped: true,
@@ -83,11 +85,24 @@ export default async function generateVoiceProfile(job) {
         .orderBy("created_at", "asc"),
     ]);
 
-    // Get topics and bio from connected account for starter profile if no samples
+    // Get topics and bio from connected account for context
     const topics = connectedAccount.topics_of_interest;
     const bio = connectedAccount.bio;
 
     console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback, topics: ${topics ? "yes" : "no"}, bio: ${bio && Object.keys(bio).length > 0 ? "yes" : "no"}`);
+
+    // Check if voice match score meets threshold before generating
+    const preCheckScore = await connectedAccount.getVoiceMatchScore();
+    if (preCheckScore < FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD) {
+      console.log(`[Generate Voice Profile] Voice match ${preCheckScore}% < ${FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD}% threshold - skipping`);
+      await connectedAccount.markVoiceUpdateCompleted(); // Clear the flag
+      return {
+        success: false,
+        skipped: true,
+        reason: `Voice match score (${preCheckScore}%) is below ${FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD}% threshold. Add more samples, rules, or complete your bio.`,
+        voice_match_score: preCheckScore,
+      };
+    }
 
     // Generate input hash
     const inputHash = generateInputHash(samplePosts, rules);
@@ -97,6 +112,7 @@ export default async function generateVoiceProfile(job) {
       const currentProfile = await VoiceProfile.getCurrentProfile(connectedAccountId);
       if (currentProfile && currentProfile.input_hash === inputHash) {
         console.log(`[Generate Voice Profile] No changes detected, skipping regeneration`);
+        await connectedAccount.markVoiceUpdateCompleted(); // Clear the flag
         return {
           success: true,
           skipped: true,
@@ -124,6 +140,7 @@ export default async function generateVoiceProfile(job) {
       line_breaks: contentPrefs.line_breaks,
       emojis: contentPrefs.emojis,
     };
+    console.log(`[Generate Voice Profile] Formatting preferences:`, JSON.stringify(formatting));
 
     // Generate voice profile with AI
     console.log(`[Generate Voice Profile] Calling AI.generateVoiceProfile...`);
@@ -160,6 +177,7 @@ export default async function generateVoiceProfile(job) {
     job.updateProgress(80);
 
     // Update profile with generated data and mark as active
+    // Use formula-based voice match score, not AI's confidence
     await newProfile.$query().patch({
       status: "active",
       voice_summary: profileData.voice_summary,
@@ -170,7 +188,7 @@ export default async function generateVoiceProfile(job) {
       formatting_habits: profileData.formatting_habits,
       hard_rules: profileData.hard_rules,
       examples: profileData.examples,
-      confidence: profileData.confidence,
+      confidence: preCheckScore / 100, // Normalized 0-1 for storage
       confidence_reasoning: profileData.confidence_reasoning,
     });
 
@@ -213,17 +231,17 @@ export default async function generateVoiceProfile(job) {
 
     console.log(
       `[Generate Voice Profile] ✅ Profile v${newProfile.version} active ` +
-        `(confidence: ${(profileData.confidence * 100).toFixed(0)}%)`
+        `(voice match: ${preCheckScore}%)`
     );
 
     // Track voice profile generation
     const durationSeconds = (Date.now() - startTime) / 1000;
-    trackEvent(connectedAccount.account_id, "Voice Profile Generated", {
+    trackEvent(connectedAccount.account_id, EVENTS.VOICE_PROFILE_GENERATED, {
       connected_account_id: connectedAccountId,
       platform: connectedAccount.platform,
       profile_id: newProfile.id,
       version: newProfile.version,
-      confidence: profileData.confidence,
+      confidence: preCheckScore / 100, // Normalize to 0-1 for consistency
       sample_count: samplePosts.length,
       rule_count: rules.length,
       feedback_processed: pendingFeedback.length,
@@ -235,8 +253,8 @@ export default async function generateVoiceProfile(job) {
       success: true,
       profile_id: newProfile.id,
       version: newProfile.version,
-      confidence: profileData.confidence,
-      confidence_reasoning: profileData.confidence_reasoning,
+      confidence: preCheckScore / 100, // Normalized 0-1
+      voice_match_score: preCheckScore, // Percentage 0-100
       sample_count: samplePosts.length,
       rule_count: rules.length,
       pending_feedback_processed: pendingFeedback.length,

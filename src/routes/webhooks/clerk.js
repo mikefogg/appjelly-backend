@@ -3,6 +3,7 @@ import { Webhook } from "svix";
 import { raw } from "objection";
 import { Account, App } from "#src/models/index.js";
 import { formatError, trackEvent, trackEventForAccounts } from "#src/helpers/index.js";
+import { EVENTS } from "#src/utils/constants.js";
 import {
   notificationQueue,
   analyticsQueue,
@@ -92,7 +93,7 @@ const handleUserCreated = async (userData) => {
     const email = userData.email_addresses?.[0]?.email_address;
 
     // Track with clerk_id since no account exists yet
-    trackEvent(userData.id, "Clerk User Created", {
+    trackEvent(userData.id, EVENTS.CLERK_USER_CREATED, {
       clerk_id: userData.id,
       email,
       sign_up_method: signUpMethod,

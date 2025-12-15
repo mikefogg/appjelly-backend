@@ -9,6 +9,7 @@
 import { Account, ConnectedAccount, Subscription } from "#src/models/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
@@ -132,7 +133,7 @@ export default async function generateSuggestionsAutomated(job) {
         });
 
         // Track for this account
-        trackEvent(connection.account_id, "Suggestions Auto-Generated", {
+        trackEvent(connection.account_id, EVENTS.SUGGESTIONS_AUTO_GENERATED, {
           connected_account_id: connection.id,
           platform: connection.platform,
           suggestion_count: 3,

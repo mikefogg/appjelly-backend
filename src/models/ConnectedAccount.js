@@ -2,6 +2,7 @@ import BaseModel from "#src/models/BaseModel.js";
 import Account from "#src/models/Account.js";
 import App from "#src/models/App.js";
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
+import { calculateVoiceMatchScore } from "#src/utils/voice-match.js";
 import NetworkProfile from "#src/models/NetworkProfile.js";
 import NetworkPost from "#src/models/NetworkPost.js";
 import PostSuggestion from "#src/models/PostSuggestion.js";
@@ -975,6 +976,55 @@ class ConnectedAccount extends BaseModel {
     });
   }
 
+  /**
+   * Only mark voice update started if connection meets voice match threshold.
+   * Returns true if threshold met and flag was set, false otherwise.
+   * Use this before queueing voice profile jobs to avoid setting flags unnecessarily.
+   */
+  async markVoiceUpdateStartedIfOverThreshold() {
+    const meetsThreshold = await this.meetsVoiceThreshold();
+    if (meetsThreshold) {
+      await this.markVoiceUpdateStarted();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Queue voice profile regeneration if connection meets threshold.
+   * Sets flag and queues job atomically. Returns true if job was queued.
+   * @param {Object} options - Additional options for the job (e.g., force: true)
+   */
+  async queueVoiceProfileRegenIfOverThreshold(options = {}) {
+    if (await this.meetsVoiceThreshold()) {
+      await this.markVoiceUpdateStarted();
+      const { ghostQueue, JOB_GENERATE_VOICE_PROFILE } = await import("#src/background/queues/index.js");
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: this.id,
+        ...options,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Queue voice feedback processing if connection meets threshold.
+   * Sets flag and queues job atomically. Returns true if job was queued.
+   * @param {string} feedbackId - The ID of the VoiceFeedback record to process
+   */
+  async queueVoiceFeedbackProcessingIfOverThreshold(feedbackId) {
+    if (await this.meetsVoiceThreshold()) {
+      await this.markVoiceUpdateStarted();
+      const { ghostQueue, JOB_PROCESS_VOICE_FEEDBACK } = await import("#src/background/queues/index.js");
+      await ghostQueue.add(JOB_PROCESS_VOICE_FEEDBACK, {
+        feedbackId,
+      });
+      return true;
+    }
+    return false;
+  }
+
   async markVoiceUpdateCompleted() {
     return this.$query().patch({
       voice_update_started_at: null,
@@ -1059,7 +1109,7 @@ class ConnectedAccount extends BaseModel {
    */
   async getVoiceMatchScore() {
     // Fetch all counts in parallel
-    const [samplePostsCount, rulesCount, feedbackCount, curatedTopicsCount] = await Promise.all([
+    const [sampleCount, rulesCount, feedbackCount, curatedTopicsCount] = await Promise.all([
       SamplePost.query().where("connected_account_id", this.id).resultSize(),
       Rule.query().where("connected_account_id", this.id).where("is_active", true).resultSize(),
       VoiceFeedback.query().where("connected_account_id", this.id).resultSize(),
@@ -1069,22 +1119,11 @@ class ConnectedAccount extends BaseModel {
     const topicsCount = this.getTopicsCount(curatedTopicsCount);
     const bio = this.bio || {};
 
-    // Calculate individual scores
-    const sampleScore = Math.min(samplePostsCount * 5, 50);
-    const feedbackScore = Math.min(feedbackCount * 5, 50);
-    const rulesScore = Math.min(rulesCount * 2, 10);
-    const topicsScore = Math.min(topicsCount * 5, 15);
+    const score = calculateVoiceMatchScore({ sampleCount, feedbackCount, rulesCount, topicsCount, bio });
 
-    // Count filled bio fields
-    const bioFields = ['what_you_do', 'audience', 'perspective', 'differentiator'];
-    const filledBioCount = bioFields.filter(f => bio[f]?.trim()).length;
-    const bioScore = filledBioCount * 5;
+    console.log(`[getVoiceMatchScore] id=${this.id} samples=${sampleCount} rules=${rulesCount} topics=${topicsCount} feedback=${feedbackCount} => ${score}%`);
 
-    const totalScore = Math.min(sampleScore + feedbackScore + rulesScore + bioScore + topicsScore, 100);
-
-    console.log(`[getVoiceMatchScore] id=${this.id} samples=${samplePostsCount}(${sampleScore}) rules=${rulesCount}(${rulesScore}) topics=${topicsCount}(${topicsScore}) feedback=${feedbackCount}(${feedbackScore}) bio=${filledBioCount}(${bioScore}) => ${totalScore}%`);
-
-    return totalScore;
+    return score;
   }
 
   /**

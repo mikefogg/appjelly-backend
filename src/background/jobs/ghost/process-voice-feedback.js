@@ -3,9 +3,10 @@
  * Takes user feedback and updates the voice profile accordingly
  */
 
-import { VoiceFeedback, VoiceProfile, SamplePost, ConnectedAccount, Subscription } from "#src/models/index.js";
+import { Account, VoiceFeedback, VoiceProfile, SamplePost, ConnectedAccount } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { ghostQueue, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_PROCESS_VOICE_FEEDBACK = "process-voice-feedback";
 
@@ -31,25 +32,47 @@ export default async function processVoiceFeedback(job) {
       };
     }
 
-    // Check for active subscription
     const connectedAccount = await ConnectedAccount.query().findById(feedback.connected_account_id);
     if (!connectedAccount) {
       throw new Error(`Connected account ${feedback.connected_account_id} not found`);
     }
 
-    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
-    if (!activeSubscription) {
-      console.log(`[Process Voice Feedback] No active subscription for account ${connectedAccount.account_id} - skipping`);
-      await feedback.markFailed("No active subscription");
+    // Load account for limit checks
+    const account = await Account.query()
+      .findById(connectedAccount.account_id)
+      .withGraphFetched("subscriptions");
+
+    if (!account) {
+      throw new Error(`Account ${connectedAccount.account_id} not found`);
+    }
+
+    // Check voice match threshold before processing
+    const voiceMatchScore = await connectedAccount.getVoiceMatchScore();
+    if (voiceMatchScore < FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD) {
+      console.log(`[Process Voice Feedback] Voice match ${voiceMatchScore}% < ${FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD}% threshold - skipping`);
+      await feedback.markFailed(`Voice match score (${voiceMatchScore}%) below threshold`);
       return {
         success: false,
         skipped: true,
-        reason: "No active subscription",
+        reason: `Voice match score (${voiceMatchScore}%) is below ${FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD}% threshold`,
+        voice_match_score: voiceMatchScore,
+      };
+    }
+
+    // Check if free user has reached generation limit
+    if (connectedAccount.hasReachedGenerationLimit(account)) {
+      console.log(`[Process Voice Feedback] Free user at generation limit for account ${account.id} - skipping`);
+      await feedback.markFailed(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED);
+      return {
+        success: false,
+        skipped: true,
+        reason: FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED,
       };
     }
 
     // Mark as processing
     await feedback.markProcessing();
+    await connectedAccount.markVoiceUpdateStarted();
     job.updateProgress(10);
 
     // Get current voice profile
@@ -57,6 +80,7 @@ export default async function processVoiceFeedback(job) {
 
     if (!currentProfile) {
       // No existing profile - trigger voice generation (it will pick up this pending feedback)
+      // The generate-voice-profile job will handle the voice update flag
       console.log(`[Process Voice Feedback] No voice profile exists, triggering generation`);
       await feedback.$query().patch({ status: "pending" });
 
@@ -108,15 +132,17 @@ export default async function processVoiceFeedback(job) {
 
     // Generate new examples with the updated voice + sample posts as reference
     console.log(`[Process Voice Feedback] Generating new examples...`);
-    const examples = await AI.generateExamples(updatedProfile, samplePosts);
+    const contentPrefs = connectedAccount.getContentPreferences();
+    const formatting = {
+      line_breaks: contentPrefs.line_breaks,
+      emojis: contentPrefs.emojis,
+    };
+    const examples = await AI.generateExamples(updatedProfile, samplePosts, formatting);
 
     job.updateProgress(80);
 
-    // Calculate new confidence
-    const newConfidence = Math.min(
-      (currentProfile.confidence || 0.5) + (updatedProfile.confidence_delta || 0.02),
-      0.98
-    );
+    // Get current voice match score (formula-based, not AI-based)
+    const currentVoiceMatchScore = await connectedAccount.getVoiceMatchScore();
 
     // Update profile with generated data and mark as active
     await newProfile.$query().patch({
@@ -128,7 +154,7 @@ export default async function processVoiceFeedback(job) {
       formatting_habits: updatedProfile.formatting_habits,
       hard_rules: updatedProfile.hard_rules,
       examples,
-      confidence: newConfidence,
+      confidence: currentVoiceMatchScore / 100, // Normalized 0-1 for storage
       confidence_reasoning: `Updated based on feedback: "${feedback.feedback.substring(0, 50)}..." - ${updatedProfile.changes_made}`,
     });
 
@@ -137,24 +163,26 @@ export default async function processVoiceFeedback(job) {
     // Mark feedback as processed
     await feedback.markProcessed(newProfile.version, updatedProfile.changes_made);
 
+    // Clear the voice update flag
+    await connectedAccount.markVoiceUpdateCompleted();
+
     job.updateProgress(100);
 
-    console.log(`[Process Voice Feedback] ✅ Created profile v${newProfile.version} (confidence: ${(newConfidence * 100).toFixed(0)}%)`);
+    console.log(`[Process Voice Feedback] ✅ Created profile v${newProfile.version} (voice match: ${currentVoiceMatchScore}%)`);
 
     return {
       success: true,
       feedback_id: feedbackId,
       old_version: currentProfile.version,
       new_version: newProfile.version,
-      old_confidence: currentProfile.confidence,
-      new_confidence: newConfidence,
+      voice_match_score: currentVoiceMatchScore,
       changes_made: updatedProfile.changes_made,
     };
 
   } catch (error) {
     console.error(`[Process Voice Feedback] Error:`, error);
 
-    // Cleanup: mark feedback as failed and delete any generating profile
+    // Cleanup: mark feedback as failed, delete any generating profile, clear voice update flag
     try {
       const feedback = await VoiceFeedback.query().findById(feedbackId);
       if (feedback) {
@@ -166,6 +194,11 @@ export default async function processVoiceFeedback(job) {
         if (generating) {
           await generating.$query().delete();
           console.log(`[Process Voice Feedback] Cleaned up generating profile ${generating.id}`);
+        }
+        // Clear the voice update flag
+        const conn = await ConnectedAccount.query().findById(feedback.connected_account_id);
+        if (conn) {
+          await conn.markVoiceUpdateCompleted();
         }
       }
     } catch (updateError) {

@@ -13,11 +13,12 @@ import { getContentTypeSequence } from "#src/config/content-types.js";
 import { getTargetLength } from "#src/config/platform-lengths.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
-const VOICE_UPDATE_RETRY_DELAY_MS = 10000; // 10 seconds
+const VOICE_UPDATE_RETRY_DELAY_MS = 5000; // 5 seconds
 
 export default async function generateSuggestions(job) {
   const { connectedAccountId, suggestionCount = 3 } = job.data;
@@ -77,16 +78,35 @@ export default async function generateSuggestions(job) {
     ]);
 
     if (generatingProfile || pendingFeedback) {
-      console.log(`[Generate Suggestions] Voice update in progress, rescheduling in ${VOICE_UPDATE_RETRY_DELAY_MS}ms`);
-      // Don't clear the flag - we're rescheduling, not skipping
-      await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, job.data, {
-        delay: VOICE_UPDATE_RETRY_DELAY_MS,
-      });
-      return {
-        success: true,
-        delayed: true,
-        reason: "Voice update in progress - rescheduled",
-      };
+      const fifteenSecondsAgo = new Date(Date.now() - 15 * 1000);
+
+      // Check if the generating profile is stale (> 15 seconds old)
+      const isProfileStale = generatingProfile && new Date(generatingProfile.created_at) < fifteenSecondsAgo;
+      const isFeedbackStale = pendingFeedback && new Date(pendingFeedback.created_at) < fifteenSecondsAgo;
+
+      // Clean up any stale items
+      if (isProfileStale) {
+        console.log(`[Generate Suggestions] Found stale generating profile ${generatingProfile.id} - cleaning up`);
+        await generatingProfile.$query().delete();
+      }
+      if (isFeedbackStale) {
+        console.log(`[Generate Suggestions] Found stale pending feedback ${pendingFeedback.id} - marking failed`);
+        await pendingFeedback.$query().patch({ status: "failed", failed_reason: "Timed out" });
+      }
+
+      // If both were stale (or didn't exist), continue. Otherwise reschedule.
+      const shouldReschedule = (generatingProfile && !isProfileStale) || (pendingFeedback && !isFeedbackStale);
+      if (shouldReschedule) {
+        console.log(`[Generate Suggestions] Voice update in progress, rescheduling in ${VOICE_UPDATE_RETRY_DELAY_MS}ms`);
+        await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, job.data, {
+          delay: VOICE_UPDATE_RETRY_DELAY_MS,
+        });
+        return {
+          success: true,
+          delayed: true,
+          reason: "Voice update in progress - rescheduled",
+        };
+      }
     }
 
     // Get voice profile for this account
@@ -163,6 +183,8 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
       line_breaks: contentPrefs.line_breaks,
       emojis: contentPrefs.emojis,
     };
+    console.log(`[Generate Suggestions] Formatting preferences:`, JSON.stringify(formatting));
+    console.log(`[Generate Suggestions] Full content_preferences:`, JSON.stringify(contentPrefs));
 
     const { posts: results, usage } = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
@@ -242,7 +264,7 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
 
   // Track suggestions generated
   const durationSeconds = (Date.now() - startTime) / 1000;
-  trackEvent(connectedAccount.account_id, "Suggestions Generated", {
+  trackEvent(connectedAccount.account_id, EVENTS.SUGGESTIONS_GENERATED, {
     connected_account_id: connectedAccount.id,
     platform: connectedAccount.platform,
     suggestion_count: savedCount,

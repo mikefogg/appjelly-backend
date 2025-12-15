@@ -3,6 +3,7 @@
  * Standardizes all connected account response shapes
  */
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
+import { calculateVoiceMatchScore } from "#src/utils/voice-match.js";
 
 /**
  * Basic connection info for lists and embedded responses
@@ -40,34 +41,15 @@ export const connectionListSerializer = (connection, syncInfo) => ({
 });
 
 /**
- * Calculate voice confidence from stats
- * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%),
- * 5% per bio field (max 20%), 5% per topic (max 15%), capped at 100%
- */
-const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount, bio = {}, topicsCount = 0) => {
-  const sampleScore = Math.min(sampleCount * 5, 50);
-  const feedbackScore = Math.min(feedbackCount * 5, 50);
-  const rulesScore = Math.min(rulesCount * 2, 10);
-  const topicsScore = Math.min(topicsCount * 5, 15); // 5% per topic, max 15%
-
-  // Count filled bio fields (what_you_do, audience, perspective, differentiator)
-  const bioFields = ['what_you_do', 'audience', 'perspective', 'differentiator'];
-  const filledBioCount = bioFields.filter(field => bio[field] && bio[field].trim()).length;
-  const bioScore = filledBioCount * 5; // 5% per field, max 20%
-
-  return Math.min(sampleScore + feedbackScore + rulesScore + bioScore + topicsScore, 100);
-};
-
-/**
  * Full connection details (GET /connections/:id)
  */
 export const connectionDetailSerializer = (connection, { recommendations, syncInfo, voiceStats, account }) => {
-  const samplePostsCount = connection.sample_posts?.length || 0;
+  const sampleCount = connection.sample_posts?.length || 0;
   const rulesCount = voiceStats?.rulesCount || 0;
   const feedbackCount = voiceStats?.feedbackCount || 0;
   const topicsCount = voiceStats?.topicsCount || 0;
   const bio = connection.bio || {};
-  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount, bio, topicsCount);
+  const voiceConfidence = calculateVoiceMatchScore({ sampleCount, feedbackCount, rulesCount, topicsCount, bio });
 
   return {
     id: connection.id,
@@ -94,7 +76,7 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
       created_at: connection.voiceProfile.created_at,
     } : null,
     voice_stats: {
-      sample_posts_count: samplePostsCount,
+      sample_posts_count: sampleCount,
       rules_count: rulesCount,
       feedback_count: feedbackCount,
       topics_count: topicsCount,

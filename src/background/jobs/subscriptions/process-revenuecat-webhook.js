@@ -2,6 +2,7 @@ import { raw } from "objection";
 import { Account, Subscription, WebhookEvent, ConnectedAccount } from "#src/models/index.js";
 import { addDays, addYears } from "date-fns";
 import { trackEvent, trackEventForAccounts } from "#src/helpers/track.js";
+import { EVENTS } from "#src/utils/constants.js";
 import { ghostQueue, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
 
 const RC_ANON = "$RCAnonymousID";
@@ -229,7 +230,7 @@ const handleTransfer = async (event, appId, jobKey) => {
 
   // Track transfer event for recipient account
   if (toAccount) {
-    trackEvent(toAccount.id, "Subscription Transfer Received", {
+    trackEvent(toAccount.id, EVENTS.SUBSCRIPTION_TRANSFER_RECEIVED, {
       ...buildEventProperties(event),
       transferred_from_aliases: fromAliases,
       transferred_to_aliases: toAliases,
@@ -253,7 +254,7 @@ const handleTransfer = async (event, appId, jobKey) => {
       .first();
 
     if (fromAccount) {
-      trackEvent(fromAccount.id, "Subscription Transfer Sent", {
+      trackEvent(fromAccount.id, EVENTS.SUBSCRIPTION_TRANSFER_SENT, {
         ...buildEventProperties(event),
         transferred_from_aliases: fromAliases,
         transferred_to_aliases: toAliases,
