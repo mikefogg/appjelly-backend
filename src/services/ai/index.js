@@ -11,6 +11,17 @@ const openai = new OpenAI({
 });
 
 /**
+ * Extract usage data from OpenAI response in a consistent format
+ */
+const extractUsageData = (response, model, startTime) => ({
+  model,
+  input_tokens: response.usage?.prompt_tokens || 0,
+  output_tokens: response.usage?.completion_tokens || 0,
+  total_tokens: response.usage?.total_tokens || 0,
+  duration_ms: Date.now() - startTime,
+});
+
+/**
  * Get model-specific parameters
  * gpt-5 models use max_completion_tokens and don't support temperature
  */
@@ -118,8 +129,11 @@ const AI = {
    */
   async analyzeVoice({ samplePosts = [], rules = [], feedback = null }) {
     if (samplePosts.length === 0) {
-      return { voice: null, topics: null, confidence: 0 };
+      return { voice: null, topics: null, confidence: 0, usage: null };
     }
+
+    const startTime = Date.now();
+    const model = "gpt-4o-mini";
 
     const prompt = `Analyze these ${samplePosts.length} social media posts and extract:
 1. A concise voice description (2-3 sentences describing tone, style, personality, word choice, sentence structure)
@@ -133,7 +147,7 @@ ${feedback ? `\nUser feedback on their voice: ${feedback}` : ""}
 Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "comma-separated topics under 200 chars", "confidence": 0.0-1.0 }`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -153,6 +167,9 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     const baseConfidence = result.confidence || 0.5;
     const sampleBonus = Math.min(samplePosts.length * 0.1, 0.4);
     result.confidence = Math.min(baseConfidence + sampleBonus, 0.95);
+
+    // Add usage data
+    result.usage = extractUsageData(response, model, startTime);
 
     return result;
   },
@@ -180,6 +197,9 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     maxLength = 280,
     formatting = null,
   }) {
+    const startTime = Date.now();
+    const model = "gpt-4.1-mini";
+
     // Build bio context section
     const hasBio = bio && Object.values(bio).some(v => v && v.trim());
     const bioSection = hasBio ? `
@@ -208,7 +228,7 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     const maxTokens = Math.min(Math.max(estimatedTokens, 500), 4000);
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -222,11 +242,12 @@ ${bio.differentiator ? `- What makes them different: ${bio.differentiator}` : ""
     return {
       content,
       metadata: {
-        model: "gpt-4o-mini",
+        model,
         tokens: response.usage?.total_tokens || 0,
         platform,
         contentType,
       },
+      usage: extractUsageData(response, model, startTime),
     };
   },
 
@@ -324,12 +345,15 @@ Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "conten
 
     console.log(`[AI.generatePosts] Prompt:\n${userPrompt}`);
 
+    const startTime = Date.now();
+    const model = "gpt-4.1-mini";
+
     // Scale max_tokens based on target length and count (roughly 4 chars per token + JSON overhead)
     const estimatedTokens = Math.ceil((maxLength * count) / 3) + 200;
     const maxTokens = Math.min(Math.max(estimatedTokens, 1500), 8000);
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4.1",
+      model,
       response_format: { type: "json_object" },
       messages: [
         { role: "user", content: userPrompt },
@@ -340,16 +364,20 @@ Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "conten
 
     const result = JSON.parse(response.choices[0].message.content);
     const posts = result.posts || [];
+    const usage = extractUsageData(response, model, startTime);
 
-    return posts.map((post) => ({
-      content: post.content,
-      content_type: post.content_type,
-      metadata: {
-        model: "gpt-4.1",
-        tokens: Math.round((response.usage?.total_tokens || 0) / posts.length),
-        platform,
-      },
-    }));
+    return {
+      posts: posts.map((post) => ({
+        content: post.content,
+        content_type: post.content_type,
+        metadata: {
+          model,
+          tokens: Math.round((response.usage?.total_tokens || 0) / posts.length),
+          platform,
+        },
+      })),
+      usage,
+    };
   },
 
   /**
@@ -465,9 +493,10 @@ Return JSON:
    * @param {string} options.feedback - Optional user feedback on previous profile
    * @param {string} options.topics - User's topics of interest
    * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
+   * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
    * @returns {Object} Complete voice profile
    */
-  async generateVoiceProfile({ samplePosts = [], rules = [], feedback = null, topics = null, bio = null }) {
+  async generateVoiceProfile({ samplePosts = [], rules = [], feedback = null, topics = null, bio = null, formatting = null }) {
     // If no sample posts but we have topics or bio, generate a starter profile
     if (samplePosts.length === 0) {
       if (!topics && !bio) {
@@ -482,12 +511,16 @@ Return JSON:
           examples: {},
           confidence: 0,
           confidence_reasoning: "No sample posts, topics, or bio provided.",
+          usage: null,
         };
       }
 
       // Generate a starter profile based on topics/bio only
-      return await this.generateStarterVoiceProfile({ topics, bio, rules, feedback });
+      return await this.generateStarterVoiceProfile({ topics, bio, rules, feedback, formatting });
     }
+
+    const startTime = Date.now();
+    const model = "gpt-4o-mini";
 
     // Step 1: Analyze voice characteristics
     // Format posts to preserve line breaks and formatting
@@ -540,7 +573,7 @@ Analyze and return JSON with these fields:
 Be specific and actionable. Another AI will use this to write in their voice.`;
 
     const analysisResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model,
       response_format: { type: "json_object" },
       messages: [
         {
@@ -554,6 +587,7 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
       max_tokens: 1500,
     });
 
+    const analysisUsage = extractUsageData(analysisResponse, model, startTime);
     const profile = JSON.parse(analysisResponse.choices[0].message.content);
 
     // Adjust confidence based on sample count
@@ -565,7 +599,7 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
     );
 
     // Step 2: Generate example posts using the analyzed voice + original samples as reference
-    const examples = await this.generateExamples(profile, samplePosts);
+    const { examples, usage: examplesUsage } = await this.generateExamples(profile, samplePosts, formatting);
 
     return {
       voice_summary: profile.voice_summary,
@@ -578,6 +612,11 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
       examples,
       confidence: profile.confidence,
       confidence_reasoning: profile.confidence_reasoning,
+      // Return separate usage for each AI call so they can be tracked independently
+      usages: [
+        { ...analysisUsage, operation: "voice_analysis" },
+        { ...examplesUsage, operation: "voice_examples" },
+      ],
     };
   },
 
@@ -591,9 +630,10 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
    * @param {Object} options.bio - Structured bio Q&A { what_you_do, audience, perspective, differentiator }
    * @param {Array<Object>} options.rules - User's rules { rule_type, content }
    * @param {string} options.feedback - Optional user feedback
+   * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
    * @returns {Object} Starter voice profile
    */
-  async generateStarterVoiceProfile({ topics, bio = null, rules = [], feedback = null }) {
+  async generateStarterVoiceProfile({ topics, bio = null, rules = [], feedback = null, formatting = null }) {
     const rulesSection = rules.length > 0
       ? `\nUser's explicit rules:\n${rules.map((r) => `- ${r.rule_type.toUpperCase()}: ${r.content}`).join("\n")}`
       : "";
@@ -655,7 +695,7 @@ Return JSON:
     const profile = JSON.parse(response.choices[0].message.content);
 
     // Generate example posts with this starter profile
-    const examples = await this.generateExamples(profile, []);
+    const { examples } = await this.generateExamples(profile, [], formatting);
 
     return {
       voice_summary: profile.voice_summary,
@@ -677,9 +717,13 @@ Return JSON:
    *
    * @param {Object} profile - Voice profile fields
    * @param {Array<Object>} samplePosts - Original sample posts for reference
+   * @param {Object} formatting - Formatting preferences { line_breaks, emojis }
    * @returns {Object} { hot_take, story, insight }
    */
-  async generateExamples(profile, samplePosts = []) {
+  async generateExamples(profile, samplePosts = [], formatting = null) {
+    const startTime = Date.now();
+    const model = "gpt-4.1-mini";
+
     const examplePrompts = {
       hot_take: "Write a contrarian opinion about morning routines",
       story: "Write a short personal anecdote about a recent small failure or mistake",
@@ -692,6 +736,9 @@ Return JSON:
       ? `REFERENCE - Here's how this person actually writes:\n\n${referencePosts.map((p, i) => `--- SAMPLE ${i + 1} ---\n${p.content}\n--- END SAMPLE ${i + 1} ---`).join("\n\n")}\n\nMatch the voice profile below, but more importantly, match the FEEL of these reference posts. Notice the rhythm, the line breaks, the attitude, the directness.\n\n`
       : "";
 
+    // Build formatting instructions
+    const formattingSection = buildFormattingInstructions(formatting);
+
     const examplesPrompt = `${referenceSection}VOICE PROFILE:
 - Summary: ${profile.voice_summary}
 - Sentence patterns: ${profile.sentence_patterns}
@@ -699,6 +746,7 @@ Return JSON:
 - Tone: ${profile.tone_markers}
 - Formatting: ${profile.formatting_habits}
 - Never: ${(profile.hard_rules || []).join(", ") || "N/A"}
+${formattingSection}
 
 Write 3 posts (each under 280 characters). Return ONLY the post content, no labels:
 
@@ -713,7 +761,6 @@ Return JSON:
   "insight": { "prompt": "${examplePrompts.insight}", "output": "post content matching the reference style" }
 }`;
 
-    const model = "gpt-4.1-mini";
     const response = await openai.chat.completions.create({
       model,
       response_format: { type: "json_object" },
@@ -731,7 +778,11 @@ Return JSON:
     const content = response.choices[0].message.content;
     console.log(`[generateExamples] Response:`, content);
     console.log(`[generateExamples] Finish reason:`, response.choices[0].finish_reason);
-    return JSON.parse(content);
+
+    return {
+      examples: JSON.parse(content),
+      usage: extractUsageData(response, model, startTime),
+    };
   },
 
   /**

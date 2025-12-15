@@ -2,6 +2,7 @@
  * Connection Serializers
  * Standardizes all connected account response shapes
  */
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 /**
  * Basic connection info for lists and embedded responses
@@ -40,19 +41,21 @@ export const connectionListSerializer = (connection, syncInfo) => ({
 
 /**
  * Calculate voice confidence from stats
- * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%), 5% per bio field (max 20%), capped at 100%
+ * 5% per sample (max 50%), 5% per feedback (max 50%), 2% per rule (max 10%),
+ * 5% per bio field (max 20%), 5% per topic (max 15%), capped at 100%
  */
-const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount, bio = {}) => {
+const calculateVoiceConfidence = (sampleCount, feedbackCount, rulesCount, bio = {}, topicsCount = 0) => {
   const sampleScore = Math.min(sampleCount * 5, 50);
   const feedbackScore = Math.min(feedbackCount * 5, 50);
   const rulesScore = Math.min(rulesCount * 2, 10);
+  const topicsScore = Math.min(topicsCount * 5, 15); // 5% per topic, max 15%
 
   // Count filled bio fields (what_you_do, audience, perspective, differentiator)
   const bioFields = ['what_you_do', 'audience', 'perspective', 'differentiator'];
   const filledBioCount = bioFields.filter(field => bio[field] && bio[field].trim()).length;
   const bioScore = filledBioCount * 5; // 5% per field, max 20%
 
-  return Math.min(sampleScore + feedbackScore + rulesScore + bioScore, 100);
+  return Math.min(sampleScore + feedbackScore + rulesScore + bioScore + topicsScore, 100);
 };
 
 /**
@@ -62,8 +65,9 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
   const samplePostsCount = connection.sample_posts?.length || 0;
   const rulesCount = voiceStats?.rulesCount || 0;
   const feedbackCount = voiceStats?.feedbackCount || 0;
+  const topicsCount = voiceStats?.topicsCount || 0;
   const bio = connection.bio || {};
-  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount, bio);
+  const voiceConfidence = calculateVoiceConfidence(samplePostsCount, feedbackCount, rulesCount, bio, topicsCount);
 
   return {
     id: connection.id,
@@ -93,7 +97,14 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
       sample_posts_count: samplePostsCount,
       rules_count: rulesCount,
       feedback_count: feedbackCount,
+      topics_count: topicsCount,
       confidence: voiceConfidence,
+      voice_match_score: voiceConfidence, // Explicit name for clarity
+      meets_threshold: voiceConfidence >= FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD,
+      generated_posts_count: connection.generated_posts_count || 0,
+      generation_limit: FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION,
+      at_generation_limit: account && !account.hasActiveSubscription() &&
+        (connection.generated_posts_count || 0) >= FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION,
     },
     is_ready_for_generation: connection.isReadyForGeneration(),
     is_generating_voice: connection.isVoiceGenerating(),

@@ -1,7 +1,8 @@
 import { raw } from "objection";
-import { Account, Subscription, WebhookEvent } from "#src/models/index.js";
+import { Account, Subscription, WebhookEvent, ConnectedAccount } from "#src/models/index.js";
 import { addDays, addYears } from "date-fns";
 import { trackEvent, trackEventForAccounts } from "#src/helpers/track.js";
+import { ghostQueue, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
 
 const RC_ANON = "$RCAnonymousID";
 
@@ -33,6 +34,54 @@ const ALLOWED_WEBHOOK_TYPES = [
   "SUBSCRIPTION_EXTENDED",
   "EXPIRATION",
 ];
+
+// Subscription events that should trigger voice profile refresh
+// for connections that were at the generation limit
+const ACTIVATION_EVENTS = [
+  "INITIAL_PURCHASE",    // New subscription
+  "RENEWAL",             // Renewed after expiry
+  "UNCANCELLATION",      // Resubscribed after cancel
+  "TRANSFER",            // Transferred from another user
+  "PRODUCT_CHANGE",      // Upgraded/changed plan
+];
+
+/**
+ * Refresh voice profiles for connections that were at the generation limit
+ * Called when a subscription becomes active
+ */
+const refreshVoiceProfilesForAccount = async (accountId, jobKey) => {
+  try {
+    // Find connections that were at the generation limit
+    const connections = await ConnectedAccount.query()
+      .where("account_id", accountId)
+      .where("is_active", true)
+      .whereNotNull("generation_limit_reached_at");
+
+    if (connections.length === 0) {
+      console.log(`[${jobKey}] No connections at generation limit to refresh`);
+      return;
+    }
+
+    console.log(`[${jobKey}] Refreshing voice profiles for ${connections.length} connections at limit`);
+
+    for (const conn of connections) {
+      // Queue voice profile regeneration
+      await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+        connectedAccountId: conn.id,
+        force: true, // Force regeneration even if inputs unchanged
+        reason: "subscription_activated",
+      });
+
+      // Clear the limit flag since they can now generate
+      await conn.$query().patch({ generation_limit_reached_at: null });
+    }
+
+    console.log(`[${jobKey}] Queued voice profile refresh for ${connections.length} connections`);
+  } catch (error) {
+    console.error(`[${jobKey}] Error refreshing voice profiles:`, error);
+    // Don't throw - this is a non-critical operation
+  }
+};
 
 // Build common event properties from RevenueCat event
 const buildEventProperties = (event) => ({
@@ -241,6 +290,11 @@ const handleTransfer = async (event, appId, jobKey) => {
     });
 
     console.log(`[${jobKey}] Created subscription for ${toUserId} from transfer`);
+  }
+
+  // Refresh voice profiles for the recipient account since they now have a subscription
+  if (toAccount) {
+    await refreshVoiceProfilesForAccount(toAccount.id, jobKey);
   }
 
   return Promise.resolve();
@@ -463,6 +517,11 @@ const handleSpecificEventTypes = async (
   jobKey
 ) => {
   if (!account) return;
+
+  // Refresh voice profiles for connections at generation limit when subscription becomes active
+  if (ACTIVATION_EVENTS.includes(event.type)) {
+    await refreshVoiceProfilesForAccount(account.id, jobKey);
+  }
 
   switch (event.type) {
     case "RENEWAL":

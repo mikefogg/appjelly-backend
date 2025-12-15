@@ -1,8 +1,9 @@
 import express from "express";
 import { param, query, body } from "express-validator";
-import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
+import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
 import { PostSuggestion, ConnectedAccount, Input, Artifact, NetworkPost, TrendingTopic, VoiceProfile } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 import {
   successResponse,
   paginatedResponse,
@@ -278,7 +279,6 @@ router.post(
   "/:id/generate-response",
   requireAppContext,
   requireAuth,
-  requireSubscription("ghost_pro"),
   [
     ...suggestionParamValidators,
     body("angle")
@@ -308,7 +308,7 @@ router.post(
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
-        .withGraphFetched("[source_post.network_profile, connected_account]");
+        .withGraphFetched("[source_post.network_profile]");
 
       if (!suggestion) {
         return res.status(404).json(formatError("Suggestion not found", 404));
@@ -316,6 +316,21 @@ router.post(
 
       if (!suggestion.source_post) {
         return res.status(400).json(formatError("This suggestion has no source post to reply to", 400));
+      }
+
+      // Load connection for freemium checks
+      const connection = suggestion.connected_account_id
+        ? await ConnectedAccount.query().findById(suggestion.connected_account_id)
+        : null;
+
+      // Check voice match threshold - AI features require 50% minimum
+      if (connection && !await connection.meetsVoiceThreshold()) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
+      }
+
+      // Check if free user has reached generation limit
+      if (connection && connection.hasReachedGenerationLimit(res.locals.account)) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));
       }
 
       // Build prompt for generating response
@@ -368,6 +383,11 @@ router.post(
       await ghostQueue.add(JOB_GENERATE_POST, {
         artifactId: artifact.id,
       });
+
+      // Increment generated posts counter for free users
+      if (connection && !res.locals.account.hasActiveSubscription()) {
+        await connection.incrementGeneratedPosts(1);
+      }
 
       return res.status(202).json(successResponse(
         generateResponsePendingSerializer(artifact, input, suggestion.source_post, sourceAuthor)
@@ -465,7 +485,6 @@ router.post(
   "/generate",
   requireAppContext,
   requireAuth,
-  requireSubscription("ghost_pro"),
   [
     body("connected_account_id")
       .isUUID()
@@ -476,15 +495,10 @@ router.post(
     try {
       const { connected_account_id } = req.body;
 
-      // Verify connected account belongs to user and load sample posts count
       const connection = await ConnectedAccount.query()
         .findById(connected_account_id)
         .where("account_id", res.locals.account.id)
-        .where("app_id", res.locals.app.id)
-        .select(
-          "connected_accounts.*",
-          ConnectedAccount.relatedQuery("sample_posts").count().as("sample_posts_count")
-        );
+        .where("app_id", res.locals.app.id);
 
       if (!connection) {
         return res.status(404).json(formatError("Connected account not found", 404));
@@ -493,6 +507,16 @@ router.post(
       // Check if connection has enough context for generation
       if (!connection.isReadyForGeneration()) {
         return res.status(400).json(formatError(connection.getNotReadyReason(), 400));
+      }
+
+      // Check voice match threshold - AI features require 50% minimum
+      if (!await connection.meetsVoiceThreshold()) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
+      }
+
+      // Check if free user has reached generation limit
+      if (connection.hasReachedGenerationLimit(res.locals.account)) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));
       }
 
       // Mark generation started and trigger background job

@@ -4,11 +4,13 @@
  * Triggered when samples/rules change, or user requests regeneration
  */
 
-import { ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, Subscription, PostSuggestion } from "#src/models/index.js";
+import { Account, ConnectedAccount, SamplePost, Rule, VoiceProfile, VoiceFeedback, PostSuggestion } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import crypto from "crypto";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { trackAICost } from "#src/helpers/track-ai-cost.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_GENERATE_VOICE_PROFILE = "generate-voice-profile";
 
@@ -37,14 +39,24 @@ export default async function generateVoiceProfile(job) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
     }
 
-    // Check for active subscription
-    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
-    if (!activeSubscription) {
-      console.log(`[Generate Voice Profile] No active subscription for account ${connectedAccount.account_id} - skipping`);
+    // Load account with subscriptions for limit checks
+    const account = await Account.query()
+      .findById(connectedAccount.account_id)
+      .withGraphFetched("subscriptions");
+
+    if (!account) {
+      throw new Error(`Account ${connectedAccount.account_id} not found`);
+    }
+
+    // Check if free user has reached generation limit (skip if force/subscription_activated)
+    // When at limit, we stop updating voice profiles until they subscribe
+    const reason = job.data.reason;
+    if (reason !== "subscription_activated" && connectedAccount.hasReachedGenerationLimit(account)) {
+      console.log(`[Generate Voice Profile] Free user at generation limit for account ${connectedAccount.account_id} - skipping`);
       return {
         success: false,
         skipped: true,
-        reason: "No active subscription",
+        reason: FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED,
       };
     }
 
@@ -106,6 +118,13 @@ export default async function generateVoiceProfile(job) {
       ...pendingFeedback.map(f => f.feedback),
     ].join("\n");
 
+    // Get formatting preferences for examples
+    const contentPrefs = connectedAccount.getContentPreferences();
+    const formatting = {
+      line_breaks: contentPrefs.line_breaks,
+      emojis: contentPrefs.emojis,
+    };
+
     // Generate voice profile with AI
     console.log(`[Generate Voice Profile] Calling AI.generateVoiceProfile...`);
     const profileData = await AI.generateVoiceProfile({
@@ -114,7 +133,29 @@ export default async function generateVoiceProfile(job) {
       feedback: allFeedback || null,
       topics, // Pass topics for starter profile if no samples
       bio, // Pass bio for context in voice analysis
+      formatting, // Pass formatting for example generation
     });
+
+    // Track AI usage - each call separately
+    if (profileData.usages) {
+      for (const usage of profileData.usages) {
+        trackAICost(connectedAccount.account_id, {
+          operation: usage.operation,
+          model: usage.model,
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          durationMs: usage.duration_ms,
+          connectedAccountId: connectedAccount.id,
+          isFreeUser: !account.hasActiveSubscription(),
+          metadata: {
+            sample_posts_count: samplePosts.length,
+            rules_count: rules.length,
+            has_feedback: !!allFeedback,
+            confidence: profileData.confidence,
+          },
+        });
+      }
+    }
 
     job.updateProgress(80);
 

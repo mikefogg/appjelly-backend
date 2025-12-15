@@ -43,6 +43,11 @@ export const globalErrorHandler = (err, req, res, next) => {
 };
 
 export const notFoundHandler = (req, res) => {
+  console.log("[notFoundHandler] 404 - Route not found:", {
+    method: req.method,
+    path: req.path,
+    url: req.url,
+  });
   res.status(404).json({
     code: 404,
     status: "Error",

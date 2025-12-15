@@ -1,8 +1,9 @@
 import express from "express";
 import { param, body } from "express-validator";
-import { requireAuth, requireAppContext, requireSubscription, handleValidationErrors } from "#src/middleware/index.js";
+import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
 import { Input, Artifact, ConnectedAccount, VoiceProfile, ArtifactVersion } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 import {
   successResponse,
   paginatedResponse,
@@ -94,7 +95,6 @@ router.post(
   "/generate",
   requireAppContext,
   requireAuth,
-  requireSubscription("ghost_pro"),
   [
     body("prompt")
       .isString()
@@ -149,6 +149,16 @@ router.post(
       // Check if connection is ready (only for non-ghost accounts)
       if (connection.platform !== "ghost" && connection.sync_status !== "ready") {
         return res.status(400).json(formatError("Connected account is not ready. Please wait for sync to complete.", 400));
+      }
+
+      // Check voice match threshold - AI features require 50% minimum
+      if (!await connection.meetsVoiceThreshold()) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
+      }
+
+      // Check if free user has reached generation limit
+      if (connection.hasReachedGenerationLimit(res.locals.account)) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));
       }
 
       const platform = connection.platform;
@@ -232,6 +242,11 @@ router.post(
       await ghostQueue.add(JOB_GENERATE_POST, {
         artifactId: artifact.id,
       });
+
+      // Increment generated posts counter for free users
+      if (!res.locals.account.hasActiveSubscription()) {
+        await connection.incrementGeneratedPosts(1);
+      }
 
       // Refetch artifact for response
       const updatedArtifact = await Artifact.query()
@@ -396,7 +411,6 @@ router.post(
   "/:id/improve",
   requireAppContext,
   requireAuth,
-  requireSubscription("ghost_pro"),
   [
     ...postParamValidators,
     body("instructions")
@@ -435,8 +449,7 @@ router.post(
         .findById(req.params.id)
         .where("account_id", res.locals.account.id)
         .where("app_id", res.locals.app.id)
-        .where("artifact_type", "social_post")
-        .withGraphFetched("connected_account");
+        .where("artifact_type", "social_post");
 
       if (!artifact) {
         return res.status(404).json(formatError("Post not found", 404));
@@ -444,6 +457,21 @@ router.post(
 
       if (!artifact.content) {
         return res.status(400).json(formatError("Post has no content to improve", 400));
+      }
+
+      // Load connection for freemium checks
+      const connection = artifact.connected_account_id
+        ? await ConnectedAccount.query().findById(artifact.connected_account_id)
+        : null;
+
+      // Check voice match threshold - AI features require 50% minimum
+      if (connection && !await connection.meetsVoiceThreshold()) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
+      }
+
+      // Check if free user has reached generation limit
+      if (connection && connection.hasReachedGenerationLimit(res.locals.account)) {
+        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));
       }
 
       // Check if artifact has any versions yet (for pre-existing drafts)
@@ -456,8 +484,7 @@ router.post(
       // Store original content for response
       const originalContent = artifact.content;
 
-      // Get platform and connection
-      const connection = artifact.connected_account;
+      // Get platform
       const platform = connection?.platform || "ghost";
 
       // Determine target length
@@ -547,6 +574,11 @@ ${artifact.content}`;
         target_length: targetBucket || null,
         formatting: formattingOverrides,
       });
+
+      // Increment generated posts counter for free users
+      if (connection && !res.locals.account.hasActiveSubscription()) {
+        await connection.incrementGeneratedPosts(1);
+      }
 
       return res.status(200).json(successResponse(
         postImprovementSerializer(

@@ -36,11 +36,27 @@ const updateAccountValidators = [
   // etc.
 ];
 
-router.get("/me", requireAppContext, requireAuth, async (req, res) => {
+router.get("/me", (req, res, next) => {
+  console.log("[accounts/me] Route matched, headers:", {
+    "x-app-slug": req.headers["x-app-slug"],
+    "x-app": req.headers["x-app"],
+    authorization: req.headers.authorization ? "present" : "missing",
+  });
+  next();
+}, requireAppContext, requireAuth, async (req, res) => {
   try {
+    console.log("[accounts/me] Passed middleware, fetching account");
     const account = res.locals.account;
+    const { ConnectedAccount } = await import("#src/models/index.js");
 
-    const data = currentAccountSerializer(account);
+    // Get connections count for free tier info
+    const connectionsCount = await ConnectedAccount.query()
+      .where("account_id", account.id)
+      .where("app_id", res.locals.app.id)
+      .where("is_active", true)
+      .resultSize();
+
+    const data = currentAccountSerializer(account, { connectionsCount });
     return res
       .status(200)
       .json(successResponse(data, "Account details retrieved"));

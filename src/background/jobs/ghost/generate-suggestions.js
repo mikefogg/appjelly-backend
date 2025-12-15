@@ -7,12 +7,14 @@
  */
 
 import crypto from "crypto";
-import { ConnectedAccount, PostSuggestion, VoiceProfile, VoiceFeedback, Subscription } from "#src/models/index.js";
+import { Account, ConnectedAccount, PostSuggestion, VoiceProfile, VoiceFeedback } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
 import { getTargetLength } from "#src/config/platform-lengths.js";
 import { ghostQueue } from "#src/background/queues/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { trackAICost } from "#src/helpers/track-ai-cost.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_GENERATE_SUGGESTIONS = "generate-suggestions";
 const VOICE_UPDATE_RETRY_DELAY_MS = 10000; // 10 seconds
@@ -32,15 +34,36 @@ export default async function generateSuggestions(job) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
     }
 
-    // Check for active subscription
-    const activeSubscription = await Subscription.findActiveByAccount(connectedAccount.account_id);
-    if (!activeSubscription) {
-      console.log(`[Generate Suggestions] No active subscription for account ${connectedAccount.account_id} - skipping`);
+    // Load account with subscriptions for limit checks
+    const account = await Account.query()
+      .findById(connectedAccount.account_id)
+      .withGraphFetched("subscriptions");
+
+    if (!account) {
+      throw new Error(`Account ${connectedAccount.account_id} not found`);
+    }
+
+    // Check voice match threshold - AI features require 50% minimum
+    if (!await connectedAccount.meetsVoiceThreshold()) {
+      const voiceScore = await connectedAccount.getVoiceMatchScore();
+      console.log(`[Generate Suggestions] Voice match ${voiceScore}% below ${FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD}% threshold - skipping`);
       await connectedAccount.markSuggestionsUpdateCompleted();
       return {
         success: false,
         skipped: true,
-        reason: "No active subscription",
+        reason: FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET,
+        voice_match_score: voiceScore,
+      };
+    }
+
+    // Check if free user has reached generation limit
+    if (connectedAccount.hasReachedGenerationLimit(account)) {
+      console.log(`[Generate Suggestions] Free user at generation limit for account ${connectedAccount.account_id} - skipping`);
+      await connectedAccount.markSuggestionsUpdateCompleted();
+      return {
+        success: false,
+        skipped: true,
+        reason: FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED,
       };
     }
 
@@ -92,7 +115,7 @@ export default async function generateSuggestions(job) {
     }
 
     // Generate suggestions based on persona
-    return await generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount, startTime);
+    return await generatePersonaBasedSuggestions(job, connectedAccount, account, voiceProfile, suggestionCount, startTime);
 
   } catch (error) {
     console.error(`[Generate Suggestions] Error:`, error);
@@ -104,7 +127,7 @@ export default async function generateSuggestions(job) {
  * Generate suggestions based on user's persona and voice
  * No topics needed - AI generates relevant content based on who they are
  */
-async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfile, suggestionCount, startTime) {
+async function generatePersonaBasedSuggestions(job, connectedAccount, account, voiceProfile, suggestionCount, startTime) {
   // Log what we're using
   console.log(`[Generate Suggestions] === GENERATION INPUT ===`);
   console.log(`[Generate Suggestions] Bio: ${connectedAccount.bio ? JSON.stringify(connectedAccount.bio) : 'none'}`);
@@ -141,7 +164,7 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
       emojis: contentPrefs.emojis,
     };
 
-    const results = await AI.generatePosts({
+    const { posts: results, usage } = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connectedAccount.bio,
       contentTypes,
@@ -150,6 +173,24 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
       count: suggestionCount,
       formatting,
     });
+
+    // Track AI usage
+    if (usage) {
+      trackAICost(connectedAccount.account_id, {
+        operation: "suggestions",
+        model: usage.model,
+        inputTokens: usage.input_tokens,
+        outputTokens: usage.output_tokens,
+        durationMs: usage.duration_ms,
+        connectedAccountId: connectedAccount.id,
+        isFreeUser: !account.hasActiveSubscription(),
+        metadata: {
+          suggestion_count: results?.length || 0,
+          platform,
+          content_types: contentTypes,
+        },
+      });
+    }
 
     // Map results to suggestions (accept whatever AI returns, even if fewer than requested)
     generatedSuggestions = results.map((result, i) => {
@@ -182,6 +223,12 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, voiceProfi
     voice_profile_version: voiceProfile?.version || null,
     has_persona: !!voiceProfile?.persona_summary,
   });
+
+  // Increment generated posts counter for free users (each suggestion counts as 1 post)
+  if (savedCount > 0 && !account.hasActiveSubscription()) {
+    const newCount = await connectedAccount.incrementGeneratedPosts(savedCount);
+    console.log(`[Generate Suggestions] Incremented generated posts count to ${newCount}`);
+  }
 
   // Clear the suggestions update started timestamp
   await connectedAccount.markSuggestionsUpdateCompleted();

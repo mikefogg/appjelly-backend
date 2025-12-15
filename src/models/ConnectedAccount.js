@@ -1,6 +1,7 @@
 import BaseModel from "#src/models/BaseModel.js";
 import Account from "#src/models/Account.js";
 import App from "#src/models/App.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 import NetworkProfile from "#src/models/NetworkProfile.js";
 import NetworkPost from "#src/models/NetworkPost.js";
 import PostSuggestion from "#src/models/PostSuggestion.js";
@@ -435,14 +436,6 @@ class ConnectedAccount extends BaseModel {
       const curatedTopicsCount = topicCountMap.get(conn.id) || 0;
       const feedbackCount = feedbackCountMap.get(conn.id) || 0;
 
-      // Attach voice data
-      conn.voiceProfile = voiceProfileMap.get(conn.id) || null;
-      conn.voiceStats = {
-        rulesCount,
-        feedbackCount,
-        isGenerating: generatingMap.has(conn.id) || pendingFeedbackMap.has(conn.id),
-      };
-
       // Compute sync info
       const isGhost = conn.platform === "ghost";
       const hasCustomTopics = conn.topics_of_interest && conn.topics_of_interest.trim().length > 0;
@@ -451,6 +444,15 @@ class ConnectedAccount extends BaseModel {
       const hasVoice = conn.voice && conn.voice.trim().length > 0;
       const hasSamplePosts = samplePostsCount >= 3;
       const topicsCount = curatedTopicsCount + (hasCustomTopics ? 1 : 0);
+
+      // Attach voice data
+      conn.voiceProfile = voiceProfileMap.get(conn.id) || null;
+      conn.voiceStats = {
+        rulesCount,
+        feedbackCount,
+        topicsCount,
+        isGenerating: generatingMap.has(conn.id) || pendingFeedbackMap.has(conn.id),
+      };
 
       // Compute completeness score
       let completenessScore = 0;
@@ -1029,6 +1031,101 @@ class ConnectedAccount extends BaseModel {
   getNotReadyReason() {
     if (this.isReadyForGeneration()) return null;
     return "Please add a bio or sample posts to enable AI generation.";
+  }
+
+  // ==========================================
+  // FREEMIUM & VOICE MATCH METHODS
+  // ==========================================
+
+  /**
+   * Get the total topics count (curated + custom)
+   * Custom topics count as 1 if present (since it's free-text)
+   */
+  getTopicsCount(curatedTopicsCount = 0) {
+    const hasCustomTopics = this.topics_of_interest && this.topics_of_interest.trim().length > 0;
+    return curatedTopicsCount + (hasCustomTopics ? 1 : 0);
+  }
+
+  /**
+   * Calculate voice match score (0-100)
+   * Fetches all required counts internally - just call with the connection ID
+   *
+   * Scoring:
+   * - Samples: 5% each, max 50%
+   * - Feedback: 5% each, max 50%
+   * - Rules: 2% each, max 10%
+   * - Topics: 5% each, max 15%
+   * - Bio fields: 5% each, max 20%
+   */
+  async getVoiceMatchScore() {
+    // Fetch all counts in parallel
+    const [samplePostsCount, rulesCount, feedbackCount, curatedTopicsCount] = await Promise.all([
+      SamplePost.query().where("connected_account_id", this.id).resultSize(),
+      Rule.query().where("connected_account_id", this.id).where("is_active", true).resultSize(),
+      VoiceFeedback.query().where("connected_account_id", this.id).resultSize(),
+      UserTopicPreference.query().where("connected_account_id", this.id).resultSize(),
+    ]);
+
+    const topicsCount = this.getTopicsCount(curatedTopicsCount);
+    const bio = this.bio || {};
+
+    // Calculate individual scores
+    const sampleScore = Math.min(samplePostsCount * 5, 50);
+    const feedbackScore = Math.min(feedbackCount * 5, 50);
+    const rulesScore = Math.min(rulesCount * 2, 10);
+    const topicsScore = Math.min(topicsCount * 5, 15);
+
+    // Count filled bio fields
+    const bioFields = ['what_you_do', 'audience', 'perspective', 'differentiator'];
+    const filledBioCount = bioFields.filter(f => bio[f]?.trim()).length;
+    const bioScore = filledBioCount * 5;
+
+    const totalScore = Math.min(sampleScore + feedbackScore + rulesScore + bioScore + topicsScore, 100);
+
+    console.log(`[getVoiceMatchScore] id=${this.id} samples=${samplePostsCount}(${sampleScore}) rules=${rulesCount}(${rulesScore}) topics=${topicsCount}(${topicsScore}) feedback=${feedbackCount}(${feedbackScore}) bio=${filledBioCount}(${bioScore}) => ${totalScore}%`);
+
+    return totalScore;
+  }
+
+  /**
+   * Check if voice match meets threshold for AI features
+   * @param {number} threshold - Minimum score required (default from config)
+   */
+  async meetsVoiceThreshold(threshold = FREEMIUM_CONFIG.VOICE_MATCH_THRESHOLD) {
+    const score = await this.getVoiceMatchScore();
+    return score >= threshold;
+  }
+
+  /**
+   * Check if connection has reached generation limit (free users only)
+   * @param {Object} account - Account model with subscription info
+   */
+  hasReachedGenerationLimit(account) {
+    if (account.hasActiveSubscription()) return false;
+    return (this.generated_posts_count || 0) >= FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION;
+  }
+
+  /**
+   * Increment generated posts counter
+   * Sets generation_limit_reached_at when limit is hit
+   * @param {number} count - Number of posts to add (default 1)
+   */
+  async incrementGeneratedPosts(count = 1) {
+    const newCount = (this.generated_posts_count || 0) + count;
+    const limit = FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION;
+
+    await this.$query().patch({
+      generated_posts_count: newCount,
+      ...(newCount >= limit ? { generation_limit_reached_at: new Date().toISOString() } : {})
+    });
+
+    // Update local instance
+    this.generated_posts_count = newCount;
+    if (newCount >= limit) {
+      this.generation_limit_reached_at = new Date().toISOString();
+    }
+
+    return newCount;
   }
 }
 

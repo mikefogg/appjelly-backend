@@ -6,7 +6,7 @@
 import express from "express";
 import crypto from "crypto";
 import { requireAuth, requireAppContext } from "#src/middleware/index.js";
-import { ConnectedAccount, ConnectedAccountAuth } from "#src/models/index.js";
+import { Account, ConnectedAccount, ConnectedAccountAuth } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
@@ -18,6 +18,7 @@ import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PRO
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
 import linkedinOAuth from "#src/services/oauth/LinkedInOAuthService.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -125,6 +126,19 @@ async function createOrUpdateConnection({
 
     return updated;
   } else {
+    // Check connection limit for free users before creating new connection
+    const account = await Account.query()
+      .findById(accountId)
+      .withGraphFetched("subscriptions");
+    if (account) {
+      const canCreate = await account.canCreateConnection();
+      if (!canCreate.allowed) {
+        const error = new Error(canCreate.reason);
+        error.code = "CONNECTION_LIMIT_REACHED";
+        throw error;
+      }
+    }
+
     // Create new auth
     const newAuth = await ConnectedAccountAuth.query().insert({
       access_token: encrypt(accessToken),
@@ -385,7 +399,9 @@ router.get(
           console.error("LinkedIn mobile OAuth error:", error);
           mobileOAuthSessions.delete(state);
           const errorMessage = encodeURIComponent(error.message || "OAuth failed");
-          return res.redirect(`ghostapp://oauth?error=${errorMessage}&platform=linkedin`);
+          // Include error code for connection limit so app can show upgrade prompt
+          const errorCode = error.code === "CONNECTION_LIMIT_REACHED" ? "&error_code=CONNECTION_LIMIT_REACHED" : "";
+          return res.redirect(`ghostapp://oauth?error=${errorMessage}&platform=linkedin${errorCode}`);
         }
       }
 
@@ -455,6 +471,10 @@ router.get(
       return res.status(200).json(connectionOAuthSerializer(connection));
     } catch (error) {
       console.error("OAuth callback error:", error);
+      // Return 400 for connection limit errors
+      if (error.code === "CONNECTION_LIMIT_REACHED") {
+        return res.status(400).json(formatError(error.message, 400));
+      }
       return res.status(500).json(
         formatError(`OAuth callback failed: ${error.message}`)
       );
@@ -538,6 +558,10 @@ router.post(
       return res.status(201).json(successResponse(connectionOAuthSerializer(connection)));
     } catch (error) {
       console.error("OAuth connect error:", error);
+      // Return 400 for connection limit errors
+      if (error.code === "CONNECTION_LIMIT_REACHED") {
+        return res.status(400).json(formatError(error.message, 400));
+      }
       return res.status(500).json(
         formatError(`Failed to connect account: ${error.message}`)
       );
@@ -604,8 +628,14 @@ router.post(
         );
       }
 
+      // Check connection limit for free users
+      const canCreate = await res.locals.account.canCreateConnection();
+      if (!canCreate.allowed) {
+        return res.status(400).json(formatError(canCreate.reason, 400));
+      }
+
       // Create manual account
-      const account = await ConnectedAccount.query().insert({
+      const connection = await ConnectedAccount.query().insert({
         account_id: res.locals.account.id,
         app_id: res.locals.app.id,
         platform: platform || "custom",
@@ -627,11 +657,11 @@ router.post(
       const hasBioContent = bio && bioFields.some(field => bio[field] && bio[field].trim());
       if (hasBioContent) {
         ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
-          connectedAccountId: account.id,
+          connectedAccountId: connection.id,
         }).catch(err => console.error("Failed to queue voice profile job:", err));
       }
 
-      return res.status(201).json(successResponse(connectionOAuthSerializer(account)));
+      return res.status(201).json(successResponse(connectionOAuthSerializer(connection)));
     } catch (error) {
       console.error("Create manual account error:", error);
       return res.status(500).json(

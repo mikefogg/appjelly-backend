@@ -2,12 +2,14 @@
  * Automated Suggestions Generation Job
  * Runs hourly to generate suggestions for connections scheduled for this UTC hour
  * Supports both account-level scheduling and connection-level overrides
- * Only generates for accounts with active subscriptions
+ * Free users: Limited to 10 posts per connection, excludes connections at limit
+ * Paid users: Unlimited
  */
 
 import { Account, ConnectedAccount, Subscription } from "#src/models/index.js";
 import { ghostQueue, JOB_GENERATE_SUGGESTIONS } from "#src/background/queues/index.js";
 import { trackEvent } from "#src/helpers/track.js";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 export const JOB_GENERATE_SUGGESTIONS_AUTOMATED = "generate-suggestions-automated";
 
@@ -19,33 +21,42 @@ export default async function generateSuggestionsAutomated(job) {
     // Strategy: Find eligible connections in two ways:
     // 1. Connections with their own generation_time_utc matching current hour
     // 2. Connections without override, where parent account's generation_time_utc matches
+    // Free users can now be scheduled (up to their limit)
 
-    // First, get all accounts with active subscriptions
+    // Get all active subscriptions to know which accounts are paid
     const allActiveSubscriptions = await Subscription.query().modify("active");
-    const subscribedAccountIds = [...new Set(allActiveSubscriptions.map(sub => sub.account_id))];
+    const subscribedAccountIds = new Set(allActiveSubscriptions.map(sub => sub.account_id));
 
-    if (subscribedAccountIds.length === 0) {
-      return {
-        success: true,
-        message: "No accounts with active subscriptions",
-        accounts_processed: 0,
-        current_utc_hour: currentUTCHour,
-      };
-    }
-
-    // Get accounts scheduled for this hour (for connections without override)
+    // Get accounts scheduled for this hour (all accounts, not just subscribed)
     const scheduledAccounts = await Account.query()
-      .whereIn("id", subscribedAccountIds)
       .where("generation_time_utc", currentUTCHour)
       .whereNotNull("timezone");
 
     const accountScheduledIds = scheduledAccounts.map(acc => acc.id);
 
+    if (accountScheduledIds.length === 0) {
+      // No accounts scheduled for this hour - check for connection-level overrides
+      const connectionsWithOverride = await ConnectedAccount.query()
+        .where("is_active", true)
+        .where("generation_time_utc", currentUTCHour)
+        .count("* as count")
+        .first();
+
+      if (parseInt(connectionsWithOverride?.count || 0, 10) === 0) {
+        return {
+          success: true,
+          message: `No accounts or connections scheduled for ${currentUTCHour}:00 UTC`,
+          accounts_processed: 0,
+          current_utc_hour: currentUTCHour,
+        };
+      }
+    }
+
     // Find eligible connections:
     // - Has connection-level override matching current hour, OR
     // - No override AND parent account scheduled for current hour
+    // Exclude free users who have reached the generation limit
     const eligibleConnections = await ConnectedAccount.query()
-      .whereIn("account_id", subscribedAccountIds)
       .where("is_active", true)
       .where(function() {
         // Connection has its own schedule matching current hour
@@ -64,19 +75,36 @@ export default async function generateSuggestionsAutomated(job) {
         });
       });
 
-    const connectionsWithOverride = eligibleConnections.filter(c => c.generation_time_utc !== null).length;
-    const connectionsFromAccount = eligibleConnections.length - connectionsWithOverride;
+    // Filter out free users who have reached the generation limit
+    const filteredConnections = eligibleConnections.filter(conn => {
+      // If subscribed, always eligible
+      if (subscribedAccountIds.has(conn.account_id)) return true;
+      // If free user, check generation limit
+      return (conn.generated_posts_count || 0) < FREEMIUM_CONFIG.FREE_POSTS_PER_CONNECTION;
+    });
 
-    console.log(`[Generate Suggestions Automated] Found ${eligibleConnections.length} eligible connections for ${currentUTCHour}:00 UTC`);
+    const atLimitCount = eligibleConnections.length - filteredConnections.length;
+
+    const connectionsWithOverride = filteredConnections.filter(c => c.generation_time_utc !== null).length;
+    const connectionsFromAccount = filteredConnections.length - connectionsWithOverride;
+    const paidConnections = filteredConnections.filter(c => subscribedAccountIds.has(c.account_id)).length;
+    const freeConnections = filteredConnections.length - paidConnections;
+
+    console.log(`[Generate Suggestions Automated] Found ${filteredConnections.length} eligible connections for ${currentUTCHour}:00 UTC`);
     console.log(`[Generate Suggestions Automated]   - ${connectionsWithOverride} with connection-level override`);
     console.log(`[Generate Suggestions Automated]   - ${connectionsFromAccount} from account-level schedule`);
+    console.log(`[Generate Suggestions Automated]   - ${paidConnections} paid, ${freeConnections} free`);
+    if (atLimitCount > 0) {
+      console.log(`[Generate Suggestions Automated]   - ${atLimitCount} skipped (at generation limit)`);
+    }
 
-    if (eligibleConnections.length === 0) {
+    if (filteredConnections.length === 0) {
       return {
         success: true,
         message: `No connections scheduled for ${currentUTCHour}:00 UTC`,
         accounts_processed: 0,
         current_utc_hour: currentUTCHour,
+        skipped_at_limit: atLimitCount,
       };
     }
 
@@ -87,7 +115,7 @@ export default async function generateSuggestionsAutomated(job) {
     let successCount = 0;
     let failureCount = 0;
 
-    for (const connection of eligibleConnections) {
+    for (const connection of filteredConnections) {
       try {
         const suggestionJob = await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
           connectedAccountId: connection.id,
@@ -128,7 +156,10 @@ export default async function generateSuggestionsAutomated(job) {
       current_utc_hour: currentUTCHour,
       connections_with_override: connectionsWithOverride,
       connections_from_account: connectionsFromAccount,
-      connections_found: eligibleConnections.length,
+      connections_found: filteredConnections.length,
+      connections_paid: paidConnections,
+      connections_free: freeConnections,
+      skipped_at_limit: atLimitCount,
       jobs_queued: successCount,
       failures: failureCount,
       queued_jobs: queuedJobs,

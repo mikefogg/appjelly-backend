@@ -3,8 +3,9 @@
  * Generates a social media post from a user prompt
  */
 
-import { Artifact, VoiceProfile, Subscription } from "#src/models/index.js";
+import { Account, Artifact, VoiceProfile } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
+import { trackAICost } from "#src/helpers/track-ai-cost.js";
 
 export const JOB_GENERATE_POST = "generate-post";
 
@@ -23,20 +24,10 @@ export default async function generatePost(job) {
       throw new Error(`Artifact ${artifactId} not found`);
     }
 
-    // Check for active subscription
-    const activeSubscription = await Subscription.findActiveByAccount(artifact.account_id);
-    if (!activeSubscription) {
-      console.log(`[Generate Post] No active subscription for account ${artifact.account_id} - skipping`);
-      await artifact.$query().patch({
-        status: "failed",
-        metadata: { ...artifact.metadata, error: "No active subscription" },
-      });
-      return {
-        success: false,
-        skipped: true,
-        reason: "No active subscription",
-      };
-    }
+    // Load account for tracking (freemium checks done at route level)
+    const account = await Account.query()
+      .findById(artifact.account_id)
+      .withGraphFetched("subscriptions");
 
     const { input, connected_account } = artifact;
 
@@ -118,6 +109,26 @@ export default async function generatePost(job) {
       maxLength: maxLength,
       formatting,
     });
+
+    // Track AI usage
+    if (result.usage) {
+      trackAICost(artifact.account_id, {
+        operation: "post_generate",
+        model: result.usage.model,
+        inputTokens: result.usage.input_tokens,
+        outputTokens: result.usage.output_tokens,
+        durationMs: result.usage.duration_ms,
+        connectedAccountId: connected_account?.id,
+        isFreeUser: account ? !account.hasActiveSubscription() : false,
+        metadata: {
+          platform,
+          angle,
+          length,
+          max_length: maxLength,
+          content_length: result.content?.length || 0,
+        },
+      });
+    }
 
     job.updateProgress(90);
 

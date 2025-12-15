@@ -4,6 +4,7 @@ import Input from "#src/models/Input.js";
 import Artifact from "#src/models/Artifact.js";
 import Subscription from "#src/models/Subscription.js";
 import { fromZonedTime } from "date-fns-tz";
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 
 class Account extends BaseModel {
   static get tableName() {
@@ -167,6 +168,33 @@ class Account extends BaseModel {
       expires_at: subscription.rc_expiration,
       renewal_status: subscription.rc_renewal_status,
       platform: subscription.rc_platform,
+    };
+  }
+
+  /**
+   * Check if account can create more connections (free users limited)
+   * @returns {Object} { allowed, current, limit, reason }
+   */
+  async canCreateConnection() {
+    if (this.hasActiveSubscription()) {
+      return { allowed: true, current: null, limit: null, reason: null };
+    }
+
+    // Lazy import to avoid circular dependency
+    const { default: ConnectedAccount } = await import("#src/models/ConnectedAccount.js");
+
+    const count = await ConnectedAccount.query()
+      .where("account_id", this.id)
+      .where("is_active", true)
+      .resultSize();
+
+    const limit = FREEMIUM_CONFIG.FREE_CONNECTIONS_LIMIT;
+
+    return {
+      allowed: count < limit,
+      current: count,
+      limit,
+      reason: count >= limit ? FREEMIUM_CONFIG.ERRORS.CONNECTION_LIMIT_REACHED : null
     };
   }
 

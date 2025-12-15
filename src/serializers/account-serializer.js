@@ -1,3 +1,5 @@
+import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
+
 export const accountSerializer = (account) => {
   return {
     id: account.id,
@@ -11,11 +13,16 @@ export const accountSerializer = (account) => {
   };
 };
 
-export const currentAccountSerializer = (account) => {
+export const currentAccountSerializer = (account, options = {}) => {
   const baseData = accountSerializer(account);
 
   // Get subscription info using the account method (now synchronous)
   const subscriptionInfo = account.getSubscriptionInfo();
+  const hasSubscription = subscriptionInfo.is_active;
+
+  // Free tier info
+  const connectionsUsed = options.connectionsCount ?? 0;
+  const connectionsLimit = FREEMIUM_CONFIG.FREE_CONNECTIONS_LIMIT;
 
   return {
     ...baseData,
@@ -32,6 +39,11 @@ export const currentAccountSerializer = (account) => {
       config: account.app.config,
     } : null,
     subscription: subscriptionInfo,
+    free_tier: {
+      connections_used: connectionsUsed,
+      connections_limit: connectionsLimit,
+      at_connection_limit: !hasSubscription && connectionsUsed >= connectionsLimit,
+    },
   };
 };
 
