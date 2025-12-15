@@ -178,9 +178,9 @@ class TrendingTopic extends BaseModel {
     const totalResult = await baseQuery().count("id as count").first();
     const total = parseInt(totalResult?.count || 0, 10);
 
-    // Get paginated results - newest first so new topics appear at top
+    // Get paginated results - order by UUID for natural distribution across topics
     const topics = await baseQuery()
-      .orderBy("created_at", "desc")
+      .orderBy("id")
       .limit(perPage)
       .offset(offset)
       .withGraphFetched("curated_topic");
