@@ -55,12 +55,6 @@ export const postDetailSerializer = (artifact, { totalVersions } = {}) => ({
   topics: artifact.metadata?.topics || [],
   input: inputBasicSerializer(artifact.input),
   connected_account: postConnectionSerializer(artifact.connected_account),
-  generation_info: {
-    total_tokens: artifact.total_tokens,
-    cost_usd: artifact.cost_usd,
-    generation_time_seconds: artifact.generation_time_seconds,
-    ai_model: artifact.ai_model,
-  },
   metadata: artifact.metadata,
   created_at: artifact.created_at,
   updated_at: artifact.updated_at,
@@ -102,7 +96,7 @@ export const postUpdateSerializer = (artifact, content) => ({
  * Post improvement response (POST /posts/:id/improve)
  * Now auto-saves and creates a new version
  */
-export const postImprovementSerializer = (artifact, improved, instructions, metadata, generationTime, versionInfo) => ({
+export const postImprovementSerializer = (artifact, improved, instructions, versionInfo) => ({
   id: artifact.id,
   original: {
     content: artifact.content,
@@ -118,11 +112,6 @@ export const postImprovementSerializer = (artifact, improved, instructions, meta
     source_type: versionInfo.source_type,
     previous_version: (versionInfo.version_number || 1) - 1,
   } : null,
-  generation_info: {
-    total_tokens: metadata?.tokens || 0,
-    generation_time_seconds: generationTime,
-    ai_model: metadata?.model || "gpt-4o-mini",
-  },
   message: versionInfo
     ? `AI improvement saved as version ${versionInfo.version_number}`
     : "AI improvement generated",

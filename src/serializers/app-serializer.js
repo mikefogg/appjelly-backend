@@ -32,11 +32,6 @@ export const appConfigSerializer = (app) => {
       content_limits: publicConfig.content_limits || {},
       ui: publicConfig.ui || {},
       limits: publicConfig.limits || {},
-      ai: {
-        provider: publicConfig.ai?.provider || "openai",
-        model: publicConfig.ai?.model || "gpt-4",
-        storyLength: publicConfig.ai?.storyLength || "medium",
-      },
     },
   };
 };

@@ -585,8 +585,6 @@ ${artifact.content}`;
           { ...artifact, content: originalContent }, // Pass original content
           result.content,
           instructions,
-          result.metadata,
-          generationTime,
           newVersion
         )
       ));
