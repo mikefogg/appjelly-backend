@@ -88,8 +88,18 @@ export const requireAuth = async (req, res, next) => {
         // Note: We no longer auto-create a ghost account
         // Users must explicitly create accounts via POST /oauth/accounts or OAuth connection
       } catch (creationError) {
-        console.error("Failed to auto-create account:", creationError);
-        return res.status(500).json(formatError("Failed to create account"));
+        // Handle race condition: if another request already created the account, just fetch it
+        if (creationError.name === "UniqueViolationError") {
+          console.log("[requireAuth] Account already created by concurrent request, fetching...");
+          account = await Account.findWithSubscriptionData(userId, app.id);
+          if (!account) {
+            console.error("Failed to fetch account after UniqueViolationError");
+            return res.status(500).json(formatError("Failed to create account"));
+          }
+        } else {
+          console.error("Failed to auto-create account:", creationError);
+          return res.status(500).json(formatError("Failed to create account"));
+        }
       }
     }
 
