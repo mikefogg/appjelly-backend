@@ -1108,16 +1108,18 @@ class ConnectedAccount extends BaseModel {
    * - Bio fields: 5% each, max 20%
    */
   async getVoiceMatchScore() {
-    // Fetch all counts in parallel
-    const [sampleCount, rulesCount, feedbackCount, curatedTopicsCount] = await Promise.all([
+    // Fetch fresh connection data and all counts in parallel
+    // This avoids stale model instance issues after patchAndFetch
+    const [fresh, sampleCount, rulesCount, feedbackCount, curatedTopicsCount] = await Promise.all([
+      ConnectedAccount.query().findById(this.id),
       SamplePost.query().where("connected_account_id", this.id).resultSize(),
       Rule.query().where("connected_account_id", this.id).where("is_active", true).resultSize(),
       VoiceFeedback.query().where("connected_account_id", this.id).resultSize(),
       UserTopicPreference.query().where("connected_account_id", this.id).resultSize(),
     ]);
 
-    const topicsCount = this.getTopicsCount(curatedTopicsCount);
-    const bio = this.bio || {};
+    const topicsCount = fresh.getTopicsCount(curatedTopicsCount);
+    const bio = fresh.bio || {};
 
     const score = calculateVoiceMatchScore({ sampleCount, feedbackCount, rulesCount, topicsCount, bio });
 
