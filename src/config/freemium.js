@@ -4,7 +4,7 @@
  */
 const isDevelopment = process.env.NODE_ENV === "development";
 
-const FREE_POSTS_PER_CONNECTION = isDevelopment ? 1000 : 20;
+const FREE_POSTS_PER_CONNECTION = isDevelopment ? 1000 : 10;
 const FREE_CONNECTIONS_LIMIT = isDevelopment ? 5 : 1;
 const VOICE_MATCH_THRESHOLD = 40;
 

@@ -3,7 +3,7 @@
  * Generates a social media post from a user prompt
  */
 
-import { Account, Artifact, VoiceProfile } from "#src/models/index.js";
+import { Account, Artifact, VoiceProfile, Rule } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
 import { ghostQueue } from "#src/background/queues/index.js";
@@ -104,8 +104,11 @@ export default async function generatePost(job) {
       }
     }
 
-    // Get voice profile for this connected account
-    const voiceProfile = await VoiceProfile.getCurrentProfile(connected_account.id);
+    // Get voice profile and user rules for this connected account
+    const [voiceProfile, userRules] = await Promise.all([
+      VoiceProfile.getCurrentProfile(connected_account.id),
+      Rule.getActiveRules(connected_account.id),
+    ]);
 
     console.log(`[Generate Post] Generating from prompt: "${prompt.substring(0, 50)}..."`);
     console.log(`[Generate Post] Angle: ${angle}, Length: ${length}, Max chars: ${maxLength}`);
@@ -117,33 +120,56 @@ export default async function generatePost(job) {
     } else {
       console.log(`[Generate Post] No voice profile found`);
     }
+    if (userRules.length > 0) {
+      console.log(`[Generate Post] Using ${userRules.length} user rules`);
+    }
 
-    // Build the topic from prompt + optional instructions
-    let topic;
+    // Build the idea from prompt + optional instructions
+    let idea;
+    let contentType = angle || "post";
+
     if (originalContent) {
       // Regenerating existing post - use original content as base, apply angle/instructions
       const angleInstruction = angle ? `Rewrite this as a ${angle.replace(/_/g, " ")} style post.` : "Improve and refine this post.";
-      topic = `${angleInstruction}${instructions ? ` ${instructions}` : ""}\n\nOriginal post:\n${originalContent}${prompt && prompt !== originalContent ? `\n\nAdditional context: ${prompt}` : ""}`;
+      idea = `${angleInstruction}${instructions ? ` ${instructions}` : ""}\n\nOriginal post:\n${originalContent}${prompt && prompt !== originalContent ? `\n\nAdditional context: ${prompt}` : ""}`;
+      contentType = "regeneration";
     } else if (angle === "clean_up") {
       // For clean_up angle, the prompt is the content to polish
-      topic = `Polish and refine this draft into a better post while preserving the core message. Keep a similar length. Here's the draft:\n\n${prompt}`;
+      idea = `Polish and refine this draft into a better post while preserving the core message. Keep a similar length. Here's the draft:\n\n${prompt}`;
+      contentType = "improvement";
     } else if (instructions) {
-      // Add user instructions to the topic
-      topic = `${prompt}\n\nAdditional instructions: ${instructions}`;
+      // Add user instructions to the idea
+      idea = `${prompt}\n\nAdditional instructions: ${instructions}`;
     } else {
-      topic = prompt;
+      idea = prompt;
     }
 
-    // Generate post using AI service
-    const result = await AI.generatePost({
-      topic,
+    // Generate post using AI service with ideas parameter (skips Step 1, uses GPT-4.1)
+    const generateResult = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connected_account?.bio,
-      contentType: angle === "clean_up" ? "post" : (angle || "post"),
-      platform: platform,
-      maxLength: maxLength,
+      platform,
+      maxLength,
       formatting,
+      userRules: userRules.map(r => ({ rule_type: r.rule_type, content: r.content })),
+      ideas: [{ idea, content_type: contentType }],
     });
+
+    // Extract the single post result
+    const result = {
+      content: generateResult.posts[0]?.content || "",
+      metadata: {
+        model: generateResult.usage?.model,
+        total_tokens: generateResult.usage?.total_tokens || 0,
+        prompt_tokens: generateResult.usage?.input_tokens || 0,
+        completion_tokens: generateResult.usage?.output_tokens || 0,
+        cost_usd: 0, // Calculate if needed
+        generation_time_seconds: (generateResult.usage?.duration_ms || 0) / 1000,
+        ai_model: generateResult.usage?.model,
+        ai_provider: "openai",
+      },
+      usage: generateResult.usage,
+    };
 
     // Track AI usage
     if (result.usage) {

@@ -1,7 +1,7 @@
 import express from "express";
 import { param, body } from "express-validator";
 import { requireAuth, requireAppContext, handleValidationErrors } from "#src/middleware/index.js";
-import { Input, Artifact, ConnectedAccount, VoiceProfile, ArtifactVersion } from "#src/models/index.js";
+import { Input, Artifact, ConnectedAccount, VoiceProfile, ArtifactVersion, Rule } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import { FREEMIUM_CONFIG } from "#src/config/freemium.js";
 import {
@@ -529,23 +529,26 @@ router.post(
         }
       }
 
-      // Build topic for improvement
-      let improvementTopic;
+      // Build idea for improvement
+      let improvementIdea;
       if (instructions || lengthInstruction) {
-        improvementTopic = `Improve this post${instructions ? ` with the following instructions: "${instructions}"` : ""}.${lengthInstruction}${!lengthInstruction ? "\n\nIMPORTANT: Keep the same approximate length unless otherwise specified." : ""}
+        improvementIdea = `Improve this post${instructions ? ` with the following instructions: "${instructions}"` : ""}.${lengthInstruction}${!lengthInstruction ? "\n\nIMPORTANT: Keep the same approximate length unless otherwise specified." : ""}
 
 Original post:
 ${artifact.content}`;
       } else {
-        improvementTopic = `Improve this post while keeping the core message, tone, and similar length:
+        improvementIdea = `Improve this post while keeping the core message, tone, and similar length:
 
 ${artifact.content}`;
       }
 
-      // Get voice profile for this connected account
-      const voiceProfile = connection
-        ? await VoiceProfile.getCurrentProfile(connection.id)
-        : null;
+      // Get voice profile and user rules for this connected account
+      const [voiceProfile, userRules] = connection
+        ? await Promise.all([
+            VoiceProfile.getCurrentProfile(connection.id),
+            Rule.getActiveRules(connection.id),
+          ])
+        : [null, []];
 
       // Determine formatting preferences (use overrides if provided, else connection defaults)
       const contentPrefs = connection?.getContentPreferences() || {};
@@ -555,17 +558,23 @@ ${artifact.content}`;
         hashtags: hashtags || contentPrefs.hashtags,
       };
 
-      // Get AI improvement
+      // Get AI improvement using generatePosts with ideas (skips Step 1, uses GPT-4.1)
       const startTime = Date.now();
-      const result = await AI.generatePost({
-        topic: improvementTopic,
+      const generateResult = await AI.generatePosts({
         voiceProfile: voiceProfile?.toPromptFormat(),
         bio: connection?.bio,
         platform,
         maxLength: targetLength || 5000,
         formatting: formattingOverrides,
+        userRules: userRules.map(r => ({ rule_type: r.rule_type, content: r.content })),
+        ideas: [{ idea: improvementIdea, content_type: "improvement" }],
       });
       const generationTime = (Date.now() - startTime) / 1000;
+
+      // Extract the single post result
+      const result = {
+        content: generateResult.posts[0]?.content || "",
+      };
 
       // Create new version with improved content
       const newVersion = await artifact.createVersion(result.content, "improvement", {

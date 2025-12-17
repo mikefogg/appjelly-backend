@@ -5,6 +5,7 @@
 
 import OpenAI from "openai";
 import { getPlatformSystemPrompt } from "#src/config/platform-rules.js";
+import { getPrompt, getCurrentVersion } from "#src/config/prompts.js";
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -111,6 +112,45 @@ function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting
   sections.push("Write authentically as this person. Every post should feel like something they would actually say.");
 
   return sections.join("\n\n");
+}
+
+/**
+ * Build line break format template to show AI the expected structure
+ */
+function buildLineBreakTemplate(formatting) {
+  if (formatting?.line_breaks === "frequent") {
+    return `LINE BREAK FORMAT - Every post MUST follow this structure with blank lines between sentences:
+---
+First sentence or thought.
+
+Second sentence or thought.
+
+Third sentence.
+
+Final thought.
+---
+
+`;
+  } else if (formatting?.line_breaks === "moderate") {
+    return `LINE BREAK FORMAT - Group 2-3 related sentences, then add a blank line:
+---
+First thought and second thought here.
+
+Third thought connects to fourth thought.
+
+Final thought.
+---
+
+`;
+  } else if (formatting?.line_breaks === "minimal") {
+    return `LINE BREAK FORMAT - Write in flowing prose with minimal breaks:
+---
+First thought and second thought here. Third thought connects naturally. Final thought wraps it up.
+---
+
+`;
+  }
+  return "";
 }
 
 /**
@@ -356,9 +396,9 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
   },
 
   /**
-   * 2b. BATCH POST GENERATION
-   * Generate multiple posts in a single AI call based on persona
-   * Posts are generated based on WHO they are (persona), not specific topics
+   * 2b. BATCH POST GENERATION (Two-Step Pipeline)
+   * Step 1 (GPT-4o): Generate content ideas - creative, focused on WHAT to say
+   * Step 2 (GPT-4.1): Apply voice and formatting - literal, focused on HOW to say it
    *
    * @param {Object} options
    * @param {Object} options.voiceProfile - Voice profile object from VoiceProfile.toPromptFormat()
@@ -368,6 +408,9 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
    * @param {number} options.maxLength - Character limit per post (default 280)
    * @param {number} options.count - Number of posts to generate (default 3)
    * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
+   * @param {Array<Object>} options.userRules - User-defined rules [{ rule_type: 'never'|'always'|'prefer'|'tone', content: string }]
+   * @param {string} options.promptVersion - Optional prompt version override (default: current)
+   * @param {Array<Object>} options.ideas - Pre-defined ideas to skip Step 1 [{ idea: string, content_type: string }]
    * @returns {Array<Object>} [{ content: string, content_type: string, metadata: Object }]
    */
   async generatePosts({
@@ -378,67 +421,184 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     maxLength = 280,
     count = 3,
     formatting = null,
+    userRules = [],
+    promptVersion = null,
+    ideas = null,
   }) {
-    // Build system message with persona, voice, rules, and formatting
-    const systemMessage = buildContentSystemMessage({ voiceProfile, bio, formatting });
-
-    // Build formatting reminder for user prompt (reinforce what's in system message)
-    const formattingReminder = buildFormattingInstructionsList(formatting);
-    const formattingSection = formattingReminder.length > 0
-      ? `FORMATTING REQUIREMENTS:\n${formattingReminder.map(i => `- ${i}`).join("\n")}\n\n`
-      : "";
-
-    // User message is just the task
-    const userPrompt = `${formattingSection}Write ${count} social media posts. Think about:
-- What insights from your work would resonate with your audience?
-- What opinions or hot takes would you have?
-- What stories or experiences might you share?
-
-Content types to include: ${contentTypes.join(", ")}
-
-Requirements:
-- Target length: ~${maxLength} characters each (this is the GOAL, not a max limit)
-- Write posts relevant to your work and audience
-- Don't make up specific accomplishments or numbers
-
-Return JSON: { "posts": [{ "content_type": "story|hot_take|insight|etc", "content": "the post text" }] }`;
-
-    console.log(`[AI.generatePosts] System:\n${systemMessage}`);
-    console.log(`[AI.generatePosts] User:\n${userPrompt}`);
-
     const startTime = Date.now();
-    const model = "gpt-4o";
 
-    // Scale max_tokens based on target length and count (roughly 4 chars per token + JSON overhead)
-    const estimatedTokens = Math.ceil((maxLength * count) / 3) + 200;
-    const maxTokens = Math.min(Math.max(estimatedTokens, 1500), 8000);
+    // Get versioned prompts
+    const version = promptVersion || getCurrentVersion("generatePosts");
+    const prompts = getPrompt("generatePosts", version);
 
-    const response = await openai.chat.completions.create({
-      model,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemMessage },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.8,
-      max_tokens: maxTokens,
+    let rawIdeas;
+    let step1Usage = null;
+    const step1Model = prompts.step1Model;
+
+    // ========== STEP 1: Generate content ideas (or use provided ideas) ==========
+    if (ideas && ideas.length > 0) {
+      // Skip Step 1 - use provided ideas directly
+      rawIdeas = ideas;
+      console.log(`[AI.generatePosts] Step 1 SKIPPED - using ${ideas.length} provided idea(s)`);
+      rawIdeas.forEach((idea, i) => console.log(`  ${i + 1}. [${idea.content_type}] ${idea.idea?.substring(0, 80)}...`));
+    } else {
+      // Run Step 1 - generate ideas from persona context
+      // Build persona context for idea generation
+      const personaSummary = voiceProfile?.persona_summary;
+      const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+
+      let personaContext = "";
+      if (personaSummary) {
+        personaContext = personaSummary;
+      } else if (hasBio) {
+        personaContext = [
+          bio.what_you_do ? `Someone who ${bio.what_you_do}` : null,
+          bio.audience ? `Audience: ${bio.audience}` : null,
+          bio.perspective ? `Perspective: ${bio.perspective}` : null,
+        ].filter(Boolean).join(". ");
+      }
+
+      const step1System = prompts.step1System();
+      const step1User = prompts.step1User({ personaContext, contentTypes, count });
+
+      console.log(`[AI.generatePosts] Step 1 (ideas) - System:\n${step1System}`);
+      console.log(`[AI.generatePosts] Step 1 (ideas) - User:\n${step1User}`);
+
+      const step1Response = await openai.chat.completions.create({
+        model: step1Model,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: step1System },
+          { role: "user", content: step1User },
+        ],
+        temperature: 0.9,
+        max_tokens: 1500,
+      });
+
+      const step1Result = JSON.parse(step1Response.choices[0].message.content);
+      rawIdeas = step1Result.posts || [];
+      step1Usage = extractUsageData(step1Response, step1Model, startTime);
+
+      console.log(`[AI.generatePosts] Step 1 complete: ${rawIdeas.length} ideas generated`);
+      rawIdeas.forEach((idea, i) => console.log(`  ${i + 1}. [${idea.content_type}] ${idea.idea?.substring(0, 80)}...`));
+    }
+
+    // ========== STEP 2: Apply voice and formatting (GPT-4.1 - literal) ==========
+    const step2Model = prompts.step2Model;
+    const step2StartTime = Date.now();
+
+    // Build voice instructions - concise and clear
+    const voiceInstructions = voiceProfile ? [
+      voiceProfile.voice_summary,
+      voiceProfile.sentence_patterns ? `Sentence style: ${voiceProfile.sentence_patterns}` : null,
+      voiceProfile.tone_markers ? `Tone: ${voiceProfile.tone_markers}` : null,
+    ].filter(Boolean).join("\n") : "Write in a natural, conversational tone.";
+
+    // Build formatting rules
+    const formatRules = buildFormattingInstructionsList(formatting);
+    const lineBreakTemplate = buildLineBreakTemplate(formatting);
+
+    // Combine voice profile hard_rules with user rules
+    const voiceHardRules = voiceProfile?.hard_rules || [];
+
+    // Process user rules by type
+    const userNeverRules = userRules
+      .filter(r => r.rule_type === "never" && r.content)
+      .map(r => r.content);
+    const userAlwaysRules = userRules
+      .filter(r => r.rule_type === "always" && r.content)
+      .map(r => r.content);
+    const userPreferRules = userRules
+      .filter(r => r.rule_type === "prefer" && r.content)
+      .map(r => r.content);
+    const userToneRules = userRules
+      .filter(r => r.rule_type === "tone" && r.content)
+      .map(r => r.content);
+
+    // Merge never rules (voice hard_rules + user never rules)
+    const neverRules = [...voiceHardRules, ...userNeverRules];
+
+    // Always rules from user (these are required in every post)
+    const alwaysRules = userAlwaysRules;
+
+    // Add prefer/tone rules to voice instructions if present
+    let enhancedVoiceInstructions = voiceInstructions;
+    if (userPreferRules.length > 0) {
+      enhancedVoiceInstructions += `\nPreferences: ${userPreferRules.join("; ")}`;
+    }
+    if (userToneRules.length > 0) {
+      enhancedVoiceInstructions += `\nTone adjustments: ${userToneRules.join("; ")}`;
+    }
+
+    const step2System = prompts.step2System();
+
+    // Process all posts in parallel
+    const step2Promises = rawIdeas.map(async (idea) => {
+      const step2User = prompts.step2User({
+        idea: idea.idea,
+        voiceInstructions: enhancedVoiceInstructions,
+        formatRules,
+        neverRules,
+        alwaysRules,
+        lineBreakTemplate,
+        maxLength,
+      });
+
+      const response = await openai.chat.completions.create({
+        model: step2Model,
+        messages: [
+          { role: "system", content: step2System },
+          { role: "user", content: step2User },
+        ],
+        temperature: 0.3, // Low temp for consistent formatting
+        max_tokens: 1000,
+      });
+
+      return {
+        content: response.choices[0].message.content.trim(),
+        content_type: idea.content_type,
+        usage: response.usage,
+      };
     });
 
-    const result = JSON.parse(response.choices[0].message.content);
-    const posts = result.posts || [];
-    const usage = extractUsageData(response, model, startTime);
+    const step2Results = await Promise.all(step2Promises);
+    const step2Usage = extractUsageData(
+      { usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } },
+      step2Model,
+      step2StartTime
+    );
+
+    // Aggregate step 2 token usage
+    let step2TotalTokens = 0;
+    step2Results.forEach(r => {
+      step2TotalTokens += r.usage?.total_tokens || 0;
+    });
+
+    console.log(`[AI.generatePosts] Step 2 complete: ${step2Results.length} posts formatted`);
+    step2Results.forEach((post, i) => console.log(`  ${i + 1}. [${post.content_type}] ${post.content?.substring(0, 80)}...`));
+
+    // Combine usage from both steps (step1Usage may be null if ideas were provided)
+    const modelUsed = step1Usage ? `${step1Model}+${step2Model}` : step2Model;
+    const step1Tokens = step1Usage?.total_tokens || 0;
+    const totalUsage = {
+      model: modelUsed,
+      input_tokens: (step1Usage?.input_tokens || 0) + step2TotalTokens,
+      output_tokens: step1Usage?.output_tokens || 0,
+      total_tokens: step1Tokens + step2TotalTokens,
+      duration_ms: Date.now() - startTime,
+    };
 
     return {
-      posts: posts.map((post) => ({
+      posts: step2Results.map((post) => ({
         content: post.content,
         content_type: post.content_type,
         metadata: {
-          model,
-          tokens: Math.round((response.usage?.total_tokens || 0) / posts.length),
+          model: modelUsed,
+          tokens: Math.round((step1Tokens + step2TotalTokens) / step2Results.length),
           platform,
         },
       })),
-      usage,
+      usage: totalUsage,
     };
   },
 
