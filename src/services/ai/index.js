@@ -84,10 +84,10 @@ function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting
     .slice(0, 3);
 
   if (exampleOutputs.length > 0) {
-    sections.push(`EXAMPLE POSTS IN YOUR VOICE (match this style exactly):\n${exampleOutputs.map(ex => `---\n${ex}\n---`).join("\n\n")}`);
+    sections.push(`EXAMPLE POSTS IN YOUR VOICE (match the sentence structure, tone, and rhythm - NOT the specific topics):\n${exampleOutputs.map(ex => `---\n${ex}\n---`).join("\n\n")}`);
   } else if (samplePosts.length > 0) {
     const samples = samplePosts.slice(0, 2).map((p, i) => `--- SAMPLE ${i + 1} ---\n${p.content}\n---`).join("\n\n");
-    sections.push(`REFERENCE POSTS (match this style exactly):\n${samples}`);
+    sections.push(`REFERENCE POSTS (match the sentence structure, tone, and rhythm - NOT the specific topics):\n${samples}`);
   }
 
   // 4. HARD RULES - Things to never do (filter out rules that conflict with user's explicit preferences)
@@ -226,7 +226,7 @@ function buildStyleSection(voiceProfile) {
   // Add examples - these are critical for the AI to understand the actual style
   const examples = voiceProfile.examples || {};
   if (Object.keys(examples).length > 0) {
-    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match the tone and word choice):`;
+    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match the sentence structure, tone, and rhythm - NOT the specific topics):`;
     for (const [type, example] of Object.entries(examples)) {
       if (example?.output) {
         prompt += `\n\n[${type}]:\n${example.output}`;
