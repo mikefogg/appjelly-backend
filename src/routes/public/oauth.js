@@ -15,6 +15,7 @@ import {
 } from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
 import { ghostQueue, twitterQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
+import { getSupportedPlatforms, isPlatformSupported } from "#src/config/platform-lengths.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
 import linkedinOAuth from "#src/services/oauth/LinkedInOAuthService.js";
@@ -614,10 +615,9 @@ router.post(
       }
 
       // Validate platform if provided
-      const validPlatforms = ["twitter", "linkedin", "threads", "facebook", "ghost", "custom", null];
-      if (platform && !validPlatforms.includes(platform)) {
+      if (platform && !isPlatformSupported(platform)) {
         return res.status(400).json(
-          formatError(`Invalid platform. Supported: ${validPlatforms.filter(p => p).join(", ")}`, 400)
+          formatError(`Invalid platform. Supported: ${getSupportedPlatforms().join(", ")}`, 400)
         );
       }
 
@@ -721,10 +721,9 @@ router.patch(
           );
         }
 
-        const validPlatforms = ["twitter", "linkedin", "threads", "facebook", "ghost", "custom", null];
-        if (platform && !validPlatforms.includes(platform)) {
+        if (platform && !isPlatformSupported(platform)) {
           return res.status(400).json(
-            formatError(`Invalid platform. Supported: ${validPlatforms.filter(p => p).join(", ")}`, 400)
+            formatError(`Invalid platform. Supported: ${getSupportedPlatforms().join(", ")}`, 400)
           );
         }
 

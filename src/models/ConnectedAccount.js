@@ -34,7 +34,7 @@ class ConnectedAccount extends BaseModel {
         app_id: { type: "string", format: "uuid" },
         platform: {
           type: ["string", "null"],
-          enum: ["twitter", "facebook", "linkedin", "threads", "ghost", "custom", null],
+          enum: ["twitter", "facebook", "linkedin", "threads", "instagram", "tiktok", "ghost", "custom", null],
           default: "custom",
         },
         label: { type: ["string", "null"], minLength: 1 }, // User-facing name

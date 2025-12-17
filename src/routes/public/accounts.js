@@ -36,16 +36,8 @@ const updateAccountValidators = [
   // etc.
 ];
 
-router.get("/me", (req, res, next) => {
-  console.log("[accounts/me] Route matched, headers:", {
-    "x-app-slug": req.headers["x-app-slug"],
-    "x-app": req.headers["x-app"],
-    authorization: req.headers.authorization ? "present" : "missing",
-  });
-  next();
-}, requireAppContext, requireAuth, async (req, res) => {
+router.get("/me", requireAppContext, requireAuth, async (req, res) => {
   try {
-    console.log("[accounts/me] Passed middleware, fetching account");
     const account = res.locals.account;
     const { ConnectedAccount } = await import("#src/models/index.js");
 

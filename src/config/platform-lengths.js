@@ -121,3 +121,20 @@ export function getNextBucketDown(currentBucket) {
   if (currentBucket === "medium") return "short";
   return null; // Already at short
 }
+
+/**
+ * Get list of all supported platforms
+ * @returns {string[]}
+ */
+export function getSupportedPlatforms() {
+  return Object.keys(PLATFORM_LENGTHS);
+}
+
+/**
+ * Check if a platform is supported
+ * @param {string} platform
+ * @returns {boolean}
+ */
+export function isPlatformSupported(platform) {
+  return platform in PLATFORM_LENGTHS;
+}

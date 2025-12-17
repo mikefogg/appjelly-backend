@@ -3,7 +3,6 @@ import { Account, App, ConnectedAccount } from "#src/models/index.js";
 import formatError from "#src/helpers/format-error.js";
 
 export const requireAuth = async (req, res, next) => {
-  console.log("[requireAuth] Starting...");
   try {
     // First, validate the Clerk token
     const clerkMiddleware = clerkRequireAuth({
@@ -17,17 +16,14 @@ export const requireAuth = async (req, res, next) => {
     });
 
     // Run Clerk's auth middleware
-    console.log("[requireAuth] Running Clerk middleware...");
     await new Promise((resolve, reject) => {
       clerkMiddleware(req, res, (err) => {
         if (err) reject(err);
         else resolve();
       });
     });
-    console.log("[requireAuth] Clerk middleware passed");
 
     const authUser = req.auth();
-    console.log("[requireAuth] authUser.userId:", authUser?.userId);
 
     // If we get here, the user is authenticated
     if (!authUser?.userId) {
@@ -105,11 +101,6 @@ export const requireAuth = async (req, res, next) => {
 
     // Check if account is soft deleted
     if (account?.metadata?.deleted_at) {
-      console.log("[requireAuth] 404 - Account soft deleted:", {
-        userId,
-        appId: app.id,
-        deletedAt: account.metadata.deleted_at,
-      });
       return res
         .status(404)
         .json(formatError("Account not found for this app", 404));
@@ -124,11 +115,8 @@ export const requireAuth = async (req, res, next) => {
         });
         // Update local account object
         account.timezone = timezoneHeader;
-        // The generation_time_utc will be auto-calculated by the model's beforeUpdate hook
-        console.log(`Auto-set timezone for account ${account.id}: ${timezoneHeader}`);
       }
     } catch (timezoneError) {
-      console.warn("Failed to auto-set timezone:", timezoneError);
       // Don't fail the request if timezone update fails
     }
 
@@ -142,10 +130,8 @@ export const requireAuth = async (req, res, next) => {
 };
 
 export const requireAppContext = async (req, res, next) => {
-  console.log("[requireAppContext] Starting...");
   try {
     const appSlug = req.headers["x-app-slug"] || req.headers["x-app"];
-    console.log("[requireAppContext] appSlug:", appSlug);
 
     if (!appSlug) {
       return res
@@ -160,14 +146,9 @@ export const requireAppContext = async (req, res, next) => {
 
     const app = await App.query().findOne({ slug: appSlug });
     if (!app) {
-      console.log("[requireAppContext] 404 - App not found:", {
-        appSlug,
-        path: req.path,
-      });
       return res.status(404).json(formatError("App not found", 404));
     }
 
-    console.log("[requireAppContext] App found:", app.id, app.slug);
     res.locals.app = app;
     next();
   } catch (error) {
