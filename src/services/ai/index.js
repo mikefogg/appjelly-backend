@@ -40,10 +40,9 @@ function getModelParams(model, { tokens, temperature }) {
  * @param {Object} options.voiceProfile - Voice profile with persona_summary, voice_summary, etc.
  * @param {Object} options.bio - Structured bio { what_you_do, audience, perspective, differentiator }
  * @param {Object} options.formatting - Formatting preferences { line_breaks, emojis }
- * @param {Array<Object>} options.samplePosts - Optional sample posts for reference
  * @returns {string} System message for AI
  */
-function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting = null, samplePosts = [] }) {
+function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting = null }) {
   const sections = [];
 
   // 1. PERSONA - Who you are
@@ -76,19 +75,11 @@ function buildContentSystemMessage({ voiceProfile = null, bio = null, formatting
     sections.push(`HOW YOU WRITE:\n${voiceLines.join("\n")}`);
   }
 
-  // 3. EXAMPLES - Reference posts (from voice profile or sample posts)
-  const examples = voiceProfile?.examples || {};
-  const exampleOutputs = Object.entries(examples)
-    .map(([type, ex]) => ex?.output)
-    .filter(Boolean)
-    .slice(0, 3);
-
-  if (exampleOutputs.length > 0) {
-    sections.push(`EXAMPLE POSTS IN YOUR VOICE (match the sentence structure, tone, and rhythm - NOT the specific topics):\n${exampleOutputs.map(ex => `---\n${ex}\n---`).join("\n\n")}`);
-  } else if (samplePosts.length > 0) {
-    const samples = samplePosts.slice(0, 2).map((p, i) => `--- SAMPLE ${i + 1} ---\n${p.content}\n---`).join("\n\n");
-    sections.push(`REFERENCE POSTS (match the sentence structure, tone, and rhythm - NOT the specific topics):\n${samples}`);
-  }
+  // Note: We intentionally don't include sample posts or voice profile examples
+  // in generation prompts as the AI tends to copy their content/topics rather
+  // than just matching the style. The voice profile fields (voice_summary,
+  // sentence_patterns, vocabulary_notes, tone_markers) provide sufficient
+  // style guidance without the templating risk.
 
   // 4. HARD RULES - Things to never do (filter out rules that conflict with user's explicit preferences)
   let hardRules = voiceProfile?.hard_rules || [];
@@ -223,18 +214,10 @@ function buildStyleSection(voiceProfile) {
     prompt += `\n\n❌ NEVER:\n${hardRules.map((r) => `- ${r}`).join("\n")}`;
   }
 
-  // Add examples - these are critical for the AI to understand the actual style
-  const examples = voiceProfile.examples || {};
-  if (Object.keys(examples).length > 0) {
-    prompt += `\n\n📝 EXAMPLE OUTPUTS IN THIS VOICE (match the sentence structure, tone, and rhythm - NOT the specific topics):`;
-    for (const [type, example] of Object.entries(examples)) {
-      if (example?.output) {
-        prompt += `\n\n[${type}]:\n${example.output}`;
-      }
-    }
-  }
+  // Note: We intentionally don't include examples in generation prompts
+  // as the AI tends to copy their content rather than just matching the style.
 
-  prompt += `\n\n⚠️ CRITICAL: Match the tone, vocabulary, and sentence rhythm from the examples. The FORMATTING REQUIREMENTS section (if present) takes precedence for line breaks and emoji usage.`;
+  prompt += `\n\n⚠️ CRITICAL: Match the tone, vocabulary, and sentence rhythm described above. The FORMATTING REQUIREMENTS section (if present) takes precedence for line breaks and emoji usage.`;
 
   prompt += `\n\nThis voice is non-negotiable. Every word must reflect this style.`;
 
@@ -672,8 +655,8 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
       0.95
     );
 
-    // Step 2: Generate example posts using the analyzed voice + original samples as reference
-    const { examples, usage: examplesUsage } = await this.generateExamples(profile, samplePosts, formatting);
+    // Step 2: Generate example posts using the analyzed voice profile
+    const { examples, usage: examplesUsage } = await this.generateExamples(profile, formatting);
 
     // Sanitize hard_rules - must be an array of strings
     let hardRules = profile.hard_rules;
@@ -707,14 +690,13 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
 
   /**
    * 6. GENERATE EXAMPLES
-   * Generate example posts using a voice profile and reference samples
+   * Generate example posts using a voice profile
    *
    * @param {Object} profile - Voice profile fields
-   * @param {Array<Object>} samplePosts - Original sample posts for reference
    * @param {Object} formatting - Formatting preferences { line_breaks, emojis }
    * @returns {Object} { hot_take, story, insight }
    */
-  async generateExamples(profile, samplePosts = [], formatting = null) {
+  async generateExamples(profile, formatting = null) {
     const startTime = Date.now();
     const model = "gpt-4o";
 
@@ -724,7 +706,6 @@ Be specific and actionable. Another AI will use this to write in their voice.`;
     const systemMessage = buildContentSystemMessage({
       voiceProfile: profile,
       formatting,
-      samplePosts,
     });
 
     const examplePrompts = {
