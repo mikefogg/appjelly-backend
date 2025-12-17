@@ -29,6 +29,17 @@ services:
     numInstances: 1
     plan: standard
 
+  # Our Twitter Worker Class - Handles Twitter API calls (sync-network, curated topics)
+  # Throng handles multiple workers internally via TWITTER_WORKERS env var (default: 1)
+  - type: worker
+    name: ghost-twitter-worker
+    runtime: node
+    branch: ghost
+    buildCommand: npm install
+    startCommand: node src/background/managers/twitter.js
+    numInstances: 1
+    plan: starter
+
   # Our Cleanup Worker Class - Handles expired media and cleanup tasks
   # Throng handles multiple workers internally via CLEANUP_WORKERS env var (default: 1)
   - type: worker

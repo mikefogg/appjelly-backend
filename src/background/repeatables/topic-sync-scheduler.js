@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { ghostQueue, JOB_DISPATCH_CURATED_TOPICS } from "#src/background/queues/index.js";
+import { twitterQueue, JOB_DISPATCH_CURATED_TOPICS } from "#src/background/queues/index.js";
 import { clearAllRepeatableJobs } from "#src/utils/redis.js";
 
 const key = "Topic Sync Scheduler";
@@ -7,7 +7,7 @@ const key = "Topic Sync Scheduler";
 export const startScheduledJobs = async () => {
   try {
     // Add repeatable job - every hour
-    await ghostQueue.add(
+    await twitterQueue.add(
       JOB_DISPATCH_CURATED_TOPICS,
       {
         triggeredAt: new Date().toISOString(),
@@ -32,7 +32,7 @@ export const startScheduledJobs = async () => {
 export const resetScheduledJobs = async () => {
   try {
     // Clear all of our repeatables first
-    await clearAllRepeatableJobs(ghostQueue);
+    await clearAllRepeatableJobs(twitterQueue);
     console.log(chalk.dim("[%s] Cleared repeatable jobs..."), key);
 
     // Small delay to ensure Redis consistency after clearing
@@ -48,7 +48,7 @@ export const triggerManualTopicDispatch = async () => {
   try {
     console.log("🚀 Manually triggering curated topics dispatch...");
 
-    const job = await ghostQueue.add(JOB_DISPATCH_CURATED_TOPICS, {
+    const job = await twitterQueue.add(JOB_DISPATCH_CURATED_TOPICS, {
       manual: true,
       triggeredAt: new Date().toISOString(),
     });
@@ -64,7 +64,7 @@ export const triggerManualTopicDispatch = async () => {
 // Helper to check scheduled topic sync jobs
 export const getScheduledTopicSyncJobs = async () => {
   try {
-    const repeatableJobs = await ghostQueue.getRepeatableJobs();
+    const repeatableJobs = await twitterQueue.getRepeatableJobs();
     return repeatableJobs
       .filter(job => job.name === JOB_DISPATCH_CURATED_TOPICS)
       .map(job => ({

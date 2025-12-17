@@ -3,7 +3,7 @@
  * Usage: npm run sync-network <connection_id>
  */
 
-import { ghostQueue, JOB_SYNC_NETWORK } from "../src/background/queues/index.js";
+import { twitterQueue, JOB_SYNC_NETWORK } from "../src/background/queues/index.js";
 import { ConnectedAccount } from "../src/models/index.js";
 
 const connectionId = process.argv[2];
@@ -28,14 +28,14 @@ async function syncNetwork() {
     console.log(`✅ Found connection: ${connection.username} (${connection.platform})`);
 
     // Add job to queue (use connection ID as job ID to prevent duplicates)
-    const job = await ghostQueue.add(JOB_SYNC_NETWORK, {
+    const job = await twitterQueue.add(JOB_SYNC_NETWORK, {
       connectedAccountId: connectionId,
     }, {
       jobId: `sync-network-${connectionId}`,
     });
 
     console.log(`✅ Job queued successfully (ID: ${job.id})`);
-    console.log(`📊 Monitor job status in the ghost worker logs`);
+    console.log(`📊 Monitor job status in the twitter worker logs`);
 
     process.exit(0);
   } catch (error) {

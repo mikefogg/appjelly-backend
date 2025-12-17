@@ -1,44 +1,11 @@
 import throng from "throng";
 import { WorkerPro } from "@taskforcesh/bullmq-pro";
 import { redisOpts } from "#src/utils/redis.js";
-import {
-  QUEUE_GHOST,
-  QUEUE_SUBSCRIPTION_PROCESSING,
-  JOB_SYNC_NETWORK,
-  JOB_ANALYZE_STYLE,
-  JOB_GENERATE_SUGGESTIONS,
-  JOB_GENERATE_SUGGESTIONS_AUTOMATED,
-  JOB_GENERATE_POST,
-  JOB_GENERATE_VOICE_PROFILE,
-  JOB_PROCESS_VOICE_FEEDBACK,
-  JOB_DISPATCH_CURATED_TOPICS,
-  JOB_SYNC_CURATED_TOPIC,
-  JOB_DIGEST_RECENT_TOPICS,
-  JOB_GENERATE_EVERGREEN_TOPICS,
-  JOB_SEND_PUSH_NOTIFICATION,
-  JOB_PROCESS_REVENUECAT_WEBHOOK,
-  JOB_SYNC_SUBSCRIPTION_STATUS,
-} from "#src/background/queues/index.js";
-
-// Import job processors
-import syncNetwork from "#src/background/jobs/ghost/sync-network.js";
-import analyzeStyle from "#src/background/jobs/ghost/analyze-style.js";
-import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions.js";
-import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
-import generatePost from "#src/background/jobs/ghost/generate-post.js";
-import generateVoiceProfile from "#src/background/jobs/ghost/generate-voice-profile.js";
-import processVoiceFeedback from "#src/background/jobs/ghost/process-voice-feedback.js";
-import dispatchCuratedTopics from "#src/background/jobs/ghost/dispatch-curated-topics.js";
-import syncCuratedTopic from "#src/background/jobs/ghost/sync-curated-topic.js";
-import digestRecentTopics from "#src/background/jobs/ghost/digest-recent-topics.js";
-import generateEvergreenTopics from "#src/background/jobs/ghost/generate-evergreen-topics.js";
-import sendPushNotificationJob from "#src/background/jobs/ghost/send-push-notification.js";
-import processRevenueCatWebhook from "#src/background/jobs/subscriptions/process-revenuecat-webhook.js";
-import syncSubscriptionStatus from "#src/background/jobs/subscriptions/sync-subscription-status.js";
+import { QUEUE_GHOST, QUEUE_SUBSCRIPTION_PROCESSING } from "#src/background/queues/index.js";
+import processJob from "#src/background/jobs/process-job.js";
 
 // Import schedulers
 import * as suggestionScheduler from "#src/background/repeatables/suggestion-scheduler.js";
-import * as topicSyncScheduler from "#src/background/repeatables/topic-sync-scheduler.js";
 
 const key = "Ghost Manager";
 const workers = parseInt(process.env.GHOST_WORKERS || "2");
@@ -55,46 +22,7 @@ function start(id) {
           console.log(`Processing Ghost job: ${job.name} (ID: ${job.id})`);
 
           try {
-            switch (job.name) {
-              case JOB_SYNC_NETWORK:
-                return await syncNetwork(job);
-
-              case JOB_ANALYZE_STYLE:
-                return await analyzeStyle(job);
-
-              case JOB_GENERATE_SUGGESTIONS:
-                return await generateSuggestions(job);
-
-              case JOB_GENERATE_SUGGESTIONS_AUTOMATED:
-                return await generateSuggestionsAutomated(job);
-
-              case JOB_GENERATE_POST:
-                return await generatePost(job);
-
-              case JOB_GENERATE_VOICE_PROFILE:
-                return await generateVoiceProfile(job);
-
-              case JOB_PROCESS_VOICE_FEEDBACK:
-                return await processVoiceFeedback(job);
-
-              case JOB_DISPATCH_CURATED_TOPICS:
-                return await dispatchCuratedTopics(job);
-
-              case JOB_SYNC_CURATED_TOPIC:
-                return await syncCuratedTopic(job);
-
-              case JOB_DIGEST_RECENT_TOPICS:
-                return await digestRecentTopics(job);
-
-              case JOB_GENERATE_EVERGREEN_TOPICS:
-                return await generateEvergreenTopics(job);
-
-              case JOB_SEND_PUSH_NOTIFICATION:
-                return await sendPushNotificationJob(job);
-
-              default:
-                throw new Error(`Unknown Ghost job type: ${job.name}`);
-            }
+            return await processJob(job);
           } catch (error) {
             console.error(`Ghost job ${job.name} failed:`, error);
             throw error;
@@ -112,12 +40,6 @@ function start(id) {
       worker.on("completed", (job, result) => {
         console.log(`✅ Ghost job ${job.name} (ID: ${job.id}) completed successfully`);
         if (result) {
-          if (result.posts_synced) {
-            console.log(`   - Synced ${result.posts_synced} posts`);
-          }
-          if (result.profiles_synced) {
-            console.log(`   - Synced ${result.profiles_synced} profiles`);
-          }
           if (result.posts_analyzed) {
             console.log(`   - Analyzed ${result.posts_analyzed} posts`);
           }
@@ -129,15 +51,6 @@ function start(id) {
           }
           if (result.content_length) {
             console.log(`   - Generated post (${result.content_length} chars)`);
-          }
-          if (result.dispatched) {
-            console.log(`   - Dispatched ${result.dispatched} sync jobs`);
-          }
-          if (result.new_posts) {
-            console.log(`   - ${result.new_posts} new, ${result.updated_posts} updated`);
-          }
-          if (result.trending_topics_stored) {
-            console.log(`   - Stored ${result.trending_topics_stored} trending topics`);
           }
         }
       });
@@ -161,16 +74,7 @@ function start(id) {
           console.log(`Processing subscription job: ${job.name} (ID: ${job.id})`);
 
           try {
-            switch (job.name) {
-              case JOB_PROCESS_REVENUECAT_WEBHOOK:
-                return await processRevenueCatWebhook(job);
-
-              case JOB_SYNC_SUBSCRIPTION_STATUS:
-                return await syncSubscriptionStatus(job);
-
-              default:
-                throw new Error(`Unknown subscription job type: ${job.name}`);
-            }
+            return await processJob(job);
           } catch (error) {
             console.error(`Subscription job ${job.name} failed:`, error);
             throw error;
@@ -202,9 +106,7 @@ function start(id) {
       // Set up repeatable jobs
       console.log(`[${key}] Worker ${id} setting up repeatable jobs...`);
       await suggestionScheduler.resetScheduledJobs();
-      await topicSyncScheduler.resetScheduledJobs();
       await suggestionScheduler.startScheduledJobs();
-      await topicSyncScheduler.startScheduledJobs();
       console.log(`[${key}] ✅ Repeating jobs configured`);
 
       console.log(`[${key}] Worker ${id} started successfully`);

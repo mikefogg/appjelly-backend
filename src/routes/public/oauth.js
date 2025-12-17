@@ -14,7 +14,7 @@ import {
   messageResponse,
 } from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
-import { ghostQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
+import { ghostQueue, twitterQueue, JOB_SYNC_NETWORK, JOB_ANALYZE_STYLE, JOB_GENERATE_VOICE_PROFILE } from "#src/background/queues/index.js";
 import twitterOAuth from "#src/services/oauth/TwitterOAuthService.js";
 import facebookOAuth from "#src/services/oauth/FacebookOAuthService.js";
 import linkedinOAuth from "#src/services/oauth/LinkedInOAuthService.js";
@@ -382,7 +382,7 @@ router.get(
           });
 
           // Trigger background sync jobs (don't await - let them run async)
-          ghostQueue.add(JOB_SYNC_NETWORK, {
+          twitterQueue.add(JOB_SYNC_NETWORK, {
             connectedAccountId: connection.id,
           }).catch(err => console.error("Failed to queue sync job:", err));
 
@@ -459,7 +459,7 @@ router.get(
 
       // Trigger background sync jobs in parallel
       await Promise.all([
-        ghostQueue.add(JOB_SYNC_NETWORK, {
+        twitterQueue.add(JOB_SYNC_NETWORK, {
           connectedAccountId: connection.id,
         }),
         ghostQueue.add(JOB_ANALYZE_STYLE, {
@@ -546,7 +546,7 @@ router.post(
 
       // Trigger background sync jobs in parallel
       await Promise.all([
-        ghostQueue.add(JOB_SYNC_NETWORK, {
+        twitterQueue.add(JOB_SYNC_NETWORK, {
           connectedAccountId: connection.id,
         }),
         ghostQueue.add(JOB_ANALYZE_STYLE, {

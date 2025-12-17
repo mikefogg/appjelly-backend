@@ -22,6 +22,7 @@ export const QUEUE_VIDEO_GENERATION = "video-generation";
 export const QUEUE_CONTENT_SAFETY = "content-safety";
 export const QUEUE_CLEANUP = "cleanup";
 export const QUEUE_GHOST = "ghost";
+export const QUEUE_TWITTER = "twitter";
 
 // Queue Instances
 export const subscriptionQueue = new Queue(QUEUE_SUBSCRIPTION_PROCESSING, { connection: redisOpts, defaultJobOptions });
@@ -33,6 +34,7 @@ export const videoQueue = new Queue(QUEUE_VIDEO_GENERATION, { connection: redisO
 export const safetyQueue = new Queue(QUEUE_CONTENT_SAFETY, { connection: redisOpts, defaultJobOptions });
 export const cleanupQueue = new Queue(QUEUE_CLEANUP, { connection: redisOpts, defaultJobOptions });
 export const ghostQueue = new Queue(QUEUE_GHOST, { connection: redisOpts, defaultJobOptions });
+export const twitterQueue = new Queue(QUEUE_TWITTER, { connection: redisOpts, defaultJobOptions });
 
 // Job Constants
 // Subscription Jobs
@@ -152,17 +154,20 @@ export const VIDEO_JOBS = {
 };
 
 export const GHOST_JOBS = {
-  SYNC_NETWORK: JOB_SYNC_NETWORK,
   ANALYZE_STYLE: JOB_ANALYZE_STYLE,
   GENERATE_SUGGESTIONS: JOB_GENERATE_SUGGESTIONS,
   GENERATE_SUGGESTIONS_AUTOMATED: JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   GENERATE_POST: JOB_GENERATE_POST,
   GENERATE_VOICE_PROFILE: JOB_GENERATE_VOICE_PROFILE,
   PROCESS_VOICE_FEEDBACK: JOB_PROCESS_VOICE_FEEDBACK,
+  GENERATE_EVERGREEN_TOPICS: JOB_GENERATE_EVERGREEN_TOPICS,
+};
+
+export const TWITTER_JOBS = {
+  SYNC_NETWORK: JOB_SYNC_NETWORK,
   DISPATCH_CURATED_TOPICS: JOB_DISPATCH_CURATED_TOPICS,
   SYNC_CURATED_TOPIC: JOB_SYNC_CURATED_TOPIC,
   DIGEST_RECENT_TOPICS: JOB_DIGEST_RECENT_TOPICS,
-  GENERATE_EVERGREEN_TOPICS: JOB_GENERATE_EVERGREEN_TOPICS,
 };
 
 // Queue health check utility
@@ -177,6 +182,7 @@ export const getQueueHealth = async () => {
     { name: "safety", queue: safetyQueue },
     { name: "cleanup", queue: cleanupQueue },
     { name: "ghost", queue: ghostQueue },
+    { name: "twitter", queue: twitterQueue },
   ];
 
   const health = {};

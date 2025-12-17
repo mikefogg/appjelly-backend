@@ -5,7 +5,7 @@
  */
 
 import { CuratedTopic } from "#src/models/index.js";
-import { ghostQueue } from "#src/background/queues/index.js";
+import { twitterQueue } from "#src/background/queues/index.js";
 import { JOB_SYNC_CURATED_TOPIC } from "./sync-curated-topic.js";
 
 export const JOB_DISPATCH_CURATED_TOPICS = "dispatch-curated-topics";
@@ -46,7 +46,7 @@ export default async function dispatchCuratedTopics(job) {
         `with ${delay}ms delay (runs at ${scheduledTime.toISOString()})`
       );
 
-      await ghostQueue.add(
+      await twitterQueue.add(
         JOB_SYNC_CURATED_TOPIC,
         { curatedTopicId: topic.id },
         {
