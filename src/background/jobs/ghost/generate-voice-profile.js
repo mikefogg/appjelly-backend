@@ -40,6 +40,9 @@ export default async function generateVoiceProfile(job) {
       throw new Error(`Connected account ${connectedAccountId} not found`);
     }
 
+    // Mark voice update as started now that job is actually processing
+    await connectedAccount.markVoiceUpdateStarted();
+
     // Load account with subscriptions for limit checks
     const account = await Account.query()
       .findById(connectedAccount.account_id)

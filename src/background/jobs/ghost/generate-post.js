@@ -6,8 +6,10 @@
 import { Account, Artifact, VoiceProfile } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
+import { ghostQueue } from "#src/background/queues/index.js";
 
 export const JOB_GENERATE_POST = "generate-post";
+const VOICE_UPDATE_RETRY_DELAY_MS = 5000; // 5 seconds
 
 export default async function generatePost(job) {
   const { artifactId } = job.data;
@@ -68,6 +70,39 @@ export default async function generatePost(job) {
     });
 
     job.updateProgress(20);
+
+    // Check for pending (delayed) voice profile job and promote it to run immediately
+    const voiceJobId = `generate-voice-${connected_account.id}`;
+    const pendingVoiceJob = await ghostQueue.getJob(voiceJobId);
+    if (pendingVoiceJob) {
+      const state = await pendingVoiceJob.getState();
+      if (state === "delayed") {
+        console.log(`[Generate Post] Promoting delayed voice profile job ${voiceJobId}`);
+        await pendingVoiceJob.promote();
+      }
+    }
+
+    // Check if voice profile is being generated - if so, delay this job
+    const generatingProfile = await VoiceProfile.getGeneratingProfile(connected_account.id);
+    if (generatingProfile) {
+      const fifteenSecondsAgo = new Date(Date.now() - 15 * 1000);
+      const isStale = new Date(generatingProfile.created_at) < fifteenSecondsAgo;
+
+      if (isStale) {
+        console.log(`[Generate Post] Found stale generating profile ${generatingProfile.id} - cleaning up`);
+        await generatingProfile.$query().delete();
+      } else {
+        console.log(`[Generate Post] Voice profile being generated, rescheduling in ${VOICE_UPDATE_RETRY_DELAY_MS}ms`);
+        await ghostQueue.add(JOB_GENERATE_POST, job.data, {
+          delay: VOICE_UPDATE_RETRY_DELAY_MS,
+        });
+        return {
+          success: true,
+          delayed: true,
+          reason: "Voice profile update in progress - rescheduled",
+        };
+      }
+    }
 
     // Get voice profile for this connected account
     const voiceProfile = await VoiceProfile.getCurrentProfile(connected_account.id);

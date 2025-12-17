@@ -970,9 +970,16 @@ class ConnectedAccount extends BaseModel {
   }
 
   // Generation status methods
+  async markVoiceUpdatePending() {
+    return this.$query().patch({
+      voice_update_pending_at: new Date().toISOString(),
+    });
+  }
+
   async markVoiceUpdateStarted() {
     return this.$query().patch({
       voice_update_started_at: new Date().toISOString(),
+      voice_update_pending_at: null, // Clear pending when actually starting
     });
   }
 
@@ -997,12 +1004,32 @@ class ConnectedAccount extends BaseModel {
    */
   async queueVoiceProfileRegenIfOverThreshold(options = {}) {
     if (await this.meetsVoiceThreshold()) {
-      await this.markVoiceUpdateStarted();
       const { ghostQueue, JOB_GENERATE_VOICE_PROFILE } = await import("#src/background/queues/index.js");
+      const jobId = `generate-voice-${this.id}`;
+
+      // Remove any pending delayed job (debounce)
+      const existingJob = await ghostQueue.getJob(jobId);
+      if (existingJob) {
+        const state = await existingJob.getState();
+        if (state === "delayed" || state === "waiting") {
+          await existingJob.remove();
+          console.log(`[VoiceProfile] Removed pending job ${jobId} for debounce`);
+        }
+      }
+
+      // Mark as pending so UI can show "Saving..." state
+      await this.markVoiceUpdatePending();
+
+      // Queue new job with 30s delay - markVoiceUpdateStarted() called when job actually runs
       await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
         connectedAccountId: this.id,
         ...options,
+      }, {
+        jobId,
+        delay: 30000, // 30 seconds debounce
       });
+
+      console.log(`[VoiceProfile] Queued voice profile job with 30s delay: ${jobId}`);
       return true;
     }
     return false;
@@ -1028,6 +1055,7 @@ class ConnectedAccount extends BaseModel {
   async markVoiceUpdateCompleted() {
     return this.$query().patch({
       voice_update_started_at: null,
+      voice_update_pending_at: null,
     });
   }
 
@@ -1050,6 +1078,13 @@ class ConnectedAccount extends BaseModel {
     if (!this.voice_update_started_at) return false;
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
     return new Date(this.voice_update_started_at) > fiveMinutesAgo;
+  }
+
+  isVoicePending() {
+    if (!this.voice_update_pending_at) return false;
+    // Pending state valid for 2 minutes (30s delay + buffer)
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    return new Date(this.voice_update_pending_at) > twoMinutesAgo;
   }
 
   /**

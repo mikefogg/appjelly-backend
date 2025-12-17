@@ -68,6 +68,17 @@ export default async function generateSuggestions(job) {
       };
     }
 
+    // Check for pending (delayed) voice profile job and promote it to run immediately
+    const voiceJobId = `generate-voice-${connectedAccountId}`;
+    const pendingVoiceJob = await ghostQueue.getJob(voiceJobId);
+    if (pendingVoiceJob) {
+      const state = await pendingVoiceJob.getState();
+      if (state === "delayed") {
+        console.log(`[Generate Suggestions] Promoting delayed voice profile job ${voiceJobId}`);
+        await pendingVoiceJob.promote();
+      }
+    }
+
     // Check if voice profile is being updated - if so, delay this job
     const [generatingProfile, pendingFeedback] = await Promise.all([
       VoiceProfile.getGeneratingProfile(connectedAccountId),
