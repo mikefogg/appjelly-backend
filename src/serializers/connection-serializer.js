@@ -17,29 +17,33 @@ export const connectionBasicSerializer = (connection) => ({
 /**
  * Connection list item (GET /connections)
  */
-export const connectionListSerializer = (connection, syncInfo) => ({
-  id: connection.id,
-  platform: connection.platform,
-  label: connection.label,
-  username: connection.username,
-  display_name: connection.display_name,
-  platform_user_id: connection.platform_user_id,
-  profile_data: connection.profile_data,
-  is_active: connection.is_active,
-  is_default: connection.is_default,
-  is_deletable: connection.is_deletable,
-  is_connected: !!connection.connected_account_auth_id,
-  voice: connection.voice,
-  topics_of_interest: connection.topics_of_interest,
-  bio: connection.bio || {},
-  content_preferences: connection.getContentPreferences(),
-  sync_info: syncInfo,
-  is_ready_for_generation: connection.isReadyForGeneration(),
-  is_voice_pending: connection.isVoicePending(),
-  is_generating_voice: connection.isVoiceGenerating(),
-  is_generating_suggestions: connection.isSuggestionsGenerating(),
-  created_at: connection.created_at,
-});
+export const connectionListSerializer = (connection, syncInfo) => {
+  const contentPrefs = connection.getContentPreferences();
+  return {
+    id: connection.id,
+    platform: connection.platform,
+    label: connection.label,
+    username: connection.username,
+    display_name: connection.display_name,
+    platform_user_id: connection.platform_user_id,
+    profile_data: connection.profile_data,
+    is_active: connection.is_active,
+    is_default: connection.is_default,
+    is_deletable: connection.is_deletable,
+    is_connected: !!connection.connected_account_auth_id,
+    voice: connection.voice,
+    topics_of_interest: connection.topics_of_interest,
+    bio: connection.bio || {},
+    content_preferences: contentPrefs,
+    preserve_line_breaks: contentPrefs.preserve_line_breaks ?? false,
+    sync_info: syncInfo,
+    is_ready_for_generation: connection.isReadyForGeneration(),
+    is_voice_pending: connection.isVoicePending(),
+    is_generating_voice: connection.isVoiceGenerating(),
+    is_generating_suggestions: connection.isSuggestionsGenerating(),
+    created_at: connection.created_at,
+  };
+};
 
 /**
  * Full connection details (GET /connections/:id)
@@ -51,6 +55,7 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
   const topicsCount = voiceStats?.topicsCount || 0;
   const bio = connection.bio || {};
   const voiceConfidence = calculateVoiceMatchScore({ sampleCount, feedbackCount, rulesCount, topicsCount, bio });
+  const contentPrefs = connection.getContentPreferences();
 
   return {
     id: connection.id,
@@ -67,7 +72,8 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
     voice: connection.voice,
     topics_of_interest: connection.topics_of_interest,
     bio: connection.bio || {},
-    content_preferences: connection.getContentPreferences(),
+    content_preferences: contentPrefs,
+    preserve_line_breaks: contentPrefs.preserve_line_breaks ?? false,
     recommendations,
     sync_info: syncInfo,
     voice_profile: connection.voiceProfile ? {
@@ -102,14 +108,18 @@ export const connectionDetailSerializer = (connection, { recommendations, syncIn
 /**
  * Connection update response (PATCH /connections/:id)
  */
-export const connectionUpdateSerializer = (connection) => ({
-  id: connection.id,
-  label: connection.label,
-  voice: connection.voice,
-  topics_of_interest: connection.topics_of_interest,
-  content_preferences: connection.getContentPreferences(),
-  message: "Connection updated successfully",
-});
+export const connectionUpdateSerializer = (connection) => {
+  const contentPrefs = connection.getContentPreferences();
+  return {
+    id: connection.id,
+    label: connection.label,
+    voice: connection.voice,
+    topics_of_interest: connection.topics_of_interest,
+    content_preferences: contentPrefs,
+    preserve_line_breaks: contentPrefs.preserve_line_breaks ?? false,
+    message: "Connection updated successfully",
+  };
+};
 
 /**
  * OAuth connection response

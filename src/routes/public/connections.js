@@ -330,6 +330,10 @@ router.patch(
       .isString()
       .isLength({ max: 500 })
       .withMessage("Differentiator must be under 500 characters"),
+    body("preserve_line_breaks")
+      .optional()
+      .isBoolean()
+      .withMessage("preserve_line_breaks must be a boolean"),
     body("content_preferences")
       .optional()
       .isObject()
@@ -350,6 +354,10 @@ router.patch(
       .optional()
       .isIn(["none", "minimal", "moderate"])
       .withMessage("hashtags must be one of: none, minimal, moderate"),
+    body("content_preferences.preserve_line_breaks")
+      .optional()
+      .isBoolean()
+      .withMessage("preserve_line_breaks must be a boolean"),
     body("content_preferences.rotation_enabled")
       .optional()
       .isBoolean()
@@ -366,7 +374,7 @@ router.patch(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, bio, content_preferences, generation_time } =
+      const { label, voice, topics_of_interest, bio, content_preferences, generation_time, preserve_line_breaks } =
         req.body;
 
       const connection = await ConnectedAccount.query()
@@ -388,11 +396,13 @@ router.patch(
         // Merge with existing bio to allow partial updates
         updates.bio = { ...(connection.bio || {}), ...bio };
       }
-      if (content_preferences !== undefined) {
+      if (content_preferences !== undefined || preserve_line_breaks !== undefined) {
         // Merge with existing content_preferences to allow partial updates
+        // Support direct preserve_line_breaks for backwards compatibility
         updates.content_preferences = {
           ...(connection.content_preferences || {}),
-          ...content_preferences,
+          ...(content_preferences || {}),
+          ...(preserve_line_breaks !== undefined ? { preserve_line_breaks } : {}),
         };
       }
       if (generation_time !== undefined) {

@@ -65,6 +65,7 @@ class ConnectedAccount extends BaseModel {
             line_breaks: { type: "string", enum: ["minimal", "moderate", "frequent"] },
             emojis: { type: "string", enum: ["none", "sparse", "moderate", "heavy"] },
             hashtags: { type: "string", enum: ["none", "minimal", "moderate"] },
+            preserve_line_breaks: { type: "boolean" },
             rotation_enabled: { type: "boolean" },
           },
         },
@@ -84,12 +85,14 @@ class ConnectedAccount extends BaseModel {
    */
   static getDefaultContentPreferences(platform) {
     const defaults = {
-      twitter: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
-      linkedin: { default_length: "medium", line_breaks: "moderate", emojis: "none", hashtags: "none", rotation_enabled: true },
-      threads: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
-      facebook: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
-      ghost: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
-      custom: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", rotation_enabled: true },
+      twitter: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
+      linkedin: { default_length: "medium", line_breaks: "moderate", emojis: "none", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
+      threads: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
+      facebook: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
+      instagram: { default_length: "medium", line_breaks: "moderate", emojis: "moderate", hashtags: "moderate", preserve_line_breaks: true, rotation_enabled: true },
+      tiktok: { default_length: "short", line_breaks: "moderate", emojis: "moderate", hashtags: "sparse", preserve_line_breaks: false, rotation_enabled: true },
+      ghost: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
+      custom: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
     };
     return defaults[platform] || defaults.custom;
   }

@@ -168,27 +168,29 @@ export default async function generatePost(job) {
         ai_model: generateResult.usage?.model,
         ai_provider: "openai",
       },
-      usage: generateResult.usage,
+      usages: generateResult.usages,
     };
 
-    // Track AI usage
-    if (result.usage) {
-      trackAICost(artifact.account_id, {
-        operation: "post_generate",
-        model: result.usage.model,
-        inputTokens: result.usage.input_tokens,
-        outputTokens: result.usage.output_tokens,
-        durationMs: result.usage.duration_ms,
-        connectedAccountId: connected_account?.id,
-        isFreeUser: account ? !account.hasActiveSubscription() : false,
-        metadata: {
-          platform,
-          angle,
-          length,
-          max_length: maxLength,
-          content_length: result.content?.length || 0,
-        },
-      });
+    // Track each AI call separately for accurate cost tracking
+    if (result.usages && result.usages.length > 0) {
+      for (const usage of result.usages) {
+        trackAICost(artifact.account_id, {
+          operation: `post_generate_${usage.operation}`, // e.g. post_generate_post_formatting
+          model: usage.model,
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          durationMs: usage.duration_ms,
+          connectedAccountId: connected_account?.id,
+          isFreeUser: account ? !account.hasActiveSubscription() : false,
+          metadata: {
+            platform,
+            angle,
+            length,
+            max_length: maxLength,
+            content_length: result.content?.length || 0,
+          },
+        });
+      }
     }
 
     job.updateProgress(90);

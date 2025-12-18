@@ -197,7 +197,7 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
     console.log(`[Generate Suggestions] Formatting preferences:`, JSON.stringify(formatting));
     console.log(`[Generate Suggestions] Full content_preferences:`, JSON.stringify(contentPrefs));
 
-    const { posts: results, usage } = await AI.generatePosts({
+    const { posts: results, usages } = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connectedAccount.bio,
       contentTypes,
@@ -207,22 +207,24 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
       formatting,
     });
 
-    // Track AI usage
-    if (usage) {
-      trackAICost(connectedAccount.account_id, {
-        operation: "suggestions",
-        model: usage.model,
-        inputTokens: usage.input_tokens,
-        outputTokens: usage.output_tokens,
-        durationMs: usage.duration_ms,
-        connectedAccountId: connectedAccount.id,
-        isFreeUser: !account.hasActiveSubscription(),
-        metadata: {
-          suggestion_count: results?.length || 0,
-          platform,
-          content_types: contentTypes,
-        },
-      });
+    // Track each AI call separately for accurate cost tracking
+    if (usages && usages.length > 0) {
+      for (const usage of usages) {
+        trackAICost(connectedAccount.account_id, {
+          operation: `suggestions_${usage.operation}`, // e.g. suggestions_idea_generation, suggestions_post_formatting
+          model: usage.model,
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          durationMs: usage.duration_ms,
+          connectedAccountId: connectedAccount.id,
+          isFreeUser: !account.hasActiveSubscription(),
+          metadata: {
+            suggestion_count: results?.length || 0,
+            platform,
+            content_types: contentTypes,
+          },
+        });
+      }
     }
 
     // Map results to suggestions (accept whatever AI returns, even if fewer than requested)

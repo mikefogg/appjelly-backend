@@ -55,9 +55,11 @@ class UserTopicPreference extends BaseModel {
     return preferences.map(p => p.curated_topic_id);
   }
 
-  static async setUserTopics(connectedAccountId, topicIds) {
+  static async setUserTopics(connectedAccountId, topicIds, trx = null) {
+    const query = trx ? this.query(trx) : this.query();
+
     // Delete existing preferences
-    await this.query()
+    await query.clone()
       .where("connected_account_id", connectedAccountId)
       .delete();
 
@@ -68,7 +70,8 @@ class UserTopicPreference extends BaseModel {
         curated_topic_id: topicId,
       }));
 
-      return this.query().insert(preferences);
+      const insertQuery = trx ? this.query(trx) : this.query();
+      return insertQuery.insert(preferences);
     }
 
     return [];

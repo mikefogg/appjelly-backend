@@ -6,11 +6,12 @@
 import express from "express";
 import crypto from "crypto";
 import { requireAuth, requireAppContext } from "#src/middleware/index.js";
-import { Account, ConnectedAccount, ConnectedAccountAuth } from "#src/models/index.js";
+import { Account, ConnectedAccount, ConnectedAccountAuth, UserTopicPreference, CuratedTopic } from "#src/models/index.js";
 import { formatError } from "#src/helpers/index.js";
 import {
   successResponse,
   connectionOAuthSerializer,
+  connectionDetailSerializer,
   messageResponse,
 } from "#src/serializers/index.js";
 import { encrypt } from "#src/helpers/encryption.js";
@@ -590,6 +591,157 @@ router.get(
     } catch (error) {
       console.error("Get OAuth connections error:", error);
       return res.status(500).json(formatError("Failed to retrieve connections"));
+    }
+  }
+);
+
+/**
+ * POST /oauth/accounts/onboard
+ * Consolidated endpoint for creating a manual account with full onboarding data
+ * Combines: account creation + bio + topics + content_preferences in one atomic operation
+ */
+router.post(
+  "/accounts/onboard",
+  requireAppContext,
+  requireAuth,
+  async (req, res) => {
+    try {
+      const {
+        platform,
+        label,
+        username,
+        bio,
+        topic_ids,
+        custom_topics,
+        content_preferences,
+      } = req.body;
+
+      // Validate required fields
+      if (!platform) {
+        return res.status(400).json(formatError("platform is required", 400));
+      }
+      if (!label || label.trim().length === 0) {
+        return res.status(400).json(formatError("label is required", 400));
+      }
+
+      // Validate platform
+      if (!isPlatformSupported(platform)) {
+        return res.status(400).json(
+          formatError(`Invalid platform. Supported: ${getSupportedPlatforms().join(", ")}`, 400)
+        );
+      }
+
+      // Validate bio structure if provided
+      if (bio && typeof bio !== "object") {
+        return res.status(400).json(formatError("bio must be an object", 400));
+      }
+
+      // Validate topic_ids if provided
+      if (topic_ids !== undefined) {
+        if (!Array.isArray(topic_ids)) {
+          return res.status(400).json(formatError("topic_ids must be an array", 400));
+        }
+        // Validate each UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        for (const id of topic_ids) {
+          if (!uuidRegex.test(id)) {
+            return res.status(400).json(formatError("Each topic_id must be a valid UUID", 400));
+          }
+        }
+      }
+
+      // Validate content_preferences if provided
+      if (content_preferences && typeof content_preferences !== "object") {
+        return res.status(400).json(formatError("content_preferences must be an object", 400));
+      }
+
+      // Check connection limit for free users
+      const canCreate = await res.locals.account.canCreateConnection();
+      if (!canCreate.allowed) {
+        return res.status(400).json(formatError(canCreate.reason, 400));
+      }
+
+      // Verify all topic IDs exist if provided
+      if (topic_ids && topic_ids.length > 0) {
+        const topics = await CuratedTopic.query()
+          .whereIn("id", topic_ids)
+          .where("is_active", true);
+
+        if (topics.length !== topic_ids.length) {
+          return res.status(400).json(formatError("One or more invalid topic IDs", 400));
+        }
+      }
+
+      // Build content_preferences with platform-specific defaults
+      const platformDefaults = ConnectedAccount.getDefaultContentPreferences(platform);
+      const finalContentPreferences = {
+        ...platformDefaults,
+        ...(content_preferences || {}),
+      };
+
+      // Build topics_of_interest string from custom_topics
+      const topicsOfInterest = custom_topics?.trim() || null;
+
+      // Use a transaction to make this atomic
+      const connectionId = await ConnectedAccount.transaction(async (trx) => {
+        // 1. Create the account
+        const newConnection = await ConnectedAccount.query(trx).insert({
+          account_id: res.locals.account.id,
+          app_id: res.locals.app.id,
+          platform,
+          label: label.trim(),
+          username: username?.trim() || null,
+          bio: bio || {},
+          topics_of_interest: topicsOfInterest,
+          content_preferences: finalContentPreferences,
+          connected_account_auth_id: null, // Manual account - no OAuth
+          sync_status: "ready", // Manual accounts are always "ready"
+          is_active: true,
+          metadata: {
+            connection_method: "manual",
+            onboarded_at: new Date().toISOString(),
+          },
+        });
+
+        // 2. Set topic preferences if provided (within same transaction)
+        if (topic_ids && topic_ids.length > 0) {
+          await UserTopicPreference.setUserTopics(newConnection.id, topic_ids, trx);
+        }
+
+        return newConnection.id;
+      });
+
+      // Check if bio has content to kick off voice profile generation
+      const hasBioContent = bio && Object.values(bio).some(v => v && String(v).trim());
+
+      // Kick off voice profile generation if bio has content
+      if (hasBioContent) {
+        ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+          connectedAccountId: connectionId,
+        }).catch(err => console.error("Failed to queue voice profile job:", err));
+      }
+
+      // Fetch the fully hydrated connection with all details
+      const connection = await ConnectedAccount.findOneWithDetails(
+        connectionId,
+        res.locals.account.id,
+        res.locals.app.id
+      );
+
+      // Use the standard serializer for consistent response format
+      const data = connectionDetailSerializer(connection, {
+        recommendations: connection.recommendations,
+        syncInfo: connection.syncInfo,
+        voiceStats: connection.voiceStats,
+        account: res.locals.account,
+      });
+
+      return res.status(201).json(successResponse(data));
+    } catch (error) {
+      console.error("Onboard account error:", error);
+      return res.status(500).json(
+        formatError(`Failed to create account: ${error.message}`)
+      );
     }
   }
 );

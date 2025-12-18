@@ -562,29 +562,41 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     });
 
     const step2Results = await Promise.all(step2Promises);
-    const step2Usage = extractUsageData(
-      { usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } },
-      step2Model,
-      step2StartTime
-    );
 
     // Aggregate step 2 token usage
-    let step2TotalTokens = 0;
+    let step2InputTokens = 0;
+    let step2OutputTokens = 0;
     step2Results.forEach(r => {
-      step2TotalTokens += r.usage?.total_tokens || 0;
+      step2InputTokens += r.usage?.prompt_tokens || 0;
+      step2OutputTokens += r.usage?.completion_tokens || 0;
     });
+
+    const step2Usage = {
+      model: step2Model,
+      input_tokens: step2InputTokens,
+      output_tokens: step2OutputTokens,
+      total_tokens: step2InputTokens + step2OutputTokens,
+      duration_ms: Date.now() - step2StartTime,
+      operation: "post_formatting",
+    };
 
     console.log(`[AI.generatePosts] Step 2 complete: ${step2Results.length} posts formatted`);
     step2Results.forEach((post, i) => console.log(`  ${i + 1}. [${post.content_type}] ${post.content?.substring(0, 80)}...`));
 
-    // Combine usage from both steps (step1Usage may be null if ideas were provided)
+    // Build usages array - separate entry for each AI call
+    const usages = [];
+    if (step1Usage) {
+      usages.push({ ...step1Usage, operation: "idea_generation" });
+    }
+    usages.push(step2Usage);
+
+    // Legacy combined usage for backwards compatibility
     const modelUsed = step1Usage ? `${step1Model}+${step2Model}` : step2Model;
-    const step1Tokens = step1Usage?.total_tokens || 0;
     const totalUsage = {
       model: modelUsed,
-      input_tokens: (step1Usage?.input_tokens || 0) + step2TotalTokens,
-      output_tokens: step1Usage?.output_tokens || 0,
-      total_tokens: step1Tokens + step2TotalTokens,
+      input_tokens: (step1Usage?.input_tokens || 0) + step2InputTokens,
+      output_tokens: (step1Usage?.output_tokens || 0) + step2OutputTokens,
+      total_tokens: (step1Usage?.total_tokens || 0) + step2InputTokens + step2OutputTokens,
       duration_ms: Date.now() - startTime,
     };
 
@@ -594,11 +606,12 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
         content_type: post.content_type,
         metadata: {
           model: modelUsed,
-          tokens: Math.round((step1Tokens + step2TotalTokens) / step2Results.length),
+          tokens: Math.round(totalUsage.total_tokens / step2Results.length),
           platform,
         },
       })),
-      usage: totalUsage,
+      usage: totalUsage, // Legacy - combined usage
+      usages, // New - separate usage per AI call
     };
   },
 

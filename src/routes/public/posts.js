@@ -20,6 +20,7 @@ import {
 } from "#src/serializers/index.js";
 import { ghostQueue, JOB_GENERATE_POST } from "#src/background/queues/index.js";
 import AI from "#src/services/ai/index.js";
+import { trackAICost } from "#src/helpers/track-ai-cost.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -559,7 +560,6 @@ ${artifact.content}`;
       };
 
       // Get AI improvement using generatePosts with ideas (skips Step 1, uses GPT-4.1)
-      const startTime = Date.now();
       const generateResult = await AI.generatePosts({
         voiceProfile: voiceProfile?.toPromptFormat(),
         bio: connection?.bio,
@@ -569,7 +569,27 @@ ${artifact.content}`;
         userRules: userRules.map(r => ({ rule_type: r.rule_type, content: r.content })),
         ideas: [{ idea: improvementIdea, content_type: "improvement" }],
       });
-      const generationTime = (Date.now() - startTime) / 1000;
+
+      // Track each AI call separately for accurate cost tracking
+      if (generateResult.usages && generateResult.usages.length > 0) {
+        for (const usage of generateResult.usages) {
+          trackAICost(res.locals.account.id, {
+            operation: `post_improve_${usage.operation}`, // e.g. post_improve_post_formatting
+            model: usage.model,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            durationMs: usage.duration_ms,
+            connectedAccountId: connection?.id,
+            isFreeUser: !res.locals.account.hasActiveSubscription(),
+            metadata: {
+              platform,
+              artifact_id: artifact.id,
+              target_length: targetBucket,
+              content_length: generateResult.posts[0]?.content?.length || 0,
+            },
+          });
+        }
+      }
 
       // Extract the single post result
       const result = {

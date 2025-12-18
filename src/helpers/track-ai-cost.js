@@ -7,6 +7,14 @@ import { EVENTS } from "#src/utils/constants.js";
 
 // Pricing per 1M tokens (updated Dec 2024)
 const AI_PRICING = {
+  "gpt-4o": {
+    input: 2.50 / 1_000_000,   // $2.50 per 1M input tokens
+    output: 10.00 / 1_000_000, // $10.00 per 1M output tokens
+  },
+  "gpt-4o-2024-11-20": {
+    input: 2.50 / 1_000_000,   // $2.50 per 1M input tokens
+    output: 10.00 / 1_000_000, // $10.00 per 1M output tokens
+  },
   "gpt-4o-mini": {
     input: 0.15 / 1_000_000,   // $0.15 per 1M input tokens
     output: 0.60 / 1_000_000,  // $0.60 per 1M output tokens
