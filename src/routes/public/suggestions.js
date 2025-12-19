@@ -323,11 +323,6 @@ router.post(
         ? await ConnectedAccount.query().findById(suggestion.connected_account_id)
         : null;
 
-      // Check voice match threshold - AI features require 50% minimum
-      if (connection && !await connection.meetsVoiceThreshold()) {
-        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
-      }
-
       // Check if free user has reached generation limit
       if (connection && connection.hasReachedGenerationLimit(res.locals.account)) {
         return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));

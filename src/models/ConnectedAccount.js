@@ -90,7 +90,7 @@ class ConnectedAccount extends BaseModel {
       threads: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
       facebook: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
       instagram: { default_length: "medium", line_breaks: "moderate", emojis: "moderate", hashtags: "moderate", preserve_line_breaks: true, rotation_enabled: true },
-      tiktok: { default_length: "short", line_breaks: "moderate", emojis: "moderate", hashtags: "sparse", preserve_line_breaks: false, rotation_enabled: true },
+      tiktok: { default_length: "short", line_breaks: "moderate", emojis: "moderate", hashtags: "minimal", preserve_line_breaks: false, rotation_enabled: true },
       ghost: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
       custom: { default_length: "short", line_breaks: "moderate", emojis: "sparse", hashtags: "none", preserve_line_breaks: false, rotation_enabled: true },
     };

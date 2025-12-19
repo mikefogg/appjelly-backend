@@ -152,11 +152,6 @@ router.post(
         return res.status(400).json(formatError("Connected account is not ready. Please wait for sync to complete.", 400));
       }
 
-      // Check voice match threshold - AI features require 50% minimum
-      if (!await connection.meetsVoiceThreshold()) {
-        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
-      }
-
       // Check if free user has reached generation limit
       if (connection.hasReachedGenerationLimit(res.locals.account)) {
         return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.GENERATION_LIMIT_REACHED, 400));
@@ -464,11 +459,6 @@ router.post(
       const connection = artifact.connected_account_id
         ? await ConnectedAccount.query().findById(artifact.connected_account_id)
         : null;
-
-      // Check voice match threshold - AI features require 50% minimum
-      if (connection && !await connection.meetsVoiceThreshold()) {
-        return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
-      }
 
       // Check if free user has reached generation limit
       if (connection && connection.hasReachedGenerationLimit(res.locals.account)) {

@@ -614,6 +614,7 @@ router.post(
         topic_ids,
         custom_topics,
         content_preferences,
+        brand_scope,
       } = req.body;
 
       // Validate required fields
@@ -655,6 +656,11 @@ router.post(
         return res.status(400).json(formatError("content_preferences must be an object", 400));
       }
 
+      // Validate brand_scope if provided
+      if (brand_scope && !["personal", "brand"].includes(brand_scope)) {
+        return res.status(400).json(formatError("brand_scope must be 'personal' or 'brand'", 400));
+      }
+
       // Check connection limit for free users
       const canCreate = await res.locals.account.canCreateConnection();
       if (!canCreate.allowed) {
@@ -694,6 +700,7 @@ router.post(
           bio: bio || {},
           topics_of_interest: topicsOfInterest,
           content_preferences: finalContentPreferences,
+          brand_scope: brand_scope || "personal",
           connected_account_auth_id: null, // Manual account - no OAuth
           sync_status: "ready", // Manual accounts are always "ready"
           is_active: true,
