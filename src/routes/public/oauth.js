@@ -657,8 +657,8 @@ router.post(
       }
 
       // Validate brand_scope if provided
-      if (brand_scope && !["personal", "brand"].includes(brand_scope)) {
-        return res.status(400).json(formatError("brand_scope must be 'personal' or 'brand'", 400));
+      if (brand_scope && !["personal", "business"].includes(brand_scope)) {
+        return res.status(400).json(formatError("brand_scope must be 'personal' or 'business'", 400));
       }
 
       // Check connection limit for free users

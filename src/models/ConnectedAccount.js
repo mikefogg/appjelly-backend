@@ -44,6 +44,7 @@ class ConnectedAccount extends BaseModel {
         profile_data: { type: "object" },
         last_synced_at: { type: ["string", "null"], format: "date-time" },
         last_analyzed_at: { type: ["string", "null"], format: "date-time" },
+        brand_scope: { type: ["string", "null"], enum: ["personal", "business"] },
         sync_status: {
           type: "string",
           enum: ["pending", "syncing", "ready", "error"],
