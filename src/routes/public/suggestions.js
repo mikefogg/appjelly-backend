@@ -499,11 +499,6 @@ router.post(
         return res.status(404).json(formatError("Connected account not found", 404));
       }
 
-      // Check if connection has enough context for generation
-      if (!connection.isReadyForGeneration()) {
-        return res.status(400).json(formatError(connection.getNotReadyReason(), 400));
-      }
-
       // Check voice match threshold - AI features require 50% minimum
       if (!await connection.meetsVoiceThreshold()) {
         return res.status(400).json(formatError(FREEMIUM_CONFIG.ERRORS.VOICE_THRESHOLD_NOT_MET, 400));
