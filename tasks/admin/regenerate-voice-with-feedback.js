@@ -241,7 +241,7 @@ async function regenerateAll(options = {}) {
 
   // Find all connected accounts with voice profiles AND processed feedback
   const accountsWithFeedback = await knex.raw(`
-    SELECT DISTINCT ca.id, ca.platform_username, ca.platform,
+    SELECT DISTINCT ca.id, ca.username, ca.platform,
            (SELECT COUNT(*) FROM voice_feedback vf WHERE vf.connected_account_id = ca.id AND vf.status = 'processed') as feedback_count,
            (SELECT MAX(version) FROM voice_profiles vp WHERE vp.connected_account_id = ca.id AND vp.status = 'active') as current_version
     FROM connected_accounts ca
@@ -270,7 +270,7 @@ async function regenerateAll(options = {}) {
 
   for (const account of accounts) {
     console.log(`\n${"═".repeat(80)}`);
-    console.log(`Account: ${account.platform_username || account.id}`);
+    console.log(`Account: ${account.username || account.id}`);
     console.log(`Platform: ${account.platform} | Feedback: ${account.feedback_count} | Current: v${account.current_version}`);
     console.log("═".repeat(80));
 
