@@ -176,7 +176,10 @@ async function debugGenerateSuggestions(userId, refreshVoice = false) {
     console.log(`  Content rotation: ${contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')}`);
     console.log(`  Calling AI.generatePosts...`);
 
-    // NOTE: Job does NOT pass userRules to AI.generatePosts
+    // Pass user rules to AI (same as job)
+    const userRules = rules.map(r => ({ rule_type: r.rule_type, content: r.content }));
+    console.log(`  User rules: ${userRules.length}`);
+
     const { posts, usages } = await AI.generatePosts({
       voiceProfile: voiceProfileForAI,
       bio: bio,
@@ -185,6 +188,7 @@ async function debugGenerateSuggestions(userId, refreshVoice = false) {
       maxLength: maxLength,
       count: suggestionCount,
       formatting: formatting,
+      userRules,
     });
 
     // ─────────────────────────────────────────────────────────────────────────

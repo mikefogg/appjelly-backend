@@ -29,7 +29,8 @@ Return JSON: { "posts": [{ "content_type": "story|hot_take|insight", "content": 
         step1Model: "gpt-4o-2024-11-20",
         step2Model: "gpt-4.1",
         step1System: () => "You generate social media post ideas. Focus on the MESSAGE and ANGLE, not formatting.",
-        step1User: ({ personaContext, contentTypes, count }) => `Generate ${count} post ideas for this person:
+        step1User: ({ personaContext, contentTypes, count, styleGuidelines, hardConstraints }) => {
+          let prompt = `Generate ${count} post ideas for this person:
 ${personaContext}
 
 Content types needed: ${contentTypes.join(", ")}
@@ -39,9 +40,23 @@ For each post, write the core message/idea that makes a clear, concrete point.
 - Hot takes: genuine opinions with a clear stance
 - Insights: specific observations from their work/experience
 
-Each idea should make ONE clear point. No vague metaphors or jargon - say something real.
+CRITICAL: Each idea must be about a COMPLETELY DIFFERENT SUBJECT. Not different angles on the same subject - entirely different topics this person would discuss in their field. Think about the full range of what someone in this role talks about.
 
-Return JSON: { "posts": [{ "content_type": "story|hot_take|insight", "idea": "the core message" }] }`,
+Each idea should make ONE clear point. No vague metaphors or jargon - say something real.`;
+
+          if (styleGuidelines && styleGuidelines.length > 0) {
+            prompt += `\n\nSTYLE GUIDELINES (follow these when crafting ideas):
+${styleGuidelines.map(r => `- ${r}`).join("\n")}`;
+          }
+
+          if (hardConstraints && hardConstraints.length > 0) {
+            prompt += `\n\nNEVER DO (avoid these in your ideas):
+${hardConstraints.map(r => `- ${r}`).join("\n")}`;
+          }
+
+          prompt += `\n\nReturn JSON: { "posts": [{ "content_type": "story|hot_take|insight", "idea": "the core message" }] }`;
+          return prompt;
+        },
         step2System: () => "You rewrite content to match a specific voice and format. Follow ALL formatting rules EXACTLY.",
         step2User: buildStep2UserPrompt,
       },

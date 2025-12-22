@@ -435,6 +435,29 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     let step1Usage = null;
     const step1Model = prompts.step1Model;
 
+    // ========== EXTRACT RULES (used in both steps) ==========
+    const voiceHardRules = voiceProfile?.hard_rules || [];
+    const userNeverRules = userRules
+      .filter(r => r.rule_type === "never" && r.content)
+      .map(r => r.content);
+    const userAlwaysRules = userRules
+      .filter(r => r.rule_type === "always" && r.content)
+      .map(r => r.content);
+    const userPreferRules = userRules
+      .filter(r => r.rule_type === "prefer" && r.content)
+      .map(r => r.content);
+    const userToneRules = userRules
+      .filter(r => r.rule_type === "tone" && r.content)
+      .map(r => r.content);
+
+    // Combine for step 1: style guidelines + hard constraints
+    const styleGuidelines = [...userPreferRules, ...userToneRules];
+    const hardConstraints = [...voiceHardRules, ...userNeverRules];
+
+    // Combine for step 2: never rules + always rules
+    const neverRules = [...voiceHardRules, ...userNeverRules];
+    const alwaysRules = userAlwaysRules;
+
     // ========== STEP 1: Generate content ideas (or use provided ideas) ==========
     if (ideas && ideas.length > 0) {
       // Skip Step 1 - use provided ideas directly
@@ -459,7 +482,7 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
       }
 
       const step1System = prompts.step1System();
-      const step1User = prompts.step1User({ personaContext, contentTypes, count });
+      const step1User = prompts.step1User({ personaContext, contentTypes, count, styleGuidelines, hardConstraints });
 
       console.log(`[AI.generatePosts] Step 1 (ideas) - System:\n${step1System}`);
       console.log(`[AI.generatePosts] Step 1 (ideas) - User:\n${step1User}`);
@@ -497,29 +520,6 @@ Return JSON: { "voice": "2-3 sentence description under 200 chars", "topics": "c
     // Build formatting rules
     const formatRules = buildFormattingInstructionsList(formatting);
     const lineBreakTemplate = buildLineBreakTemplate(formatting);
-
-    // Combine voice profile hard_rules with user rules
-    const voiceHardRules = voiceProfile?.hard_rules || [];
-
-    // Process user rules by type
-    const userNeverRules = userRules
-      .filter(r => r.rule_type === "never" && r.content)
-      .map(r => r.content);
-    const userAlwaysRules = userRules
-      .filter(r => r.rule_type === "always" && r.content)
-      .map(r => r.content);
-    const userPreferRules = userRules
-      .filter(r => r.rule_type === "prefer" && r.content)
-      .map(r => r.content);
-    const userToneRules = userRules
-      .filter(r => r.rule_type === "tone" && r.content)
-      .map(r => r.content);
-
-    // Merge never rules (voice hard_rules + user never rules)
-    const neverRules = [...voiceHardRules, ...userNeverRules];
-
-    // Always rules from user (these are required in every post)
-    const alwaysRules = userAlwaysRules;
 
     // Add prefer/tone rules to voice instructions if present
     let enhancedVoiceInstructions = voiceInstructions;

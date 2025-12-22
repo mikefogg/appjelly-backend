@@ -7,7 +7,7 @@
  */
 
 import crypto from "crypto";
-import { Account, ConnectedAccount, PostSuggestion, VoiceProfile, VoiceFeedback } from "#src/models/index.js";
+import { Account, ConnectedAccount, PostSuggestion, VoiceProfile, VoiceFeedback, Rule } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { getContentTypeSequence } from "#src/config/content-types.js";
 import { getTargetLength } from "#src/config/platform-lengths.js";
@@ -197,6 +197,11 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
     console.log(`[Generate Suggestions] Formatting preferences:`, JSON.stringify(formatting));
     console.log(`[Generate Suggestions] Full content_preferences:`, JSON.stringify(contentPrefs));
 
+    // Load user's rules to pass to AI
+    const rules = await Rule.getActiveRules(connectedAccount.id);
+    const userRules = rules.map(r => ({ rule_type: r.rule_type, content: r.content }));
+    console.log(`[Generate Suggestions] User rules: ${userRules.length}`);
+
     const { posts: results, usages } = await AI.generatePosts({
       voiceProfile: voiceProfile?.toPromptFormat(),
       bio: connectedAccount.bio,
@@ -205,6 +210,7 @@ async function generatePersonaBasedSuggestions(job, connectedAccount, account, v
       maxLength: targetLength,
       count: suggestionCount,
       formatting,
+      userRules,
     });
 
     // Track each AI call separately for accurate cost tracking
