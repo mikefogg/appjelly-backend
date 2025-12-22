@@ -57,8 +57,9 @@ export default async function generateSuggestions(job) {
       };
     }
 
-    // Check if free user has reached generation limit
-    if (connectedAccount.hasReachedGenerationLimit(account)) {
+    // Check if free user has reached generation limit (skip if admin override)
+    const reason = job.data.reason;
+    if (reason !== "admin" && connectedAccount.hasReachedGenerationLimit(account)) {
       console.log(`[Generate Suggestions] Free user at generation limit for account ${connectedAccount.account_id} - skipping`);
       await connectedAccount.markSuggestionsUpdateCompleted();
       return {

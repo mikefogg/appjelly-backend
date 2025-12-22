@@ -4,6 +4,7 @@
  * Usage:
  *   node tasks/admin/queue-suggestions.js <connected_account_id>
  *   node tasks/admin/queue-suggestions.js <connected_account_id> --count=5
+ *   node tasks/admin/queue-suggestions.js <connected_account_id> --skip-limits
  */
 
 import { ConnectedAccount, knex } from "#src/models/index.js";
@@ -18,9 +19,10 @@ async function main() {
     const userId = args.find(arg => !arg.startsWith("--"));
     const countArg = args.find(arg => arg.startsWith("--count="));
     const count = countArg ? parseInt(countArg.split("=")[1], 10) : 3;
+    const skipLimits = args.includes("--skip-limits");
 
     if (!userId) {
-      console.error("Usage: node tasks/admin/queue-suggestions.js <connected_account_id> [--count=N]");
+      console.error("Usage: node tasks/admin/queue-suggestions.js <connected_account_id> [--count=N] [--skip-limits]");
       process.exit(1);
     }
 
@@ -31,10 +33,12 @@ async function main() {
     }
 
     console.log(`Queuing ${count} suggestions for ${account.username || account.id} (${account.platform})`);
+    if (skipLimits) console.log(`--skip-limits: bypassing free user generation limits`);
 
     await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
       connectedAccountId: userId,
       suggestionCount: count,
+      reason: skipLimits ? "admin" : undefined,
     });
 
     console.log(`✅ Job queued`);
