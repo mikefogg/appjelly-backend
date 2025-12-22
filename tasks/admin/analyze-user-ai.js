@@ -6,6 +6,7 @@ import {
   NetworkPost,
   ConnectedAccount,
   SamplePost,
+  UserTopicPreference,
   knex,
 } from "#src/models/index.js";
 
@@ -39,13 +40,29 @@ async function analyzeUserAI(userId) {
     console.log(`  Audience: ${bio.audience || "(not set)"}`);
     console.log(`  Perspective: ${bio.perspective || "(not set)"}`);
     console.log(`  Differentiator: ${bio.differentiator || "(not set)"}`);
-    console.log(`  Topics of interest: ${account.topics_of_interest?.join(", ") || "(not set)"}`);
+
+    // Get curated topics they've selected
+    const userTopics = await UserTopicPreference.getUserTopics(userId);
+    console.log(`\n  Selected Curated Topics (${userTopics.length}):`);
+    if (userTopics.length === 0) {
+      console.log(`    (none selected)`);
+    } else {
+      userTopics.forEach((ut) => {
+        console.log(`    - ${ut.curated_topic?.name || ut.curated_topic_id}`);
+      });
+    }
+
+    // Free-text topics
+    console.log(`\n  Free-text Topics: ${account.topics_of_interest || "(not set)"}`);
 
     // Content preferences
     const prefs = account.content_preferences || {};
     console.log(`\n  Content Preferences:`);
     console.log(`    Line breaks: ${prefs.line_breaks ?? "(not set)"}`);
     console.log(`    Emojis: ${prefs.emojis ?? "(not set)"}`);
+    console.log(`    Default length: ${prefs.default_length ?? "(not set)"}`);
+    console.log(`    Hashtags: ${prefs.hashtags ?? "(not set)"}`);
+    console.log(`    Rotation enabled: ${prefs.rotation_enabled ?? "(not set)"}`);
 
     // ─────────────────────────────────────────────────────────────────────────
     // SAMPLE POSTS (THE GROUND TRUTH - most important!)
