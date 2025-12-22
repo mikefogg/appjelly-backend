@@ -76,8 +76,8 @@ export default async function generateVoiceProfile(job) {
       };
     }
 
-    // Fetch sample posts, rules, and any pending feedback
-    const [samplePosts, rules, pendingFeedback] = await Promise.all([
+    // Fetch sample posts, rules, pending feedback, and processed feedback
+    const [samplePosts, rules, pendingFeedback, processedFeedback] = await Promise.all([
       SamplePost.query()
         .where("connected_account_id", connectedAccountId)
         .orderBy("sort_order", "asc"),
@@ -86,13 +86,18 @@ export default async function generateVoiceProfile(job) {
         .where("connected_account_id", connectedAccountId)
         .where("status", "pending")
         .orderBy("created_at", "asc"),
+      // Also fetch processed feedback to preserve learnings during full regeneration
+      VoiceFeedback.query()
+        .where("connected_account_id", connectedAccountId)
+        .where("status", "processed")
+        .orderBy("created_at", "asc"),
     ]);
 
     // Get topics and bio from connected account for context
     const topics = connectedAccount.topics_of_interest;
     const bio = connectedAccount.bio;
 
-    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback, topics: ${topics ? "yes" : "no"}, bio: ${bio && Object.keys(bio).length > 0 ? "yes" : "no"}`);
+    console.log(`[Generate Voice Profile] Found ${samplePosts.length} samples, ${rules.length} rules, ${pendingFeedback.length} pending feedback, ${processedFeedback.length} processed feedback, topics: ${topics ? "yes" : "no"}, bio: ${bio && Object.keys(bio).length > 0 ? "yes" : "no"}`);
 
     // Check if voice match score meets threshold before generating
     const preCheckScore = await connectedAccount.getVoiceMatchScore();
@@ -131,11 +136,20 @@ export default async function generateVoiceProfile(job) {
 
     job.updateProgress(20);
 
-    // Combine job feedback with any pending feedback from database
+    // Combine all feedback sources:
+    // 1. Job-provided feedback (from direct call)
+    // 2. Pending feedback (not yet processed)
+    // 3. Processed feedback (critical: preserves learnings during full regeneration)
     const allFeedback = [
       ...(feedback ? [feedback] : []),
       ...pendingFeedback.map(f => f.feedback),
+      // Include processed feedback to preserve learnings when hash changes trigger regeneration
+      ...processedFeedback.map(f => f.feedback),
     ].join("\n");
+
+    if (processedFeedback.length > 0) {
+      console.log(`[Generate Voice Profile] Including ${processedFeedback.length} processed feedback items to preserve learnings`);
+    }
 
     // Get formatting preferences for examples
     const contentPrefs = connectedAccount.getContentPreferences();
