@@ -18,6 +18,8 @@ import {
   knex,
 } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
+import { getTargetLength } from "#src/config/platform-lengths.js";
+import { getContentTypeSequence } from "#src/config/content-types.js";
 
 function formatDate(date) {
   if (!date) return "N/A";
@@ -55,8 +57,8 @@ async function debugGenerateSuggestions(userId, refreshVoice = false) {
     const bio = account.bio || {};
     const contentPrefs = account.getContentPreferences();
     const formatting = {
-      line_breaks: contentPrefs.line_breaks || "moderate",
-      emojis: contentPrefs.emojis || "none",
+      line_breaks: contentPrefs.line_breaks,
+      emojis: contentPrefs.emojis,
     };
 
     console.log(`\n${"─".repeat(40)}`);
@@ -141,36 +143,48 @@ async function debugGenerateSuggestions(userId, refreshVoice = false) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // CHECK BIO/PERSONA (same as job)
+    // ─────────────────────────────────────────────────────────────────────────
+    const hasBio = bio && Object.values(bio).some(v => v && v.trim());
+    const hasPersona = voiceProfileForAI?.persona_summary;
+
+    if (!hasPersona && !hasBio) {
+      console.log(`\n  ❌ No persona or bio available - cannot generate`);
+      console.log(`  (Job would return: "Please complete your bio to generate post suggestions.")`);
+      return;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // GENERATE SUGGESTIONS (not saving)
     // ─────────────────────────────────────────────────────────────────────────
     console.log(`\n${"─".repeat(40)}`);
     console.log("GENERATING 3 SUGGESTIONS (not saving)");
     console.log("─".repeat(40));
 
-    // Determine max length based on platform
-    const platformLengths = {
-      twitter: 280,
-      threads: 500,
-      linkedin: 3000,
-      instagram: 2200,
-      ghost: 280, // Default for ghost platform
-    };
-    const maxLength = platformLengths[account.platform] || 280;
+    // Determine target length based on platform + user preference
+    const defaultLength = contentPrefs.default_length || "short";
+    const maxLength = getTargetLength(account.platform, defaultLength);
+
+    // Get content type sequence (same as job)
+    const suggestionCount = 3;
+    const contentTypeSequence = getContentTypeSequence(account.last_content_type, suggestionCount);
+    const contentTypes = contentTypeSequence.map(ct => ct.key);
 
     console.log(`  Platform: ${account.platform}`);
-    console.log(`  Max length: ${maxLength}`);
-    console.log(`  Content types: story, hot_take, insight`);
+    console.log(`  Length preference: ${defaultLength}`);
+    console.log(`  Target length: ${maxLength} chars`);
+    console.log(`  Content rotation: ${contentTypeSequence.map(ct => `${ct.position}. ${ct.name}`).join(', ')}`);
     console.log(`  Calling AI.generatePosts...`);
 
+    // NOTE: Job does NOT pass userRules to AI.generatePosts
     const { posts, usages } = await AI.generatePosts({
       voiceProfile: voiceProfileForAI,
       bio: bio,
-      contentTypes: ["story", "hot_take", "insight"],
+      contentTypes,
       platform: account.platform || "ghost",
       maxLength: maxLength,
-      count: 3,
+      count: suggestionCount,
       formatting: formatting,
-      userRules: rules.map((r) => ({ rule_type: r.rule_type, content: r.content })),
     });
 
     // ─────────────────────────────────────────────────────────────────────────

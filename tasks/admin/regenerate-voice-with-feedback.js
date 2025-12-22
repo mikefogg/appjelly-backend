@@ -1,8 +1,8 @@
 /**
- * Regenerate voice profiles with processed feedback included
+ * Regenerate voice profiles by queuing the actual jobs
  *
- * This script fixes voice profiles that were regenerated without their feedback
- * learnings due to the bug where processed feedback was not included.
+ * This script queues the same jobs that run in production, ensuring
+ * 100% parity with the real user flow.
  *
  * Usage:
  *   node tasks/admin/regenerate-voice-with-feedback.js <connected_account_id>
@@ -19,20 +19,46 @@
 
 import {
   ConnectedAccount,
-  SamplePost,
-  Rule,
   VoiceProfile,
   VoiceFeedback,
   PostSuggestion,
-  Account,
   knex,
 } from "#src/models/index.js";
-import AI from "#src/services/ai/index.js";
-import { v4 as uuidv4 } from "uuid";
+import {
+  ghostQueue,
+  JOB_GENERATE_VOICE_PROFILE,
+  JOB_GENERATE_SUGGESTIONS,
+} from "#src/background/queues/index.js";
 
 function formatDate(date) {
   if (!date) return "N/A";
   return new Date(date).toISOString().replace("T", " ").substring(0, 19);
+}
+
+async function waitForJob(jobId, maxWaitMs = 120000) {
+  const startTime = Date.now();
+  const pollInterval = 1000;
+
+  while (Date.now() - startTime < maxWaitMs) {
+    const job = await ghostQueue.getJob(jobId);
+    if (!job) {
+      // Job doesn't exist or was removed
+      return { success: false, error: "Job not found" };
+    }
+
+    const state = await job.getState();
+    if (state === "completed") {
+      return { success: true, result: job.returnvalue };
+    }
+    if (state === "failed") {
+      return { success: false, error: job.failedReason };
+    }
+
+    // Still running, wait and poll again
+    await new Promise(resolve => setTimeout(resolve, pollInterval));
+  }
+
+  return { success: false, error: "Timeout waiting for job" };
 }
 
 async function regenerateVoiceProfile(userId, options = {}) {
@@ -61,19 +87,6 @@ async function regenerateVoiceProfile(userId, options = {}) {
     return { success: false, error: "no feedback" };
   }
 
-  // Get sample posts and rules
-  const [samplePosts, rules] = await Promise.all([
-    SamplePost.query()
-      .where("connected_account_id", userId)
-      .orderBy("sort_order", "asc"),
-    Rule.getActiveRules(userId),
-  ]);
-
-  if (samplePosts.length === 0) {
-    console.log(`  ⚠️  No sample posts - skipping`);
-    return { success: false, error: "no samples" };
-  }
-
   // ─────────────────────────────────────────────────────────────────────────
   // BEFORE
   // ─────────────────────────────────────────────────────────────────────────
@@ -96,58 +109,40 @@ async function regenerateVoiceProfile(userId, options = {}) {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // REGENERATE
+  // QUEUE VOICE PROFILE REGENERATION JOB
   // ─────────────────────────────────────────────────────────────────────────
-  console.log(`\n  🔄 Regenerating with ${processedFeedback.length} feedback items...`);
+  console.log(`\n  🔄 Queuing voice profile regeneration job...`);
 
-  const bio = account.bio || {};
-  const contentPrefs = account.getContentPreferences();
-  const formatting = {
-    line_breaks: contentPrefs.line_breaks || "moderate",
-    emojis: contentPrefs.emojis || "none",
-  };
-
-  // Combine all feedback
-  const allFeedback = processedFeedback.map(f => f.feedback).join("\n");
-
-  // Generate new profile
-  const profileData = await AI.generateVoiceProfile({
-    samplePosts: samplePosts.map((p) => ({ content: p.content, notes: p.notes })),
-    rules: rules.map((r) => ({ rule_type: r.rule_type, content: r.content })),
-    feedback: allFeedback,
-    topics: account.topics_of_interest,
-    bio: bio,
-    formatting: formatting,
+  const voiceJobId = `admin-regen-voice-${userId}-${Date.now()}`;
+  await ghostQueue.add(JOB_GENERATE_VOICE_PROFILE, {
+    connectedAccountId: userId,
+    force: true, // Force regeneration even if inputs unchanged
+  }, {
+    jobId: voiceJobId,
   });
 
-  // Create new profile version
-  const newProfile = await VoiceProfile.query().insert({
-    connected_account_id: userId,
-    version: currentProfile.version + 1,
-    status: "active",
-    voice_summary: profileData.voice_summary,
-    persona_summary: profileData.persona_summary,
-    sentence_patterns: profileData.sentence_patterns,
-    vocabulary_notes: profileData.vocabulary_notes,
-    tone_markers: profileData.tone_markers,
-    formatting_habits: profileData.formatting_habits,
-    hard_rules: profileData.hard_rules || [],
-    examples: profileData.examples || {},
-    confidence: currentProfile.confidence,
-    confidence_reasoning: profileData.confidence_reasoning,
-    input_hash: currentProfile.input_hash,
-  });
+  console.log(`  ⏳ Waiting for voice profile job to complete...`);
+  const voiceResult = await waitForJob(voiceJobId);
+
+  if (!voiceResult.success) {
+    console.error(`  ❌ Voice profile job failed: ${voiceResult.error}`);
+    return { success: false, error: voiceResult.error };
+  }
+
+  console.log(`  ✅ Voice profile job completed`);
 
   // ─────────────────────────────────────────────────────────────────────────
   // AFTER
   // ─────────────────────────────────────────────────────────────────────────
+  const newProfile = await VoiceProfile.getCurrentProfile(userId);
+
   console.log(`\n  ${"─".repeat(60)}`);
   console.log(`  AFTER (v${newProfile.version})`);
   console.log(`  ${"─".repeat(60)}`);
-  console.log(`  Voice Summary: ${profileData.voice_summary?.substring(0, 200)}...`);
-  console.log(`  Persona: ${profileData.persona_summary?.substring(0, 200)}...`);
-  if (profileData.hard_rules?.length > 0) {
-    console.log(`  Hard Rules: ${profileData.hard_rules.join(", ")}`);
+  console.log(`  Voice Summary: ${newProfile.voice_summary?.substring(0, 200)}...`);
+  console.log(`  Persona: ${newProfile.persona_summary?.substring(0, 200)}...`);
+  if (newProfile.hard_rules?.length > 0) {
+    console.log(`  Hard Rules: ${newProfile.hard_rules.join(", ")}`);
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -157,18 +152,18 @@ async function regenerateVoiceProfile(userId, options = {}) {
   console.log(`  COMPARISON`);
   console.log(`  ${"─".repeat(60)}`);
 
-  const voiceSummaryChanged = currentProfile.voice_summary !== profileData.voice_summary;
-  const personaChanged = currentProfile.persona_summary !== profileData.persona_summary;
-  const hardRulesChanged = JSON.stringify(currentProfile.hard_rules) !== JSON.stringify(profileData.hard_rules);
+  const voiceSummaryChanged = currentProfile.voice_summary !== newProfile.voice_summary;
+  const personaChanged = currentProfile.persona_summary !== newProfile.persona_summary;
+  const hardRulesChanged = JSON.stringify(currentProfile.hard_rules) !== JSON.stringify(newProfile.hard_rules);
 
   console.log(`  Voice Summary Changed: ${voiceSummaryChanged ? "✅ YES" : "❌ NO"}`);
   console.log(`  Persona Changed: ${personaChanged ? "✅ YES" : "❌ NO"}`);
   console.log(`  Hard Rules Changed: ${hardRulesChanged ? "✅ YES" : "❌ NO"}`);
 
-  // Show examples comparison
-  if (profileData.examples) {
+  // Show examples
+  if (newProfile.examples && Object.keys(newProfile.examples).length > 0) {
     console.log(`\n  NEW EXAMPLES:`);
-    for (const [key, example] of Object.entries(profileData.examples)) {
+    for (const [key, example] of Object.entries(newProfile.examples)) {
       console.log(`    ${key.toUpperCase()}: ${example.output?.substring(0, 100)}...`);
     }
   }
@@ -176,7 +171,7 @@ async function regenerateVoiceProfile(userId, options = {}) {
   console.log(`\n  ✅ Successfully created v${newProfile.version}`);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // GENERATE SUGGESTIONS (if requested)
+  // QUEUE SUGGESTIONS JOB (if requested)
   // ─────────────────────────────────────────────────────────────────────────
   let suggestionsCreated = 0;
   if (createSuggestions) {
@@ -184,80 +179,48 @@ async function regenerateVoiceProfile(userId, options = {}) {
     console.log(`  GENERATING NEW SUGGESTIONS`);
     console.log(`  ${"─".repeat(60)}`);
 
-    // Use the new voice profile for suggestions
-    const voiceProfileForAI = {
-      voice_summary: profileData.voice_summary,
-      persona_summary: profileData.persona_summary,
-      sentence_patterns: profileData.sentence_patterns,
-      vocabulary_notes: profileData.vocabulary_notes,
-      tone_markers: profileData.tone_markers,
-      formatting_habits: profileData.formatting_habits,
-      hard_rules: profileData.hard_rules || [],
-      examples: profileData.examples || {},
-    };
+    // Get current suggestion count to compare after
+    const beforeCount = await PostSuggestion.query()
+      .where("connected_account_id", userId)
+      .where("status", "pending")
+      .resultSize();
 
-    // Determine max length based on platform
-    const platformLengths = {
-      twitter: 280,
-      threads: 500,
-      linkedin: 3000,
-      instagram: 2200,
-      ghost: 280,
-    };
-    const maxLength = platformLengths[account.platform] || 280;
+    console.log(`  🔄 Queuing suggestions generation job...`);
 
-    console.log(`  Calling AI.generatePosts for ${account.platform} (max ${maxLength} chars)...`);
+    const suggestionsJobId = `admin-regen-suggestions-${userId}-${Date.now()}`;
+    await ghostQueue.add(JOB_GENERATE_SUGGESTIONS, {
+      connectedAccountId: userId,
+      suggestionCount: 3,
+    }, {
+      jobId: suggestionsJobId,
+    });
 
-    try {
-      const { posts } = await AI.generatePosts({
-        voiceProfile: voiceProfileForAI,
-        bio: bio,
-        contentTypes: ["story", "hot_take", "insight"],
-        platform: account.platform || "ghost",
-        maxLength: maxLength,
-        count: 3,
-        formatting: formatting,
-        userRules: rules.map((r) => ({ rule_type: r.rule_type, content: r.content })),
+    console.log(`  ⏳ Waiting for suggestions job to complete...`);
+    const suggestionsResult = await waitForJob(suggestionsJobId);
+
+    if (!suggestionsResult.success) {
+      console.error(`  ❌ Suggestions job failed: ${suggestionsResult.error}`);
+    } else {
+      console.log(`  ✅ Suggestions job completed`);
+
+      // Get the new suggestions
+      const newSuggestions = await PostSuggestion.query()
+        .where("connected_account_id", userId)
+        .where("status", "pending")
+        .orderBy("created_at", "desc")
+        .limit(3);
+
+      suggestionsCreated = newSuggestions.length;
+
+      console.log(`\n  NEW SUGGESTIONS:`);
+      newSuggestions.forEach((s, i) => {
+        console.log(`\n  [${i + 1}] ${s.content_type || "unknown"} (${s.content?.length} chars)`);
+        console.log(`  ${"─".repeat(30)}`);
+        console.log(`  ${s.content?.replace(/\n/g, "\n  ")}`);
+        console.log(`  ${"─".repeat(30)}`);
       });
 
-      if (posts && posts.length > 0) {
-        // Create a batch ID for these suggestions
-        const batchId = uuidv4();
-
-        // Save suggestions to database
-        for (const post of posts) {
-          await PostSuggestion.query().insert({
-            account_id: account.account_id,
-            connected_account_id: userId,
-            app_id: account.app_id,
-            suggestion_type: "original_post",
-            content: post.content,
-            content_type: post.content_type || null,
-            status: "pending",
-            batch_id: batchId,
-            character_count: post.content?.length || 0,
-            metadata: {
-              generated_by: "regenerate-voice-with-feedback-script",
-              voice_profile_version: newProfile.version,
-            },
-          });
-          suggestionsCreated++;
-        }
-
-        console.log(`\n  NEW SUGGESTIONS (saved to database):`);
-        posts.forEach((post, i) => {
-          console.log(`\n  [${i + 1}] ${post.content_type || "unknown"}`);
-          console.log(`  ${"─".repeat(30)}`);
-          console.log(`  ${post.content?.replace(/\n/g, "\n  ")}`);
-          console.log(`  ${"─".repeat(30)}`);
-        });
-
-        console.log(`\n  ✅ Created ${suggestionsCreated} new suggestions`);
-      } else {
-        console.log(`  ⚠️  No suggestions generated`);
-      }
-    } catch (error) {
-      console.error(`  ❌ Error generating suggestions: ${error.message}`);
+      console.log(`\n  ✅ Created ${suggestionsCreated} new suggestions`);
     }
   }
 
@@ -273,7 +236,7 @@ async function regenerateVoiceProfile(userId, options = {}) {
 async function regenerateAll(options = {}) {
   const { dryRun = false, createSuggestions = false } = options;
   console.log("=".repeat(80));
-  console.log(`REGENERATING VOICE PROFILES WITH FEEDBACK${dryRun ? " (DRY RUN)" : ""}${createSuggestions ? " + SUGGESTIONS" : ""}`);
+  console.log(`REGENERATING VOICE PROFILES${dryRun ? " (DRY RUN)" : ""}${createSuggestions ? " + SUGGESTIONS" : ""}`);
   console.log("=".repeat(80));
 
   // Find all connected accounts with voice profiles AND processed feedback
