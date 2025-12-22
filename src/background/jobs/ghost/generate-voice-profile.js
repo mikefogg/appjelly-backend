@@ -52,10 +52,10 @@ export default async function generateVoiceProfile(job) {
       throw new Error(`Account ${connectedAccount.account_id} not found`);
     }
 
-    // Check if free user has reached generation limit (skip if force/subscription_activated)
+    // Check if free user has reached generation limit (skip if force/subscription_activated/admin)
     // When at limit, we stop updating voice profiles until they subscribe
     const reason = job.data.reason;
-    if (reason !== "subscription_activated" && connectedAccount.hasReachedGenerationLimit(account)) {
+    if (reason !== "subscription_activated" && reason !== "admin" && connectedAccount.hasReachedGenerationLimit(account)) {
       console.log(`[Generate Voice Profile] Free user at generation limit for account ${connectedAccount.account_id} - skipping`);
       await connectedAccount.markVoiceUpdateCompleted(); // Clear the flag
       return {
