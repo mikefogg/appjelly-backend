@@ -96,6 +96,7 @@ export const JOB_DISPATCH_CURATED_TOPICS = "dispatch-curated-topics";
 export const JOB_SYNC_CURATED_TOPIC = "sync-curated-topic";
 export const JOB_DIGEST_RECENT_TOPICS = "digest-recent-topics";
 export const JOB_GENERATE_EVERGREEN_TOPICS = "generate-evergreen-topics";
+export const JOB_MIGRATE_CW_CAPTIONS = "migrate-cw-captions";
 
 // Organized job objects for backward compatibility
 export const SUBSCRIPTION_JOBS = {
@@ -161,6 +162,7 @@ export const GHOST_JOBS = {
   GENERATE_VOICE_PROFILE: JOB_GENERATE_VOICE_PROFILE,
   PROCESS_VOICE_FEEDBACK: JOB_PROCESS_VOICE_FEEDBACK,
   GENERATE_EVERGREEN_TOPICS: JOB_GENERATE_EVERGREEN_TOPICS,
+  MIGRATE_CW_CAPTIONS: JOB_MIGRATE_CW_CAPTIONS,
 };
 
 export const TWITTER_JOBS = {

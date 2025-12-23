@@ -18,11 +18,13 @@ import {
   JOB_SEND_PUSH_NOTIFICATION,
   JOB_PROCESS_REVENUECAT_WEBHOOK,
   JOB_SYNC_SUBSCRIPTION_STATUS,
+  JOB_MIGRATE_CW_CAPTIONS,
 } from "#src/background/queues/index.js";
 
 // Ghost jobs
 import analyzeStyle from "#src/background/jobs/ghost/analyze-style.js";
 import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions.js";
+import migrateCwCaptions from "#src/background/jobs/ghost/migrate-cw-captions.js";
 import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
 import generatePost from "#src/background/jobs/ghost/generate-post.js";
 import generateVoiceProfile from "#src/background/jobs/ghost/generate-voice-profile.js";
@@ -71,6 +73,9 @@ export default async function processJob(job) {
 
     case JOB_SEND_PUSH_NOTIFICATION:
       return await sendPushNotificationJob(job);
+
+    case JOB_MIGRATE_CW_CAPTIONS:
+      return await migrateCwCaptions(job);
 
     // Twitter jobs - external API calls
     case JOB_SYNC_NETWORK:
