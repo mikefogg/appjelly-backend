@@ -2,7 +2,7 @@
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.up = async function(knex) {
+export async function up(knex) {
   await knex.schema.createTable("cw_captions", (table) => {
     table.integer("id").primary();
     table.text("local_id"); // text - can be long UUIDs
@@ -25,12 +25,12 @@ exports.up = async function(knex) {
     table.index(["folder_id"]);
     table.index(["migrated_at"]);
   });
-};
+}
 
 /**
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.down = async function(knex) {
+export async function down(knex) {
   await knex.schema.dropTableIfExists("cw_captions");
-};
+}

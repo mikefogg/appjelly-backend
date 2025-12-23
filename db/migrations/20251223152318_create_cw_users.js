@@ -2,7 +2,7 @@
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.up = async function(knex) {
+export async function up(knex) {
   await knex.schema.createTable("cw_users", (table) => {
     table.integer("id").primary();
     table.string("email").notNullable();
@@ -15,12 +15,12 @@ exports.up = async function(knex) {
     table.index(["email"]);
     table.index(["ghost_account_id"]);
   });
-};
+}
 
 /**
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.down = async function(knex) {
+export async function down(knex) {
   await knex.schema.dropTableIfExists("cw_users");
-};
+}
