@@ -1,5 +1,6 @@
 import { requireAuth as clerkRequireAuth } from "@clerk/express";
-import { Account, App, ConnectedAccount } from "#src/models/index.js";
+import { Account, App, ConnectedAccount, knex } from "#src/models/index.js";
+import { ghostQueue, JOB_MIGRATE_CW_CAPTIONS } from "#src/background/queues/index.js";
 import formatError from "#src/helpers/format-error.js";
 
 export const requireAuth = async (req, res, next) => {
@@ -80,6 +81,48 @@ export const requireAuth = async (req, res, next) => {
 
         // Reload with subscription data
         account = await Account.findWithSubscriptionData(userId, app.id);
+
+        // Check for matching Caption Writer user and auto-migrate
+        if (email && app.slug === "ghost") {
+          try {
+            const cwUser = await knex("cw_users")
+              .whereRaw("LOWER(email) = LOWER(?)", [email])
+              .whereNull("ghost_account_id")
+              .first();
+
+            if (cwUser) {
+              // Check if there are captions to migrate
+              const captionCount = await knex("cw_captions")
+                .where("user_id", cwUser.id)
+                .whereNull("migrated_at")
+                .count("id as count")
+                .first();
+
+              const count = parseInt(captionCount.count, 10);
+
+              // Link the accounts
+              await knex("cw_users").where("id", cwUser.id).update({
+                ghost_account_id: account.id,
+                migrated_at: new Date().toISOString(),
+              });
+
+              // Queue migration job if there are captions
+              if (count > 0) {
+                await ghostQueue.add(JOB_MIGRATE_CW_CAPTIONS, {
+                  cwUserId: cwUser.id,
+                  ghostAccountId: account.id,
+                  ghostAppId: app.id,
+                });
+                console.log(`[Auth] Auto-queued CW migration for ${email}: ${count} captions`);
+              } else {
+                console.log(`[Auth] Linked CW account for ${email} (no captions to migrate)`);
+              }
+            }
+          } catch (cwError) {
+            // Don't fail account creation if CW migration check fails
+            console.error("[Auth] CW migration check failed:", cwError.message);
+          }
+        }
 
         // Note: We no longer auto-create a ghost account
         // Users must explicitly create accounts via POST /oauth/accounts or OAuth connection

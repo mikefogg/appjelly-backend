@@ -2,10 +2,21 @@ import { beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { knex } from "#src/models/index.js";
 import mockFetch from "../test-utils/mockFetch.js";
 
+// Store for test user data (allows tests to set email for clerkClient mock)
+// Using globalThis to share state between ESM modules
+globalThis.__testUserStore = globalThis.__testUserStore || new Map();
+export const testUserStore = globalThis.__testUserStore;
+
 // Global Clerk authentication mock
 vi.mock("@clerk/express", () => ({
   clerkMiddleware: () => (req, res, next) => {
     req.auth = () => ({ userId: req.headers["x-test-user-id"] || null });
+    // Store email from header for clerkClient.users.getUser to use
+    if (req.headers["x-test-user-email"] && req.headers["x-test-user-id"]) {
+      globalThis.__testUserStore.set(req.headers["x-test-user-id"], {
+        email: req.headers["x-test-user-email"],
+      });
+    }
     next();
   },
   requireAuth: () => (req, res, next) => {
@@ -13,7 +24,35 @@ vi.mock("@clerk/express", () => ({
       return res.status(401).json({ error: { message: "Unauthorized", code: 401 } });
     }
     req.auth = () => ({ userId: req.headers["x-test-user-id"] });
+    // Store email from header for clerkClient.users.getUser to use
+    if (req.headers["x-test-user-email"]) {
+      globalThis.__testUserStore.set(req.headers["x-test-user-id"], {
+        email: req.headers["x-test-user-email"],
+      });
+    }
     next();
+  },
+  clerkClient: {
+    users: {
+      getUser: (userId) => {
+        const userData = globalThis.__testUserStore.get(userId);
+        if (userData) {
+          return Promise.resolve({
+            primaryEmailAddress: { emailAddress: userData.email },
+            firstName: "Test",
+            lastName: "User",
+            imageUrl: null,
+          });
+        }
+        // Default: no email
+        return Promise.resolve({
+          primaryEmailAddress: null,
+          firstName: null,
+          lastName: null,
+          imageUrl: null,
+        });
+      },
+    },
   },
 }));
 
@@ -154,6 +193,7 @@ beforeEach(async () => {
   // Reset all mocks
   vi.clearAllMocks();
   mockFetch.reset();
+  testUserStore.clear();
 });
 
 afterAll(async () => {
