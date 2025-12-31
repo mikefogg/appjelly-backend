@@ -80,18 +80,17 @@ export default async function migrateCwCaptions(job) {
     return { ...results, message: "No captions to migrate" };
   }
 
-  let offset = 0;
   let processed = 0;
 
   while (true) {
     // Fetch chunk of captions with folder info
+    // No offset needed - processed captions are excluded by whereNull("migrated_at")
     const captions = await knex("cw_captions as c")
       .leftJoin("cw_folders as f", "c.folder_id", "f.local_id")
       .where("c.user_id", cwUserId)
       .whereNull("c.migrated_at")
       .orderBy("c.created_at", "asc")
       .limit(CHUNK_SIZE)
-      .offset(offset)
       .select(
         "c.*",
         "f.name as folder_name",
@@ -209,8 +208,6 @@ export default async function migrateCwCaptions(job) {
       const progress = Math.round((processed / totalCount) * 100);
       job.updateProgress(progress);
     }
-
-    offset += CHUNK_SIZE;
   }
 
   console.log(`[Migrate CW] Migration complete:`, results);
@@ -255,7 +252,6 @@ async function resolveConnectedAccount(caption, accountId, appId, forceConnected
       app_id: appId,
       platform: platform,
       label: PLATFORM_LABELS[platform] || platform,
-      username: "",
       is_active: true,
       sync_status: "ready",
       content_preferences: ConnectedAccount.getDefaultContentPreferences(platform),
