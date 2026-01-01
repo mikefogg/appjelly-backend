@@ -297,6 +297,12 @@ router.patch(
       .trim()
       .isLength({ min: 1, max: 100 })
       .withMessage("Label must be between 1 and 100 characters"),
+    body("username")
+      .optional()
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 100 })
+      .withMessage("Username must be between 1 and 100 characters"),
     body("voice")
       .optional()
       .isString()
@@ -374,7 +380,7 @@ router.patch(
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { label, voice, topics_of_interest, bio, content_preferences, generation_time, preserve_line_breaks } =
+      const { label, username, voice, topics_of_interest, bio, content_preferences, generation_time, preserve_line_breaks } =
         req.body;
 
       const connection = await ConnectedAccount.query()
@@ -389,6 +395,7 @@ router.patch(
       // Update fields
       const updates = {};
       if (label !== undefined) updates.label = label;
+      if (username !== undefined) updates.username = username;
       if (voice !== undefined) updates.voice = voice;
       if (topics_of_interest !== undefined)
         updates.topics_of_interest = topics_of_interest;

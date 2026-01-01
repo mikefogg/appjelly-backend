@@ -115,6 +115,7 @@ export const connectionUpdateSerializer = (connection) => {
   return {
     id: connection.id,
     label: connection.label,
+    username: connection.username,
     voice: connection.voice,
     topics_of_interest: connection.topics_of_interest,
     content_preferences: contentPrefs,
