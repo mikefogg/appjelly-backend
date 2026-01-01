@@ -9,6 +9,7 @@ import {
   JOB_GENERATE_SUGGESTIONS,
   JOB_GENERATE_SUGGESTIONS_AUTOMATED,
   JOB_GENERATE_POST,
+  JOB_IMPROVE_POST,
   JOB_GENERATE_VOICE_PROFILE,
   JOB_PROCESS_VOICE_FEEDBACK,
   JOB_DISPATCH_CURATED_TOPICS,
@@ -27,6 +28,7 @@ import generateSuggestions from "#src/background/jobs/ghost/generate-suggestions
 import migrateCwCaptions from "#src/background/jobs/ghost/migrate-cw-captions.js";
 import generateSuggestionsAutomated from "#src/background/jobs/ghost/generate-suggestions-automated.js";
 import generatePost from "#src/background/jobs/ghost/generate-post.js";
+import improvePost from "#src/background/jobs/ghost/improve-post.js";
 import generateVoiceProfile from "#src/background/jobs/ghost/generate-voice-profile.js";
 import processVoiceFeedback from "#src/background/jobs/ghost/process-voice-feedback.js";
 import generateEvergreenTopics from "#src/background/jobs/ghost/generate-evergreen-topics.js";
@@ -61,6 +63,9 @@ export default async function processJob(job) {
 
     case JOB_GENERATE_POST:
       return await generatePost(job);
+
+    case JOB_IMPROVE_POST:
+      return await improvePost(job);
 
     case JOB_GENERATE_VOICE_PROFILE:
       return await generateVoiceProfile(job);

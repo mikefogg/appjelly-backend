@@ -18,7 +18,7 @@ import {
   rollbackSerializer,
   messageResponse,
 } from "#src/serializers/index.js";
-import { ghostQueue, JOB_GENERATE_POST } from "#src/background/queues/index.js";
+import { ghostQueue, JOB_GENERATE_POST, JOB_IMPROVE_POST } from "#src/background/queues/index.js";
 import AI from "#src/services/ai/index.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
 
@@ -435,11 +435,19 @@ router.post(
       .optional()
       .isIn(["none", "minimal", "moderate"])
       .withMessage("hashtags must be 'none', 'minimal', or 'moderate'"),
+    body("realtime")
+      .optional()
+      .isBoolean()
+      .withMessage("realtime must be a boolean"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
       const { instructions, adjust_length, length, line_breaks, emojis, hashtags } = req.body;
+      // realtime can come from body or query param
+      const realtime = req.body.realtime ?? (req.query.realtime === 'false' ? false : true);
+
+      console.log(`[Improve Post] Params:`, { instructions, adjust_length, length, line_breaks, emojis, hashtags, realtime });
 
       const artifact = await Artifact.query()
         .findById(req.params.id)
@@ -475,6 +483,39 @@ router.post(
       // Store original content for response
       const originalContent = artifact.content;
 
+      // Background job mode - queue and return immediately
+      if (realtime === false) {
+        // Store improve params in metadata and mark as pending
+        await artifact.$query().patch({
+          status: "pending",
+          metadata: {
+            ...artifact.metadata,
+            improve_params: {
+              instructions,
+              adjust_length,
+              length,
+              line_breaks,
+              emojis,
+              hashtags,
+              original_content: originalContent,
+            },
+          },
+        });
+
+        // Queue the background job
+        await ghostQueue.add(JOB_IMPROVE_POST, {
+          artifactId: artifact.id,
+          accountId: res.locals.account.id,
+        });
+
+        // Return pending response
+        return res.status(202).json(successResponse({
+          id: artifact.id,
+          status: "pending",
+          message: "Improvement started",
+        }));
+      }
+
       // Get platform
       const platform = connection?.platform || "ghost";
 
@@ -485,6 +526,9 @@ router.post(
         getNextBucketDown,
         getTargetLength,
       } = await import("#src/config/platform-lengths.js");
+
+      // Get content preferences early so we can use default_length for fallback
+      const contentPrefs = connection?.getContentPreferences() || {};
 
       let targetLength = null;
       let targetBucket = null;
@@ -504,7 +548,57 @@ router.post(
           targetLength = getTargetLength(platform, targetBucket);
         }
         // If null (already at min/max), we'll just improve without length change
+      } else {
+        // No explicit length - preserve current content length by default
+        const storedLength = artifact.metadata?.length;
+        const currentBucket = getLengthBucket(platform, artifact.content.length);
+        targetBucket = storedLength || currentBucket || contentPrefs.default_length;
+        // Use actual content length as target (not bucket's target) to preserve size
+        targetLength = artifact.content.length;
+
+        // Detect length intent from instructions and adjust accordingly
+        if (instructions) {
+          const lowerInstructions = instructions.toLowerCase();
+
+          // Keywords that suggest doubling content (translation adds a full copy)
+          const doublingKeywords = /\b(translat(e|ion)|add.*(version|translation))\b/;
+          // Keywords that suggest more content (go up 1 bucket)
+          const expansionKeywords = /\b(add|append|expand|longer|extend|elaborate|include|more detail|more context)\b/;
+          // Keywords that suggest less content (go down 1 bucket)
+          const contractionKeywords = /\b(shorter|shrink|condense|shorten|reduce|trim|cut|concise|brief|summarize|compact)\b/;
+
+          if (doublingKeywords.test(lowerInstructions)) {
+            // Translation/major addition - 1.5x the current length
+            targetLength = Math.round(artifact.content.length * 1.5);
+            targetBucket = getLengthBucket(platform, targetLength) || "long";
+          } else if (expansionKeywords.test(lowerInstructions)) {
+            // Minor expansion - go up 1 bucket
+            const nextUp = getNextBucketUp(targetBucket);
+            if (nextUp) {
+              targetBucket = nextUp;
+              targetLength = getTargetLength(platform, targetBucket);
+            }
+          } else if (contractionKeywords.test(lowerInstructions)) {
+            // Contraction - go down 1 bucket
+            const nextDown = getNextBucketDown(targetBucket);
+            if (nextDown) {
+              targetBucket = nextDown;
+              targetLength = getTargetLength(platform, targetBucket);
+            }
+          }
+        }
       }
+
+      // Debug: compare current vs target length
+      console.log(`[Improve Post] Length config:`, {
+        currentLength: artifact.content.length,
+        currentBucket: getLengthBucket(platform, artifact.content.length),
+        storedLength: artifact.metadata?.length || null,
+        connectionDefault: contentPrefs.default_length,
+        instructions: instructions ? instructions.substring(0, 50) + (instructions.length > 50 ? '...' : '') : null,
+        finalTarget: { bucket: targetBucket, length: targetLength },
+        storedFormatting: artifact.metadata?.formatting || null,
+      });
 
       // Build length instruction for AI
       let lengthInstruction = "";
@@ -541,20 +635,22 @@ ${artifact.content}`;
           ])
         : [null, []];
 
-      // Determine formatting preferences (use overrides if provided, else connection defaults)
-      const contentPrefs = connection?.getContentPreferences() || {};
+      // Determine formatting preferences (use overrides if provided, else post's original, else connection defaults)
+      const postFormatting = artifact.metadata?.formatting || {};
       const formattingOverrides = {
-        line_breaks: line_breaks || contentPrefs.line_breaks,
-        emojis: emojis || contentPrefs.emojis,
-        hashtags: hashtags || contentPrefs.hashtags,
+        line_breaks: line_breaks || postFormatting.line_breaks || contentPrefs.line_breaks,
+        emojis: emojis || postFormatting.emojis || contentPrefs.emojis,
+        hashtags: hashtags || postFormatting.hashtags || contentPrefs.hashtags,
       };
 
       // Get AI improvement using generatePosts with ideas (skips Step 1, uses GPT-4.1)
+      // Use targetLength, or fall back to platform's "short" length as last resort
+      const fallbackLength = getTargetLength(platform, "short");
       const generateResult = await AI.generatePosts({
         voiceProfile: voiceProfile?.toPromptFormat(),
         bio: connection?.bio,
         platform,
-        maxLength: targetLength || 5000,
+        maxLength: targetLength || fallbackLength,
         formatting: formattingOverrides,
         userRules: userRules.map(r => ({ rule_type: r.rule_type, content: r.content })),
         ideas: [{ idea: improvementIdea, content_type: "improvement" }],
@@ -585,6 +681,16 @@ ${artifact.content}`;
       const result = {
         content: generateResult.posts[0]?.content || "",
       };
+
+      // Dev: print before/after for comparison
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[Improve Post] Before/After comparison:`);
+        console.log(`--- ORIGINAL (${originalContent.length} chars) ---`);
+        console.log(originalContent);
+        console.log(`--- IMPROVED (${result.content.length} chars) ---`);
+        console.log(result.content);
+        console.log(`--- END ---`);
+      }
 
       // Create new version with improved content
       const newVersion = await artifact.createVersion(result.content, "improvement", {
