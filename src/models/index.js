@@ -30,5 +30,6 @@ export { default as UserTopicPreference } from "#src/models/UserTopicPreference.
 export { default as TrendingTopic } from "#src/models/TrendingTopic.js";
 export { default as VoiceProfile } from "#src/models/VoiceProfile.js";
 export { default as VoiceFeedback } from "#src/models/VoiceFeedback.js";
+export { default as OnboardingSample } from "#src/models/OnboardingSample.js";
 
 export { knexConnection as knex };
