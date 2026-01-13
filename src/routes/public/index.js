@@ -9,6 +9,7 @@ import suggestionsRoutes from "#src/routes/public/suggestions.js";
 import postsRoutes from "#src/routes/public/posts.js";
 import topicsRoutes from "#src/routes/public/topics.js";
 import configRoutes from "#src/routes/public/config.js";
+import onboardingRoutes from "#src/routes/public/onboarding.js";
 
 const router = express.Router();
 
@@ -25,6 +26,7 @@ router.use("/suggestions", suggestionsRoutes);
 router.use("/posts", postsRoutes);
 router.use("/topics", topicsRoutes);
 router.use("/config", configRoutes);
+router.use("/onboarding", onboardingRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({

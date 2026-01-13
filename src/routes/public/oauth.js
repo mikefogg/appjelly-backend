@@ -764,7 +764,7 @@ router.post(
   requireAuth,
   async (req, res) => {
     try {
-      const { platform, label, username, bio } = req.body;
+      const { platform, label, username, bio, personality_stats } = req.body;
 
       // Validate required fields
       if (!label || label.trim().length === 0) {
@@ -793,6 +793,19 @@ router.post(
         return res.status(400).json(formatError(canCreate.reason, 400));
       }
 
+      // Map personality_stats to content_preferences (if provided)
+      let content_preferences;
+      if (personality_stats) {
+        const spacingMap = { none: "minimal", little: "moderate", lot: "frequent" };
+        const emojiMap = { none: "none", some: "sparse", lots: "moderate" };
+
+        content_preferences = {
+          line_breaks: spacingMap[personality_stats.spacing] || "moderate",
+          emojis: emojiMap[personality_stats.emoji_usage] || "sparse",
+          default_length: personality_stats.brevity || "medium",
+        };
+      }
+
       // Create manual account
       const connection = await ConnectedAccount.query().insert({
         account_id: res.locals.account.id,
@@ -804,9 +817,11 @@ router.post(
         connected_account_auth_id: null, // Manual account - no OAuth
         sync_status: "ready", // Manual accounts are always "ready"
         is_active: true,
+        ...(content_preferences && { content_preferences }),
         metadata: {
           connection_method: "manual",
           created_at: new Date().toISOString(),
+          ...(personality_stats && { personality_stats }), // Store original for reference
         },
       });
 
