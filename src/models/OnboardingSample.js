@@ -64,7 +64,7 @@ class OnboardingSample extends BaseModel {
   /**
    * Create a new onboarding sample
    */
-  static async create({ appId, accountId, platform, stats, input, previousSampleId = null, feedbackInput = null }) {
+  static async create({ appId, accountId, platform, stats, input, previousSampleId = null, feedbackInput = null, overrides = {} }) {
     let version = 1;
 
     // If there's a previous sample, increment version
@@ -85,7 +85,9 @@ class OnboardingSample extends BaseModel {
       status: "pending",
       previous_sample_id: previousSampleId,
       feedback_input: feedbackInput,
-      metadata: {},
+      metadata: {
+        overrides, // { length?, line_breaks? }
+      },
     });
   }
 

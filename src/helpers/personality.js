@@ -112,35 +112,35 @@ export const PERSONALITY_QUESTIONS = [
 /**
  * Convert personality stats to formatting preferences and voice hints for AI generation.
  *
- * Stats expected:
- * - professionalism: 3/6/9 (formal → casual)
- * - spacing: 2/6/9 → line_breaks (minimal/moderate/frequent)
- * - emoji_usage: 0/5/9 → emojis (none/sparse/moderate)
- * - directness: 3/6/9 (soft → direct)
- * - brevity: 3/6/9 (verbose → brief)
- * - humor: 2/6/9 (serious → humorous)
+ * Stats expected (string-based):
+ * - spacing: 'none' | 'little' | 'lot'
+ * - brevity: 'short' | 'medium' | 'long'
+ * - emoji_usage: 'none' | 'some' | 'lots'
+ * - professionalism: 'casual' | 'balanced' | 'professional'
+ * - humor: 'none' | 'dry' | 'sarcastic' | 'playful'
+ * - energy: 'calm' | 'balanced' | 'energetic'
  */
 export function buildVoiceFromStats(stats) {
-  // Map spacing → line_breaks (use nearest value)
-  const spacingToLineBreaks = (spacing) => {
-    if (spacing <= 3) return "minimal";
-    if (spacing <= 7) return "moderate";
-    return "frequent";
+  // Map spacing → line_breaks
+  const spacingMap = {
+    none: "minimal",
+    little: "moderate",
+    lot: "frequent",
   };
 
   // Map emoji_usage → emojis
-  const emojiToSetting = (emoji) => {
-    if (emoji === 0) return "none";
-    if (emoji <= 5) return "sparse";
-    return "moderate";
+  const emojiMap = {
+    none: "none",
+    some: "sparse",
+    lots: "moderate",
   };
 
   const formatting = {
-    line_breaks: spacingToLineBreaks(stats.spacing || 6),
-    emojis: emojiToSetting(stats.emoji_usage ?? 5),
+    line_breaks: spacingMap[stats.spacing] || "moderate",
+    emojis: emojiMap[stats.emoji_usage] || "sparse",
   };
 
-  // Build voice hints from professionalism, directness, brevity, humor
+  // Build voice hints from professionalism, energy, brevity, humor
   const voiceHints = buildVoiceHints(stats);
 
   return {
@@ -154,63 +154,59 @@ export function buildVoiceFromStats(stats) {
  * Returns a pseudo-voiceProfile that can be used in AI.generatePosts()
  */
 function buildVoiceHints(stats) {
-  const { professionalism = 6, directness = 6, brevity = 6, humor = 6 } = stats;
+  const {
+    professionalism = "balanced",
+    energy = "balanced",
+    brevity = "medium",
+    humor = "none",
+  } = stats;
 
   // Build tone description based on professionalism
-  let tone;
-  if (professionalism <= 3) {
-    tone = "Professional and polished, with clear and structured language.";
-  } else if (professionalism <= 6) {
-    tone = "Conversational and approachable, with a natural flow.";
-  } else {
-    tone = "Casual and relaxed, like talking to a friend.";
-  }
+  const toneMap = {
+    casual: "Casual and relaxed, like talking to a friend.",
+    balanced: "Conversational and approachable, with a natural flow.",
+    professional: "Professional and polished, with clear and structured language.",
+  };
+  const tone = toneMap[professionalism] || toneMap.balanced;
 
-  // Build directness description
-  let directnessDesc;
-  if (directness <= 3) {
-    directnessDesc = "Soft and suggestive, using phrases like 'might help' or 'could try'.";
-  } else if (directness <= 6) {
-    directnessDesc = "Balanced and clear, straightforward but not pushy.";
-  } else {
-    directnessDesc = "Direct and confident, getting straight to the point.";
-  }
+  // Build energy description
+  const energyMap = {
+    calm: "Calm and measured, thoughtful pacing.",
+    balanced: "Balanced energy, naturally engaging.",
+    energetic: "High energy and enthusiastic, punchy delivery.",
+  };
+  const energyDesc = energyMap[energy] || energyMap.balanced;
 
   // Build brevity description
-  let brevityDesc;
-  if (brevity <= 3) {
-    brevityDesc = "Uses full sentences with context and explanation.";
-  } else if (brevity <= 6) {
-    brevityDesc = "Moderately concise, balancing detail with brevity.";
-  } else {
-    brevityDesc = "Very concise and punchy, short sentences, minimal words.";
-  }
+  const brevityMap = {
+    short: "Very concise and punchy, short sentences, minimal words.",
+    medium: "Moderately concise, balancing detail with brevity.",
+    long: "Uses full sentences with context and explanation.",
+  };
+  const brevityDesc = brevityMap[brevity] || brevityMap.medium;
 
   // Build humor description
-  let humorDesc;
-  if (humor <= 3) {
-    humorDesc = "Serious and earnest tone.";
-  } else if (humor <= 6) {
-    humorDesc = "Light touches of wit or self-awareness.";
-  } else {
-    humorDesc = "Playful and humorous, not afraid to be self-deprecating.";
-  }
+  const humorMap = {
+    none: "Serious and earnest tone.",
+    dry: "Dry wit, understated humor.",
+    sarcastic: "Sarcastic edge, sharp observations.",
+    playful: "Playful and fun, not afraid to be silly.",
+  };
+  const humorDesc = humorMap[humor] || humorMap.none;
 
   // Combine into voice_summary
-  const voice_summary = `${tone} ${directnessDesc} ${brevityDesc} ${humorDesc}`;
+  const voice_summary = `${tone} ${energyDesc} ${brevityDesc} ${humorDesc}`;
 
-  // Build sentence patterns hint
-  let sentence_patterns;
-  if (brevity >= 7) {
-    sentence_patterns = "Short, punchy sentences. Fragments are fine. Get to the point fast.";
-  } else if (brevity <= 3) {
-    sentence_patterns = "Full sentences with supporting details. Flowing and complete.";
-  } else {
-    sentence_patterns = "Mix of sentence lengths. Natural rhythm.";
-  }
+  // Build sentence patterns hint based on brevity
+  const sentenceMap = {
+    short: "Short, punchy sentences. Fragments are fine. Get to the point fast.",
+    medium: "Mix of sentence lengths. Natural rhythm.",
+    long: "Full sentences with supporting details. Flowing and complete.",
+  };
+  const sentence_patterns = sentenceMap[brevity] || sentenceMap.medium;
 
   // Build tone markers
-  const tone_markers = [tone, directnessDesc, humorDesc].join(" ");
+  const tone_markers = [tone, energyDesc, humorDesc].join(" ");
 
   return {
     voice_summary,

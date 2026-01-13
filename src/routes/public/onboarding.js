@@ -12,8 +12,15 @@ const router = express.Router({ mergeParams: true });
 // Supported platforms for validation
 const SUPPORTED_PLATFORMS = ["twitter", "linkedin", "threads", "facebook", "ghost"];
 
-// Stats dimensions that must be present
-const REQUIRED_STATS = ["professionalism", "spacing", "emoji_usage", "directness", "brevity", "humor"];
+// Stats dimensions and their valid values
+const STATS_SCHEMA = {
+  spacing: ["none", "little", "lot"],
+  brevity: ["short", "medium", "long"],
+  emoji_usage: ["none", "some", "lots"],
+  professionalism: ["casual", "balanced", "professional"],
+  humor: ["none", "dry", "sarcastic", "playful"],
+  energy: ["calm", "balanced", "energetic"],
+};
 
 /**
  * GET /onboarding/personality
@@ -51,15 +58,15 @@ router.post(
     body("stats")
       .isObject()
       .custom((stats) => {
-        // Validate all required dimensions are present
-        for (const dim of REQUIRED_STATS) {
-          if (typeof stats[dim] !== "number") {
-            throw new Error(`Missing or invalid stat: ${dim}`);
+        // Validate all required dimensions are present with valid values
+        for (const [dim, validValues] of Object.entries(STATS_SCHEMA)) {
+          if (!validValues.includes(stats[dim])) {
+            throw new Error(`Invalid ${dim}: must be one of ${validValues.join(", ")}`);
           }
         }
         return true;
       })
-      .withMessage("Stats must include all dimensions: professionalism, spacing, emoji_usage, directness, brevity, humor"),
+      .withMessage("Stats must include all dimensions with valid values"),
     body("platform")
       .isString()
       .isIn(SUPPORTED_PLATFORMS)
@@ -79,11 +86,19 @@ router.post(
       .trim()
       .isLength({ max: 500 })
       .withMessage("Feedback must be under 500 characters"),
+    body("length")
+      .optional()
+      .isIn(["short", "medium", "long"])
+      .withMessage("Length must be one of: short, medium, long"),
+    body("line_breaks")
+      .optional()
+      .isIn(["minimal", "moderate", "frequent"])
+      .withMessage("Line breaks must be one of: minimal, moderate, frequent"),
   ],
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { stats, platform, input, previous_sample_id, feedback_input } = req.body;
+      const { stats, platform, input, previous_sample_id, feedback_input, length, line_breaks } = req.body;
 
       // If previous_sample_id provided, verify it exists and belongs to this account
       if (previous_sample_id) {
@@ -97,6 +112,11 @@ router.post(
         }
       }
 
+      // Build overrides object (only include if provided)
+      const overrides = {};
+      if (length) overrides.length = length;
+      if (line_breaks) overrides.line_breaks = line_breaks;
+
       // Create the sample
       const sample = await OnboardingSample.create({
         appId: res.locals.app.id,
@@ -106,6 +126,7 @@ router.post(
         input,
         previousSampleId: previous_sample_id || null,
         feedbackInput: feedback_input || null,
+        overrides,
       });
 
       // Queue the generation job

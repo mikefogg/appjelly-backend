@@ -10,8 +10,25 @@ import { trackAICost } from "#src/helpers/track-ai-cost.js";
 
 export const JOB_GENERATE_ONBOARDING_SAMPLE = "generate-onboarding-sample";
 
-// Default max length for samples (medium Twitter post)
-const DEFAULT_MAX_LENGTH = 280;
+// Same limits as generate-post.js
+const getCharacterLimit = (platform, length) => {
+  const limits = {
+    twitter: { short: 100, medium: 280, long: 5000 },
+    linkedin: { short: 150, medium: 600, long: 2000 },
+    threads: { short: 100, medium: 300, long: 500 },
+    facebook: { short: 80, medium: 400, long: 2000 },
+    ghost: { short: 100, medium: 300, long: 2000 },
+  };
+  const platformLimits = limits[platform] || limits.ghost;
+  return platformLimits[length] || platformLimits.medium;
+};
+
+// Map brevity stat to length
+const brevityToLength = {
+  short: "short",
+  medium: "medium",
+  long: "long",
+};
 
 export default async function generateOnboardingSample(job) {
   const { sampleId } = job.data;
@@ -35,9 +52,20 @@ export default async function generateOnboardingSample(job) {
     // Build voice profile and formatting from stats
     const { formatting, voiceHints } = buildVoiceFromStats(sample.stats);
 
+    // Apply overrides from metadata (length, line_breaks)
+    const overrides = sample.metadata?.overrides || {};
+    if (overrides.line_breaks) {
+      formatting.line_breaks = overrides.line_breaks;
+    }
+
+    // Determine length: use override, or map from brevity stat, or default to medium
+    const length = overrides.length || brevityToLength[sample.stats.brevity] || "medium";
+    const maxLength = getCharacterLimit(sample.platform, length);
+
     console.log(`[Generate Onboarding Sample] Stats:`, JSON.stringify(sample.stats));
+    console.log(`[Generate Onboarding Sample] Overrides:`, JSON.stringify(overrides));
+    console.log(`[Generate Onboarding Sample] Length: ${length}, MaxLength: ${maxLength}`);
     console.log(`[Generate Onboarding Sample] Formatting:`, JSON.stringify(formatting));
-    console.log(`[Generate Onboarding Sample] Voice hints:`, voiceHints.voice_summary?.substring(0, 100));
 
     // Build the idea/prompt
     let idea = sample.input;
@@ -67,7 +95,7 @@ ${sample.previous_sample.content}`;
       voiceProfile: voiceHints,
       bio: null, // No bio during onboarding
       platform: sample.platform,
-      maxLength: DEFAULT_MAX_LENGTH,
+      maxLength,
       formatting,
       userRules: [], // No rules during onboarding
       ideas: [{ idea, content_type: "sample" }],
