@@ -73,6 +73,13 @@ router.post(
         );
       }
 
+      // Store rc_customer_id on account if provided and not already set
+      // Do this early so it's saved even if migration fails or exits early
+      if (rc_customer_id && !account.rc_customer_id) {
+        await account.$query().patch({ rc_customer_id });
+        console.log(`[Migration] Stored rc_customer_id on account ${account.id}`);
+      }
+
       let cwUser = null;
       let matchedBy = null;
 
@@ -197,12 +204,6 @@ router.post(
       // Queue subscription sync if RevenueCat customer ID provided
       let subscriptionSyncQueued = false;
       if (rc_customer_id) {
-        // Store rc_customer_id on account if not already set
-        if (!account.rc_customer_id) {
-          await account.$query().patch({ rc_customer_id });
-          console.log(`[Migration] Stored rc_customer_id on account ${account.id}`);
-        }
-
         await subscriptionQueue.add(
           JOB_SYNC_SUBSCRIPTION_STATUS,
           {
