@@ -61,70 +61,6 @@ describe("POST /migration/caption-writer", () => {
   });
 
   describe("finding CW users", () => {
-    it("finds CW user by user_id", async () => {
-      const cwUserId = getNextCwUserId();
-      await knex("cw_users").insert({
-        id: cwUserId,
-        email: "other@example.com",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      await knex("cw_captions").insert({
-        id: getNextCaptionId(),
-        user_id: cwUserId,
-        local_id: "caption-1",
-        content: "Test content",
-        network: "instagram",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      const response = await request(app)
-        .post("/migration/caption-writer")
-        .set("X-App-Slug", "ghost")
-        .set("X-Test-User-Id", testClerkId)
-        .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
-
-      expect(response.status).toBe(200);
-      expect(response.body.data.migrated).toBe(true);
-      expect(response.body.data.matched_by).toBe("user_id");
-      expect(response.body.data.cw_user_id).toBe(cwUserId);
-    });
-
-    it("finds CW user by email", async () => {
-      const cwUserId = getNextCwUserId();
-      const cwEmail = `cw-migration-test-${cwUserId}@example.com`;
-      await knex("cw_users").insert({
-        id: cwUserId,
-        email: cwEmail,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      await knex("cw_captions").insert({
-        id: getNextCaptionId(),
-        user_id: cwUserId,
-        local_id: "caption-1",
-        content: "Test content",
-        network: "instagram",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      const response = await request(app)
-        .post("/migration/caption-writer")
-        .set("X-App-Slug", "ghost")
-        .set("X-Test-User-Id", testClerkId)
-        .set("X-Test-User-Email", testEmail)
-        .send({ email: cwEmail });
-
-      expect(response.status).toBe(200);
-      expect(response.body.data.migrated).toBe(true);
-      expect(response.body.data.matched_by).toBe("email");
-    });
-
     it("finds CW user by legacy_post_id (caption local_id)", async () => {
       const cwUserId = getNextCwUserId();
       await knex("cw_users").insert({
@@ -163,48 +99,18 @@ describe("POST /migration/caption-writer", () => {
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: 999999999 });
+        .send({ legacy_post_id: "nonexistent-post-id" });
 
       expect(response.status).toBe(200);
       expect(response.body.data.migrated).toBe(false);
       expect(response.body.data.reason).toBe("no_matching_account");
-    });
-
-    it("handles case-insensitive email matching", async () => {
-      const cwUserId = getNextCwUserId();
-      const cwEmail = `cw-migration-test-${cwUserId}@example.com`;
-      await knex("cw_users").insert({
-        id: cwUserId,
-        email: cwEmail.toLowerCase(),
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      await knex("cw_captions").insert({
-        id: getNextCaptionId(),
-        user_id: cwUserId,
-        local_id: "caption-1",
-        content: "Test content",
-        network: "instagram",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
-
-      const response = await request(app)
-        .post("/migration/caption-writer")
-        .set("X-App-Slug", "ghost")
-        .set("X-Test-User-Id", testClerkId)
-        .set("X-Test-User-Email", testEmail)
-        .send({ email: cwEmail.toUpperCase() });
-
-      expect(response.status).toBe(200);
-      expect(response.body.data.migrated).toBe(true);
     });
   });
 
   describe("migration process", () => {
     it("queues migration job when captions exist", async () => {
       const cwUserId = getNextCwUserId();
+      const localId = `test-caption-${Date.now()}-1`;
       await knex("cw_users").insert({
         id: cwUserId,
         email: `cw-migration-test-${cwUserId}@example.com`,
@@ -216,7 +122,7 @@ describe("POST /migration/caption-writer", () => {
         {
           id: getNextCaptionId(),
           user_id: cwUserId,
-          local_id: "caption-1",
+          local_id: localId,
           content: "Test content 1",
           network: "instagram",
           created_at: new Date().toISOString(),
@@ -238,7 +144,7 @@ describe("POST /migration/caption-writer", () => {
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
+        .send({ legacy_post_id: localId });
 
       expect(response.status).toBe(200);
       expect(response.body.data.migrated).toBe(true);
@@ -260,9 +166,22 @@ describe("POST /migration/caption-writer", () => {
 
     it("does not queue job when no captions exist", async () => {
       const cwUserId = getNextCwUserId();
+      const localId = `empty-user-caption-${Date.now()}`;
       await knex("cw_users").insert({
         id: cwUserId,
         email: `cw-migration-test-${cwUserId}@example.com`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      // Insert one caption just to find the user, then delete it
+      await knex("cw_captions").insert({
+        id: getNextCaptionId(),
+        user_id: cwUserId,
+        local_id: localId,
+        content: "Temp",
+        network: "instagram",
+        migrated_at: new Date().toISOString(), // Already migrated
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
@@ -272,7 +191,7 @@ describe("POST /migration/caption-writer", () => {
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
+        .send({ legacy_post_id: localId });
 
       expect(response.status).toBe(200);
       expect(response.body.data.migrated).toBe(true);
@@ -283,9 +202,20 @@ describe("POST /migration/caption-writer", () => {
 
     it("links CW user to Ghost account", async () => {
       const cwUserId = getNextCwUserId();
+      const localId = `link-test-caption-${Date.now()}`;
       await knex("cw_users").insert({
         id: cwUserId,
         email: `cw-migration-test-${cwUserId}@example.com`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+      await knex("cw_captions").insert({
+        id: getNextCaptionId(),
+        user_id: cwUserId,
+        local_id: localId,
+        content: "Test",
+        network: "instagram",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
@@ -295,7 +225,7 @@ describe("POST /migration/caption-writer", () => {
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
+        .send({ legacy_post_id: localId });
 
       const updatedCwUser = await knex("cw_users").where("id", cwUserId).first();
       expect(updatedCwUser.ghost_account_id).toBe(testAccount.id);
@@ -304,6 +234,7 @@ describe("POST /migration/caption-writer", () => {
 
     it("returns already_linked when CW user is already linked to same account", async () => {
       const cwUserId = getNextCwUserId();
+      const localId = `already-linked-caption-${Date.now()}`;
       await knex("cw_users").insert({
         id: cwUserId,
         email: `cw-migration-test-${cwUserId}@example.com`,
@@ -313,12 +244,22 @@ describe("POST /migration/caption-writer", () => {
         updated_at: new Date().toISOString(),
       });
 
+      await knex("cw_captions").insert({
+        id: getNextCaptionId(),
+        user_id: cwUserId,
+        local_id: localId,
+        content: "Test",
+        network: "instagram",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
       const response = await request(app)
         .post("/migration/caption-writer")
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
+        .send({ legacy_post_id: localId });
 
       expect(response.status).toBe(200);
       expect(response.body.data.migrated).toBe(true);
@@ -333,6 +274,7 @@ describe("POST /migration/caption-writer", () => {
       });
 
       const cwUserId = getNextCwUserId();
+      const localId = `other-account-caption-${Date.now()}`;
       await knex("cw_users").insert({
         id: cwUserId,
         email: `cw-migration-test-${cwUserId}@example.com`,
@@ -342,12 +284,22 @@ describe("POST /migration/caption-writer", () => {
         updated_at: new Date().toISOString(),
       });
 
+      await knex("cw_captions").insert({
+        id: getNextCaptionId(),
+        user_id: cwUserId,
+        local_id: localId,
+        content: "Test",
+        network: "instagram",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
       const response = await request(app)
         .post("/migration/caption-writer")
         .set("X-App-Slug", "ghost")
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: cwUserId });
+        .send({ legacy_post_id: localId });
 
       expect(response.status).toBe(200);
       expect(response.body.data.migrated).toBe(false);
@@ -386,7 +338,7 @@ describe("POST /migration/caption-writer", () => {
         .set("X-App-Slug", otherApp.slug)
         .set("X-Test-User-Id", testClerkId)
         .set("X-Test-User-Email", testEmail)
-        .send({ user_id: 123 });
+        .send({ legacy_post_id: "some-post-id" });
 
       expect(response.status).toBe(400);
       expect(response.body.error.message).toContain("only available for Ghost app");

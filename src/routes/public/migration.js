@@ -18,14 +18,6 @@ import {
 const router = express.Router({ mergeParams: true });
 
 const migrateCaptionWriterValidators = [
-  body("user_id")
-    .optional()
-    .isInt()
-    .withMessage("user_id must be an integer"),
-  body("email")
-    .optional()
-    .isEmail()
-    .withMessage("email must be a valid email address"),
   body("uuid")
     .optional()
     .isString()
@@ -65,12 +57,12 @@ router.post(
     try {
       const account = res.locals.account;
       const app = res.locals.app;
-      const { user_id, email, uuid, cw_anonymous_id, legacy_post_id, rc_customer_id } = req.body;
+      const { uuid, cw_anonymous_id, legacy_post_id, rc_customer_id } = req.body;
 
-      // Require at least one identifier
-      if (!user_id && !email && !uuid && !cw_anonymous_id && !legacy_post_id) {
+      // Require at least one device-bound identifier (not email/user_id which are guessable)
+      if (!uuid && !cw_anonymous_id && !legacy_post_id) {
         return res.status(400).json(
-          formatError("At least one identifier is required (user_id, email, uuid, cw_anonymous_id, or legacy_post_id)")
+          formatError("At least one identifier is required (uuid, cw_anonymous_id, or legacy_post_id)")
         );
       }
 
@@ -84,23 +76,10 @@ router.post(
       let cwUser = null;
       let matchedBy = null;
 
-      // Try to find CW user in order of reliability
+      // Try to find CW user using device-bound identifiers only
+      // (not email/user_id which are guessable and could allow account hijacking)
 
-      // 1. Direct user_id match
-      if (!cwUser && user_id) {
-        cwUser = await knex("cw_users").where("id", user_id).first();
-        if (cwUser) matchedBy = "user_id";
-      }
-
-      // 2. Email match
-      if (!cwUser && email) {
-        cwUser = await knex("cw_users")
-          .whereRaw("LOWER(email) = LOWER(?)", [email])
-          .first();
-        if (cwUser) matchedBy = "email";
-      }
-
-      // 3. UUID match (requires schema migration - uuid column doesn't exist yet)
+      // 1. UUID match (requires schema migration - uuid column doesn't exist yet)
       // TODO: Add uuid column to cw_users table to enable this lookup
       if (!cwUser && uuid) {
         // Schema doesn't currently have uuid column
@@ -108,7 +87,7 @@ router.post(
         console.log("[Migration] UUID lookup requested but column not yet in schema");
       }
 
-      // 4. Anonymous ID match (requires schema migration - cw_anonymous_id column doesn't exist yet)
+      // 2. Anonymous ID match (requires schema migration - cw_anonymous_id column doesn't exist yet)
       // TODO: Add cw_anonymous_id column to cw_users table to enable this lookup
       if (!cwUser && cw_anonymous_id) {
         // Schema doesn't currently have cw_anonymous_id column
@@ -116,7 +95,8 @@ router.post(
         console.log("[Migration] cw_anonymous_id lookup requested but column not yet in schema");
       }
 
-      // 5. Legacy post ID - reverse lookup from cw_captions.local_id
+      // 3. Legacy post ID - reverse lookup from cw_captions.local_id
+      // Safe because local_id is a client-generated UUID, unguessable
       if (!cwUser && legacy_post_id) {
         const caption = await knex("cw_captions")
           .where("local_id", legacy_post_id)
