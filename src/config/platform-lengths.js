@@ -16,7 +16,7 @@ export const PLATFORM_LENGTHS = {
     label: "X (Twitter)",
     shortname: "X",
     icon: "x-twitter",
-    short: 100, medium: 280, long: 4000,
+    short: 100, medium: 280, long: 2000,
   },
   threads: {
     name: "Threads",
@@ -44,7 +44,7 @@ export const PLATFORM_LENGTHS = {
     label: "TikTok",
     shortname: "TT",
     icon: "tiktok",
-    short: 150, medium: 300, long: 4000,
+    short: 150, medium: 300, long: 2000,
   },
   ghost: {
     name: "Ghost",
