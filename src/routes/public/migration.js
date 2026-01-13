@@ -59,6 +59,13 @@ router.post(
       const app = res.locals.app;
       const { uuid, cw_anonymous_id, legacy_post_id, rc_customer_id } = req.body;
 
+      // Store rc_customer_id on account if provided and not already set
+      // Do this first so it's saved even if the rest of the request fails
+      if (rc_customer_id && !account.rc_customer_id) {
+        await account.$query().patch({ rc_customer_id });
+        console.log(`[Migration] Stored rc_customer_id on account ${account.id}`);
+      }
+
       // Require at least one device-bound identifier (not email/user_id which are guessable)
       if (!uuid && !cw_anonymous_id && !legacy_post_id) {
         return res.status(400).json(
@@ -71,13 +78,6 @@ router.post(
         return res.status(400).json(
           formatError("CaptionWriter migration is only available for Ghost app")
         );
-      }
-
-      // Store rc_customer_id on account if provided and not already set
-      // Do this early so it's saved even if migration fails or exits early
-      if (rc_customer_id && !account.rc_customer_id) {
-        await account.$query().patch({ rc_customer_id });
-        console.log(`[Migration] Stored rc_customer_id on account ${account.id}`);
       }
 
       let cwUser = null;
