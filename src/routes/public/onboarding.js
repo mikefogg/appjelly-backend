@@ -9,8 +9,8 @@ import { ghostQueue, JOB_GENERATE_ONBOARDING_SAMPLE } from "#src/background/queu
 
 const router = express.Router({ mergeParams: true });
 
-// Supported platforms for validation
-const SUPPORTED_PLATFORMS = ["twitter", "linkedin", "threads", "facebook", "ghost"];
+// Supported platforms for validation (matches platform-lengths.js)
+const SUPPORTED_PLATFORMS = ["twitter", "linkedin", "threads", "facebook", "instagram", "tiktok", "ghost", "custom"];
 
 // Stats dimensions and their valid values
 const STATS_SCHEMA = {

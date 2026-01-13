@@ -7,6 +7,7 @@ import { Account, Artifact, VoiceProfile, Rule } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
 import { ghostQueue } from "#src/background/queues/index.js";
+import { getTargetLength } from "#src/config/platform-lengths.js";
 
 export const JOB_GENERATE_POST = "generate-post";
 const VOICE_UPDATE_RETRY_DELAY_MS = 5000; // 5 seconds
@@ -48,21 +49,7 @@ export default async function generatePost(job) {
     const originalContent = artifact.metadata?.original_content; // Set when using post_id
     const platform = connected_account?.platform || "ghost";
 
-    // Calculate character limit based on platform and length
-    const getCharacterLimit = (platform, length) => {
-      const limits = {
-        twitter: { short: 100, medium: 280, long: 5000 },
-        linkedin: { short: 150, medium: 600, long: 2000 },
-        threads: { short: 100, medium: 300, long: 500 },
-        facebook: { short: 80, medium: 400, long: 2000 },
-        ghost: { short: 100, medium: 300, long: 2000 }, // Default fallback
-      };
-
-      const platformLimits = limits[platform] || limits.ghost;
-      return platformLimits[length] || platformLimits.medium;
-    };
-
-    const maxLength = getCharacterLimit(platform, length);
+    const maxLength = getTargetLength(platform, length);
 
     // Mark as generating
     await artifact.$query().patch({

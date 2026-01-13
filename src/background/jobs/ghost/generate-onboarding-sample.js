@@ -7,28 +7,9 @@ import { OnboardingSample } from "#src/models/index.js";
 import AI from "#src/services/ai/index.js";
 import { buildVoiceFromStats } from "#src/helpers/personality.js";
 import { trackAICost } from "#src/helpers/track-ai-cost.js";
+import { getTargetLength } from "#src/config/platform-lengths.js";
 
 export const JOB_GENERATE_ONBOARDING_SAMPLE = "generate-onboarding-sample";
-
-// Same limits as generate-post.js
-const getCharacterLimit = (platform, length) => {
-  const limits = {
-    twitter: { short: 100, medium: 280, long: 5000 },
-    linkedin: { short: 150, medium: 600, long: 2000 },
-    threads: { short: 100, medium: 300, long: 500 },
-    facebook: { short: 80, medium: 400, long: 2000 },
-    ghost: { short: 100, medium: 300, long: 2000 },
-  };
-  const platformLimits = limits[platform] || limits.ghost;
-  return platformLimits[length] || platformLimits.medium;
-};
-
-// Map brevity stat to length
-const brevityToLength = {
-  short: "short",
-  medium: "medium",
-  long: "long",
-};
 
 export default async function generateOnboardingSample(job) {
   const { sampleId } = job.data;
@@ -58,9 +39,9 @@ export default async function generateOnboardingSample(job) {
       formatting.line_breaks = overrides.line_breaks;
     }
 
-    // Determine length: use override, or map from brevity stat, or default to medium
-    const length = overrides.length || brevityToLength[sample.stats.brevity] || "medium";
-    const maxLength = getCharacterLimit(sample.platform, length);
+    // Determine length: use override, or use brevity stat, or default to medium
+    const length = overrides.length || sample.stats.brevity || "medium";
+    const maxLength = getTargetLength(sample.platform, length);
 
     console.log(`[Generate Onboarding Sample] Stats:`, JSON.stringify(sample.stats));
     console.log(`[Generate Onboarding Sample] Overrides:`, JSON.stringify(overrides));
