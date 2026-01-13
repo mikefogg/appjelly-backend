@@ -10,6 +10,7 @@ import postsRoutes from "#src/routes/public/posts.js";
 import topicsRoutes from "#src/routes/public/topics.js";
 import configRoutes from "#src/routes/public/config.js";
 import onboardingRoutes from "#src/routes/public/onboarding.js";
+import migrationRoutes from "#src/routes/public/migration.js";
 
 const router = express.Router();
 
@@ -27,6 +28,7 @@ router.use("/posts", postsRoutes);
 router.use("/topics", topicsRoutes);
 router.use("/config", configRoutes);
 router.use("/onboarding", onboardingRoutes);
+router.use("/migration", migrationRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({
